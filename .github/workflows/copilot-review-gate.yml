@@ -1,7 +1,15 @@
 # -----------------------------------------------------------------------------
 # copilot-review-gate — make a GitHub Copilot code review a REQUIRED merge gate.
 #
-# Canonical source (always latest revision): https://gist.github.com/hacker-cb/81e7f3e91b5cd78e746e07886e62f754
+# Copilot's review is advisory: it lands as a "Comment" review, never counts
+# toward required approvals, and emits no stable status check — so with auto-
+# merge on a fast CI run merges the PR before Copilot has posted anything. This
+# workflow publishes its own "copilot-review-gate" status check that stays
+# pending until Copilot has reviewed the PR; make that check required (INSTALL
+# step 3) and auto-merge must wait for it.
+#
+# Canonical source (always latest revision):
+#   https://gist.github.com/hacker-cb/81e7f3e91b5cd78e746e07886e62f754
 #
 # SINGLE SOURCE OF TRUTH is that gist. Copies vendored into a repo are byte-for-
 # byte mirrors — do NOT edit a copy in place, and do NOT change the gist on your
@@ -13,14 +21,22 @@
 #   other projects that vendor this workflow.
 #
 # INSTALL
-#   1. Save this file into your repo as
-#        .github/workflows/copilot-review-gate.yml
-#      and merge it to your DEFAULT branch FIRST (see the note below).
+#   1. Vendor this file into your repo (fetches the latest revision) — run from
+#      the repo root:
+#        mkdir -p .github/workflows && curl -fsSL https://gist.githubusercontent.com/hacker-cb/81e7f3e91b5cd78e746e07886e62f754/raw/copilot-review-gate.yml -o .github/workflows/copilot-review-gate.yml
+#      Then merge it to your DEFAULT branch FIRST (see "Why the default branch
+#      first" below).
 #   2. Enable the ruleset rule "Automatically request Copilot code review"
 #      (review_on_push: true) so Copilot is requested on every PR.
 #   3. Add the status check "copilot-review-gate" (source: GitHub Actions) to the
 #      REQUIRED status checks of your branch ruleset / protection. <-- this is
 #      what actually blocks auto-merge; until then the gate runs but gates nothing.
+#
+#   Do NOT require `copilot-pull-request-reviewer` (the built-in reviewer)
+#   directly: it is a dynamic check that isn't emitted on every PR (bots, drafts,
+#   some pushes), so adding it to required status checks hangs those PRs at
+#   "Expected" forever. Require this workflow's own stable "copilot-review-gate"
+#   context instead.
 #
 #   Why the default branch first: a pull_request workflow runs from the PR head,
 #   so any PR opened before this file exists lacks the job and would hang forever
