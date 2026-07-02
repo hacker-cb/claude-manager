@@ -1,0 +1,61 @@
+# Releasing Claude Manager
+
+Releases are cut by CI on a `v*` tag: build → Developer ID sign → DMG → notarize →
+staple → GitHub Release. This doc lists exactly what to configure once, and how to
+cut a release.
+
+## One-time: GitHub Actions secrets
+
+Configure these repository secrets (`gh secret set <NAME>` or **Settings →
+Secrets and variables → Actions**). All are required for `release.yml`.
+
+| Secret | What it is | How to get it |
+|---|---|---|
+| `DEVELOPMENT_TEAM` | 10-char Apple Team ID | Apple Developer → Membership |
+| `SIGNING_IDENTITY` | Full identity name, e.g. `Developer ID Application: Pavel Sokolov (TEAMID)` | `security find-identity -v -p codesigning` |
+| `DEVELOPER_ID_CERT_P12_BASE64` | Your **Developer ID Application** cert + private key, exported as `.p12`, base64-encoded | Keychain → export the cert → `base64 -i cert.p12 \| pbcopy` |
+| `DEVELOPER_ID_CERT_PASSWORD` | Password you set on the `.p12` export | — |
+| `AC_API_KEY_ID` | App Store Connect API **Key ID** | App Store Connect → Users and Access → Integrations → App Store Connect API |
+| `AC_API_ISSUER_ID` | App Store Connect **Issuer ID** | Same page |
+| `AC_API_KEY_P8_BASE64` | The `.p8` API private key, base64-encoded | Download once on key creation, then `base64 -i AuthKey_XXXX.p8 \| pbcopy` |
+
+### Preparing the certificate `.p12`
+
+1. In **Apple Developer → Certificates**, create a **Developer ID Application**
+   certificate if you don't have one (needs a CSR from Keychain Access).
+2. In **Keychain Access**, find `Developer ID Application: …`, expand it, select
+   both the certificate **and** its private key, right-click → **Export 2 items…**
+   → `.p12`, set a password.
+3. `base64 -i DeveloperID.p12 | pbcopy` → paste into `DEVELOPER_ID_CERT_P12_BASE64`.
+
+### Preparing the App Store Connect API key
+
+1. **App Store Connect → Users and Access → Integrations → App Store Connect API**
+   → generate a key with the **Developer** role (sufficient for notarization).
+2. Note the **Key ID** and **Issuer ID**; download the `.p8` (one-time).
+3. `base64 -i AuthKey_XXXX.p8 | pbcopy` → paste into `AC_API_KEY_P8_BASE64`.
+
+## Cutting a release
+
+```bash
+git switch master && git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+CI produces a signed, notarized, stapled `ClaudeManager-0.1.0.dmg` and attaches it
+to a new GitHub Release. Or trigger **Actions → Release → Run workflow** and pass a
+version manually.
+
+## Local dry run
+
+With the same env vars exported locally (and a valid signing identity in your
+login keychain) you can reproduce the pipeline:
+
+```bash
+DEVELOPMENT_TEAM=TEAMID SIGNING_IDENTITY="Developer ID Application: … (TEAMID)" \
+  bash scripts/build-app.sh
+VERSION=0.1.0 SIGNING_IDENTITY="…" bash scripts/make-dmg.sh
+AC_API_KEY_ID=… AC_API_ISSUER_ID=… AC_API_KEY_PATH=AuthKey.p8 \
+  bash scripts/notarize.sh dist/ClaudeManager-0.1.0.dmg
+```

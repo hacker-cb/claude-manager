@@ -1,0 +1,59 @@
+name: CI
+
+# Gate every PR regardless of base (a slice PR may target an umbrella, not the
+# trunk), and every push to the long-lived branches. Feature branches are already
+# gated by their PR's synchronize event, so they need no push trigger.
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - dev
+      - "umbrella/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode (Swift 6 / Swift Testing)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Install tooling
+        run: brew install xcodegen swiftformat swiftlint
+
+      - name: Format check
+        run: swiftformat --lint .
+
+      - name: Lint
+        run: swiftlint --strict
+
+      - name: Test (headless core)
+        run: swift test
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild build \
+            -project ClaudeManager.xcodeproj \
+            -scheme ClaudeManager \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO

@@ -1,0 +1,56 @@
+# Issue label families for Claude Manager. Owned by this file (literal names,
+# colors, descriptions); the *policy* for how they're applied lives in
+# .claude/rules/github-issue-tracking.md. Synced by .github/workflows/label-sync.yml
+# with skip-delete: true, so labels outside these families are left untouched.
+
+# --- type:* — the kind of work (exactly one) ---
+- name: "type:feature"
+  color: "0E8A16"
+  description: "A capability that doesn't exist yet"
+- name: "type:bug"
+  color: "D73A4A"
+  description: "Shipped behaviour deviates from spec/docs/intent"
+- name: "type:tech-debt"
+  color: "5319E7"
+  description: "Internal quality: refactor, dedup, hygiene"
+
+# --- area:* — component the work lands in (at least one) ---
+- name: "area:core"
+  color: "C5DEF5"
+  description: "ClaudeManagerCore — models & services"
+- name: "area:app"
+  color: "C5DEF5"
+  description: "ClaudeManagerApp — SwiftUI layer"
+- name: "area:icons"
+  color: "C5DEF5"
+  description: "Badge rendering / .icns pipeline / app icon"
+- name: "area:ci"
+  color: "C5DEF5"
+  description: "CI, release, signing, scripts"
+- name: "area:build"
+  color: "C5DEF5"
+  description: "Package.swift, project.yml, tooling"
+- name: "area:docs"
+  color: "C5DEF5"
+  description: "README, CLAUDE.md, docs/"
+
+# --- awaits:* — pending trigger that should reopen attention (at most one) ---
+- name: "awaits:design"
+  color: "FBCA04"
+  description: "Blocked on a design decision"
+- name: "awaits:upstream"
+  color: "FBCA04"
+  description: "Blocked on an upstream Claude Desktop / macOS change"
+
+# --- priority:* — optional urgency lane (at most one) ---
+- name: "priority:high"
+  color: "B60205"
+  description: "Urgent"
+- name: "priority:low"
+  color: "BFDADC"
+  description: "Nice to have"
+
+# --- property flags ---
+- name: "security"
+  color: "EE0701"
+  description: "Hardening, authz, supply-chain"
