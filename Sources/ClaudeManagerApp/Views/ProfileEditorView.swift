@@ -56,7 +56,7 @@ struct ProfileEditorView: View {
         Profile.isValidName(name)
     }
 
-    /// Display name and bundle id are optional (empty ⇒ keep default), so an empty
+    /// Display name and bundle ID are optional (empty ⇒ keep default), so an empty
     /// field is valid; a non-empty one must satisfy the same rule the core enforces,
     /// otherwise Save would only fail with an alert after a round-trip.
     private var displayNameIsValid: Bool {
@@ -130,7 +130,7 @@ struct ProfileEditorView: View {
             .help("The app name shown in the Dock and Finder.")
             if !displayNameIsValid {
                 Label(
-                    "Avoid / : \\ or a leading dot — this becomes the app filename.",
+                    "Becomes the app filename: no / : \\ and no leading dot (so not . or ..).",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption).foregroundStyle(.orange)
@@ -144,7 +144,7 @@ struct ProfileEditorView: View {
                 )
                 if !bundleIDIsValid {
                     Label(
-                        "Reverse-DNS: letters, digits, dots, hyphens; at least one dot.",
+                        "Reverse-DNS: letters, digits, dots, hyphens — dot-separated with no empty parts.",
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(.caption).foregroundStyle(.orange)
