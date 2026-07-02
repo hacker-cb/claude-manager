@@ -62,7 +62,7 @@ public extension Profile {
         String(name.prefix(2)).uppercased()
     }
 
-    /// `me.sokolov.claude-manager.launcher.work`.
+    /// `io.github.hacker-cb.claude-manager.launcher.work`.
     static func defaultBundleID(for name: String) -> String {
         "\(CoreConstants.defaultBundleIDPrefix).\(name.lowercased())"
     }

@@ -17,7 +17,7 @@ public enum CoreConstants {
     public static let appSupportDirectoryName = "Claude Manager"
 
     /// Reverse-DNS prefix for auto-generated launcher bundle identifiers.
-    public static let defaultBundleIDPrefix = "me.sokolov.claude-manager.launcher"
+    public static let defaultBundleIDPrefix = "io.github.hacker-cb.claude-manager.launcher"
 
     /// Bundle identifiers the real Claude Desktop app has shipped under, most
     /// current first. Used to locate the untouched app to wrap.

@@ -181,7 +181,7 @@ struct ProfileStoreTests {
         #expect(draft.label == "WO")
         #expect(draft.appPath == env.installDir.appendingPathComponent("Claude WORK.app").path)
         #expect(draft.profilePath == env.profilesDir.appendingPathComponent("work").path)
-        #expect(draft.bundleID == "me.sokolov.claude-manager.launcher.work")
+        #expect(draft.bundleID == "io.github.hacker-cb.claude-manager.launcher.work")
     }
 
     @Test

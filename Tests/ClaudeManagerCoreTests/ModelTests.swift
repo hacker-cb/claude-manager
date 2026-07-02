@@ -7,7 +7,7 @@ struct ProfileDefaultsTests {
         #expect(Profile.defaultDisplayName(for: "work") == "Claude WORK")
         #expect(Profile.defaultLabel(for: "work") == "WO")
         #expect(Profile.defaultLabel(for: "p") == "P")
-        #expect(Profile.defaultBundleID(for: "Work") == "me.sokolov.claude-manager.launcher.work")
+        #expect(Profile.defaultBundleID(for: "Work") == "io.github.hacker-cb.claude-manager.launcher.work")
     }
 
     @Test
