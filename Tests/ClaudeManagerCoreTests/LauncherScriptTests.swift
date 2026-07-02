@@ -56,7 +56,7 @@ struct LauncherScriptTests {
         let harness = try ScriptHarness()
         defer { harness.cleanup() }
 
-        let status = harness.runLauncher()
+        let status = try harness.runLauncher()
 
         #expect(status == 0)
         #expect(harness.launchCount() == 1)
@@ -69,10 +69,10 @@ struct LauncherScriptTests {
         let harness = try ScriptHarness()
         defer { harness.cleanup() }
 
-        let holder = harness.holdLock()
-        defer { holder.terminate() }
+        let holder = try harness.holdLock()
+        defer { holder.terminate(); holder.waitUntilExit() }
 
-        let status = harness.runLauncher()
+        let status = try harness.runLauncher()
 
         #expect(status == 0)
         #expect(harness.launchCount() == 0)
@@ -107,31 +107,47 @@ private struct ScriptHarness {
         try Self.writeExecutable(script, to: launcher)
     }
 
-    /// Runs the launcher to completion and returns its exit status.
-    func runLauncher() -> Int32 {
+    /// Runs the launcher to completion and returns its exit status. Throws (rather
+    /// than swallowing the spawn error) so a launcher that never starts fails the
+    /// test loudly instead of passing on a stale `terminationStatus` of 0.
+    func runLauncher() throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [launcher.path]
-        try? process.run()
+        try process.run()
         process.waitUntilExit()
         return process.terminationStatus
     }
 
     /// Spawns a long-lived process and hands the profile lock to it via shlock, so
-    /// the launcher sees a live holder. Caller must `terminate()` it.
-    func holdLock() -> Process {
-        try? fileManager.createDirectory(at: profileDir, withIntermediateDirectories: true)
+    /// the launcher sees a live holder. Throws if the sleeper or shlock fails so the
+    /// test can't silently proceed with no lock actually held. Caller must
+    /// `terminate()` (and wait for) the returned process.
+    func holdLock() throws -> Process {
+        try fileManager.createDirectory(at: profileDir, withIntermediateDirectories: true)
         let sleeper = Process()
         sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
         sleeper.arguments = ["30"]
-        try? sleeper.run()
+        try sleeper.run()
 
         let lock = profileDir.appendingPathComponent(".claude-manager.lock").path
         let shlock = Process()
         shlock.executableURL = URL(fileURLWithPath: "/usr/bin/shlock")
         shlock.arguments = ["-f", lock, "-p", String(sleeper.processIdentifier)]
-        try? shlock.run()
+        do {
+            try shlock.run()
+        } catch {
+            sleeper.terminate(); sleeper.waitUntilExit()
+            throw error
+        }
         shlock.waitUntilExit()
+        guard shlock.terminationStatus == 0 else {
+            sleeper.terminate(); sleeper.waitUntilExit()
+            throw Fixture
+                .FixtureError(
+                    message: "shlock failed to acquire the lock (status \(shlock.terminationStatus))"
+                )
+        }
         return sleeper
     }
 

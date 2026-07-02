@@ -5,56 +5,6 @@ import Testing
 struct ProfileStoreTests {
     let fm = FileManager.default
 
-    struct Env {
-        let root: URL
-        let installDir: URL
-        let profilesDir: URL
-        let real: RealClaude
-        let runner: RecordingCommandRunner
-        let store: ProfileStore
-        /// Per-test token so trashed launchers never collide across the shared
-        /// `~/.Trash` (Swift Testing runs tests in parallel).
-        let token: String
-
-        func name(_ base: String) -> String {
-            base + token
-        }
-
-        func display(_ base: String) -> String {
-            Profile.defaultDisplayName(for: name(base))
-        }
-
-        func appPath(_ base: String) -> String {
-            installDir.appendingPathComponent("\(display(base)).app").path
-        }
-    }
-
-    /// A store wired to temp directories and a fake real app. `iconutil` runs for
-    /// real (so icons are genuine `.icns`); every other tool is stubbed, so no
-    /// process is killed and the Dock is never restarted for real.
-    func makeEnv(stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub) throws -> Env {
-        let root = try Fixture.makeTempDir()
-        let installDir = root.appendingPathComponent("apps")
-        let profilesDir = root.appendingPathComponent("profiles")
-        try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
-        let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
-        let runner = RecordingCommandRunner.delegating(stub: stub)
-        let store = ProfileStore(
-            realClaude: real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: installDir,
-                defaultProfilesDirectory: profilesDir
-            ),
-            runner: runner,
-            signalSender: { _, _ in 0 }
-        )
-        let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
-        return Env(
-            root: root, installDir: installDir, profilesDir: profilesDir,
-            real: real, runner: runner, store: store, token: token
-        )
-    }
-
     @Test
     func addCreatesLauncherAndProfileDir() throws {
         let env = try makeEnv()
@@ -264,6 +214,46 @@ struct ProfileStoreTests {
     }
 
     @Test
+    func stopHonorsCancellationWithoutBusySpinning() async throws {
+        // pgrep always reports the same live pid, so stop can never see it exit and
+        // would poll its whole budget. A huge interval + budget means a
+        // cancellation-aware loop returns right after the first (cancelled) sleep,
+        // having probed at most a couple of times — a swallowed CancellationError
+        // would instead spin `maxPolls` rapid pgrep probes.
+        let env = try makeEnv(stub: { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "777\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        })
+        defer { try? fm.removeItem(at: env.root) }
+        let profile = env.store.draft(name: env.name("work"))
+
+        // Build the store inside the task from Sendable inputs so nothing
+        // non-Sendable is captured across the task boundary (Swift 6 mode).
+        let real = env.real
+        let runner = env.runner
+        let config = ProfileStoreConfiguration(
+            installDirectory: env.installDir,
+            defaultProfilesDirectory: env.profilesDir
+        )
+        let task = Task {
+            let store = ProfileStore(
+                realClaude: real, configuration: config, runner: runner,
+                signalSender: { _, _ in 0 }
+            )
+            return await store.stop(profile, force: false, pollInterval: 100, maxPolls: 1000)
+        }
+        task.cancel()
+        let outcome = await task.value
+
+        #expect(outcome == .stillRunning(pid: 777))
+        // The initial guard probes once; cancellation must not spin the remaining
+        // budget doing hundreds more probes.
+        #expect(env.runner.invocations(of: CoreConstants.pgrepPath).count <= 3)
+    }
+
+    @Test
     func removeTrashesLauncherAndPurgesData() throws {
         let env = try makeEnv()
         defer {
@@ -360,4 +350,58 @@ struct ProfileStoreTests {
         // Exactly one Dock restart for the whole batch (fresh bundles don't restart).
         #expect(env.runner.invocations(of: CoreConstants.killallPath).count == 1)
     }
+}
+
+// MARK: - Shared test environment
+
+/// A store wired to temp directories and a fake real app, shared across the
+/// ProfileStore suites. Kept at file scope so no single suite's body grows unwieldy.
+struct Env {
+    let root: URL
+    let installDir: URL
+    let profilesDir: URL
+    let real: RealClaude
+    let runner: RecordingCommandRunner
+    let store: ProfileStore
+    /// Per-test token so trashed launchers never collide across the shared
+    /// `~/.Trash` (Swift Testing runs tests in parallel).
+    let token: String
+
+    func name(_ base: String) -> String {
+        base + token
+    }
+
+    func display(_ base: String) -> String {
+        Profile.defaultDisplayName(for: name(base))
+    }
+
+    func appPath(_ base: String) -> String {
+        installDir.appendingPathComponent("\(display(base)).app").path
+    }
+}
+
+/// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
+/// stubbed, so no process is killed and the Dock is never restarted for real.
+func makeEnv(stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub) throws -> Env {
+    let fm = FileManager.default
+    let root = try Fixture.makeTempDir()
+    let installDir = root.appendingPathComponent("apps")
+    let profilesDir = root.appendingPathComponent("profiles")
+    try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
+    let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
+    let runner = RecordingCommandRunner.delegating(stub: stub)
+    let store = ProfileStore(
+        realClaude: real,
+        configuration: ProfileStoreConfiguration(
+            installDirectory: installDir,
+            defaultProfilesDirectory: profilesDir
+        ),
+        runner: runner,
+        signalSender: { _, _ in 0 }
+    )
+    let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
+    return Env(
+        root: root, installDir: installDir, profilesDir: profilesDir,
+        real: real, runner: runner, store: store, token: token
+    )
 }
