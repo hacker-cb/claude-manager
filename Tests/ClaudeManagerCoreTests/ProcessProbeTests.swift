@@ -32,10 +32,10 @@ struct ProcessProbeTests {
 
     @Test
     func handlesSpacesInBundlePath() {
-        let ps = "  610     1 /Applications/Claude P.app/Contents/MacOS/Claude --user-data-dir=/data/p"
+        let ps = "  610     1 /Applications/Claude Beta.app/Contents/MacOS/Claude --user-data-dir=/data/p"
         let mains = ProcessProbe.parseMains(psOutput: ps)
         #expect(mains.count == 1)
-        #expect(mains[0].executablePath == "/Applications/Claude P.app/Contents/MacOS/Claude")
+        #expect(mains[0].executablePath == "/Applications/Claude Beta.app/Contents/MacOS/Claude")
         #expect(mains[0].profilePath == "/data/p")
     }
 

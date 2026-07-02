@@ -27,8 +27,7 @@ public enum BadgeColor: Equatable, Hashable, Sendable {
     case named(String)
     case custom(RGBAColor)
 
-    /// The named palette — Apple's system accent colors, matching the reference
-    /// tool's set plus a few extras.
+    /// The named palette — Apple's system accent colors.
     public static let palette: [(name: String, color: RGBAColor)] = [
         ("blue", RGBAColor(red: 10, green: 132, blue: 255)),
         ("green", RGBAColor(red: 48, green: 209, blue: 88)),

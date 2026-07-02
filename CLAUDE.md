@@ -61,7 +61,7 @@ Manager` holds GUI-only metadata (ordering, notes) and is always optional.
 - **Process detection**: main Claude processes are `ps` lines at
   `.../Contents/MacOS/<exe>` with **ppid == 1** (launchd). The ppid filter excludes
   Electron's renderer/utility/MCP children (forked from the main). Paths may
-  contain spaces (`Claude P.app`) — the parser handles that; the pgrep pattern is
+  contain spaces (`Claude Beta.app`) — the parser handles that; the pgrep pattern is
   regex-escaped and anchored with `( |$)` so `/p` never matches `/ps`.
 - **Duplicate-instance guard** lives in the launcher script: if the profile is
   already running it activates the window via System Events (one-time TCC

@@ -13,10 +13,10 @@ struct PathUtilsTests {
 
     @Test
     func regexEscapesMetacharacters() {
-        let escaped = PathUtils.regexEscaped("/Applications/Claude P.app/Contents/MacOS/Claude")
+        let escaped = PathUtils.regexEscaped("/Applications/Claude Beta.app/Contents/MacOS/Claude")
         // Spaces stay literal; the dot before `app` is escaped so it matches a
         // literal `.` in the ps command line rather than any character.
-        #expect(escaped == #"/Applications/Claude P\.app/Contents/MacOS/Claude"#)
+        #expect(escaped == #"/Applications/Claude Beta\.app/Contents/MacOS/Claude"#)
         #expect(PathUtils.regexEscaped("a+b(c)") == #"a\+b\(c\)"#)
     }
 

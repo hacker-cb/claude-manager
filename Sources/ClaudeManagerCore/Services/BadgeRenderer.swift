@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 /// over the real app icon, entirely with CoreGraphics/CoreText — no AppKit and no
 /// window server, so it runs headlessly in `swift test` and CI.
 ///
-/// Geometry mirrors the reference tool's Pillow layout, expressed in
-/// CoreGraphics' native bottom-left coordinate space (badge sits bottom-right).
+/// Geometry is expressed in CoreGraphics' native bottom-left coordinate space
+/// (the badge sits in the bottom-right corner).
 public struct BadgeRenderer {
     public init() {}
 

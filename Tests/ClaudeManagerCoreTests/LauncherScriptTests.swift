@@ -30,9 +30,9 @@ struct LauncherScriptTests {
     func singleQuotesPathsWithSpaces() {
         let script = LauncherScript.render(
             profilePath: "/data/with space",
-            realBinaryPath: "/Applications/Claude P.app/Contents/MacOS/Claude"
+            realBinaryPath: "/Applications/Claude Beta.app/Contents/MacOS/Claude"
         )
         #expect(script.contains("PROFILE='/data/with space'"))
-        #expect(script.contains("REAL='/Applications/Claude P.app/Contents/MacOS/Claude'"))
+        #expect(script.contains("REAL='/Applications/Claude Beta.app/Contents/MacOS/Claude'"))
     }
 }
