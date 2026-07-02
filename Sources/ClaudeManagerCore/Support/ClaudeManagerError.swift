@@ -35,7 +35,7 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):
-            return "Invalid display name \"\(name)\". It must be a single name without \"/\", \":\", or \"..\"."
+            return "Invalid display name \"\(name)\". It can't be empty, start with a dot, or contain a slash or colon."
         case let .invalidColor(value):
             return "Unknown color \"\(value)\". Use a palette name or a #RRGGBB hex value."
         case let .invalidHexColor(value):

@@ -10,9 +10,8 @@ extensions, while the real app keeps its Apple-notarized signature and
 entitlements — notifications, virtualization features, Keychain access, and
 auto-updates all keep working.
 
-> Built on the mechanic proven by the
-> [`cc-desktop-multiprofile`](https://github.com/hacker-cb) CLI prototype, wrapped
-> in a native SwiftUI GUI.
+> Built on the mechanic proven by the `cc-desktop-multiprofile` CLI prototype,
+> wrapped in a native SwiftUI GUI.
 
 ## Features (MVP)
 
