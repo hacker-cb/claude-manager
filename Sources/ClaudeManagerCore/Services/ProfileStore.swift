@@ -275,6 +275,10 @@ public struct ProfileStore {
     /// Move the launcher to Trash (and optionally delete the profile data).
     @discardableResult
     public func remove(_ profile: Profile, purgeProfile: Bool) throws -> RemovalResult {
+        guard fileManager.fileExists(atPath: profile.appPath) else {
+            // Consistent domain error instead of a raw CocoaError from trashItem.
+            throw ClaudeManagerError.launcherNotFound(name: profile.name)
+        }
         if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }

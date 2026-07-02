@@ -292,6 +292,17 @@ struct ProfileStoreTests {
     }
 
     @Test
+    func removeThrowsWhenLauncherMissing() throws {
+        let env = try makeEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        // A profile whose launcher was never built → consistent domain error.
+        let ghost = env.store.draft(name: env.name("ghost"))
+        #expect(throws: ClaudeManagerError.self) {
+            try env.store.remove(ghost, purgeProfile: false)
+        }
+    }
+
+    @Test
     func removeRejectsRunning() throws {
         let env = try makeEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
