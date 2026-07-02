@@ -2,14 +2,17 @@
 # Core logic builds/tests headlessly via SwiftPM; the app is an Xcode target
 # generated from project.yml by XcodeGen.
 
+SHELL       := /bin/bash
 SCHEME      := ClaudeManager
 PROJECT     := ClaudeManager.xcodeproj
 CONFIG      := Release
 DIST        := dist
+DERIVED     := build
+APP         := $(DERIVED)/Build/Products/$(CONFIG)/Claude Manager.app
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup gen test lint format build-app archive dmg clean
+.PHONY: help setup gen test lint format build-app run xcode archive dmg clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -33,13 +36,19 @@ lint: ## Run swiftformat --lint and swiftlint
 format: ## Auto-format the tree
 	swiftformat .
 
-build-app: gen ## Compile the app (unsigned) to verify it builds
+build-app: gen ## Build the app (unsigned) into build/
+	@command -v xcbeautify >/dev/null 2>&1 && FMT=xcbeautify || FMT=cat; \
+	set -o pipefail; \
 	xcodebuild build -project $(PROJECT) -scheme $(SCHEME) \
 		-configuration $(CONFIG) -destination 'generic/platform=macOS' \
-		CODE_SIGNING_ALLOWED=NO | xcbeautify 2>/dev/null || \
-	xcodebuild build -project $(PROJECT) -scheme $(SCHEME) \
-		-configuration $(CONFIG) -destination 'generic/platform=macOS' \
-		CODE_SIGNING_ALLOWED=NO
+		-derivedDataPath $(DERIVED) CODE_SIGNING_ALLOWED=NO | $$FMT
+
+run: build-app ## Build (unsigned) and launch the app
+	@echo "→ launching $(APP)"
+	open "$(APP)"
+
+xcode: gen ## Generate and open the project in Xcode
+	open $(PROJECT)
 
 archive: gen ## Archive + export a Developer ID .app into dist/ (needs signing env)
 	bash scripts/build-app.sh
@@ -48,4 +57,4 @@ dmg: ## Package dist/Claude Manager.app into a DMG
 	bash scripts/make-dmg.sh
 
 clean: ## Remove generated project and build artifacts
-	rm -rf $(PROJECT) $(DIST) .build DerivedData
+	rm -rf $(PROJECT) $(DIST) $(DERIVED) .build DerivedData
