@@ -1,0 +1,366 @@
+import Darwin
+import Foundation
+
+/// Where launchers are installed and where new profile data dirs default to.
+public struct ProfileStoreConfiguration: Sendable, Equatable {
+    /// Directory the launcher `.app` bundles live in (defaults to the real app's
+    /// own directory, so launchers sit next to Claude.app).
+    public var installDirectory: URL
+    /// Parent directory for auto-created `--user-data-dir`s.
+    public var defaultProfilesDirectory: URL
+
+    public init(installDirectory: URL, defaultProfilesDirectory: URL) {
+        self.installDirectory = installDirectory
+        self.defaultProfilesDirectory = defaultProfilesDirectory
+    }
+
+    public static func makeDefault(
+        realClaude: RealClaude,
+        fileManager: FileManager = .default
+    ) -> ProfileStoreConfiguration {
+        ProfileStoreConfiguration(
+            installDirectory: realClaude.installDirectory,
+            defaultProfilesDirectory: MetadataStore.defaultDirectory(fileManager: fileManager)
+                .appendingPathComponent("Profiles", isDirectory: true)
+        )
+    }
+}
+
+/// Parameters for creating a launcher; `nil` fields fall back to sensible defaults.
+public struct AddProfileRequest: Sendable {
+    public var name: String
+    public var label: String?
+    public var color: BadgeColor?
+    public var displayName: String?
+    public var bundleID: String?
+    public var profilePath: String?
+    public var force: Bool
+
+    public init(
+        name: String,
+        label: String? = nil,
+        color: BadgeColor? = nil,
+        displayName: String? = nil,
+        bundleID: String? = nil,
+        profilePath: String? = nil,
+        force: Bool = false
+    ) {
+        self.name = name
+        self.label = label
+        self.color = color
+        self.displayName = displayName
+        self.bundleID = bundleID
+        self.profilePath = profilePath
+        self.force = force
+    }
+}
+
+public struct AddResult: Sendable {
+    public let profile: Profile
+    /// True when the profile dir already held data (likely still signed in).
+    public let reusedProfileData: Bool
+}
+
+public struct RemovalResult: Sendable {
+    public let trashedAppURL: URL?
+    public let profilePath: String
+    public let purgedProfileData: Bool
+}
+
+public enum StopOutcome: Sendable, Equatable {
+    case notRunning
+    case stopped
+    case stillRunning(pid: Int32)
+}
+
+/// The façade the app talks to: scan, add, remove, open, stop, edit, regenerate
+/// icons, and run diagnostics. Composed of small injectable services so the whole
+/// thing is testable against temp directories and a mock `CommandRunner`.
+public struct ProfileStore {
+    public let realClaude: RealClaude
+    public let configuration: ProfileStoreConfiguration
+
+    let runner: CommandRunner
+    let fileManager: FileManager
+    let bundle: LauncherBundle
+    let processProbe: ProcessProbe
+    let iconCache: IconCache
+    let iconPipeline: IconPipeline
+    let signalSender: @Sendable (Int32, Int32) -> Int32
+
+    public init(
+        realClaude: RealClaude,
+        configuration: ProfileStoreConfiguration,
+        runner: CommandRunner = SystemCommandRunner(),
+        fileManager: FileManager = .default,
+        signalSender: @escaping @Sendable (Int32, Int32) -> Int32 = { kill($0, $1) }
+    ) {
+        self.realClaude = realClaude
+        self.configuration = configuration
+        self.runner = runner
+        self.fileManager = fileManager
+        self.signalSender = signalSender
+        bundle = LauncherBundle(fileManager: fileManager)
+        processProbe = ProcessProbe(runner: runner)
+        iconCache = IconCache(runner: runner, fileManager: fileManager)
+        iconPipeline = IconPipeline(packer: IcnsPacker(runner: runner, fileManager: fileManager))
+    }
+
+    /// Locate the real app and build a store with default locations.
+    public static func makeDefault(
+        runner: CommandRunner = SystemCommandRunner(),
+        fileManager: FileManager = .default,
+        installDirectoryOverride: URL? = nil,
+        defaultProfilesDirectoryOverride: URL? = nil
+    ) throws -> ProfileStore {
+        let real = try RealClaudeLocator().locate()
+        var config = ProfileStoreConfiguration.makeDefault(realClaude: real, fileManager: fileManager)
+        if let installDirectoryOverride { config.installDirectory = installDirectoryOverride }
+        if let defaultProfilesDirectoryOverride {
+            config.defaultProfilesDirectory = defaultProfilesDirectoryOverride
+        }
+        return ProfileStore(realClaude: real, configuration: config, runner: runner, fileManager: fileManager)
+    }
+
+    // MARK: - Read
+
+    /// All managed launchers with live running state (and optional disk usage).
+    public func list(measuringSizes: Bool = false) -> [ManagedProfile] {
+        bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
+            let profile = discovered.profile
+            let pid = runningPID(for: profile)
+            let size = measuringSizes ? diskSize(of: profile.profilePath) : nil
+            return ManagedProfile(profile: profile, pid: pid, diskSize: size)
+        }
+    }
+
+    /// The full defaults a new profile named `name` would get — drives the editor
+    /// preview before anything is written.
+    public func draft(
+        name: String,
+        label: String? = nil,
+        color: BadgeColor? = nil,
+        displayName: String? = nil,
+        bundleID: String? = nil,
+        profilePath: String? = nil
+    ) -> Profile {
+        let display = displayName?.isEmpty == false ? displayName! : Profile.defaultDisplayName(for: name)
+        let app = configuration.installDirectory.appendingPathComponent("\(display).app")
+        let resolvedProfile = profilePath.map(PathUtils.expandingTilde)
+            ?? configuration.defaultProfilesDirectory.appendingPathComponent(name.lowercased()).path
+        let resolvedLabel = (label?.isEmpty == false ? label! : Profile.defaultLabel(for: name)).uppercased()
+        return Profile(
+            name: name,
+            displayName: display,
+            label: resolvedLabel,
+            color: color ?? .named("blue"),
+            profilePath: resolvedProfile,
+            bundleID: bundleID?.isEmpty == false ? bundleID! : Profile.defaultBundleID(for: name),
+            appPath: app.path
+        )
+    }
+
+    // MARK: - Mutations
+
+    /// Create a launcher and its profile dir.
+    @discardableResult
+    public func add(_ request: AddProfileRequest) throws -> AddResult {
+        guard realClaude.binaryExists(fileManager: fileManager) else {
+            throw ClaudeManagerError.realClaudeNotFound
+        }
+        guard Profile.isValidName(request.name) else {
+            throw ClaudeManagerError.invalidProfileName(request.name)
+        }
+
+        let profile = draft(
+            name: request.name,
+            label: request.label,
+            color: request.color,
+            displayName: request.displayName,
+            bundleID: request.bundleID,
+            profilePath: request.profilePath
+        )
+
+        if fileManager.fileExists(atPath: profile.appPath), !request.force {
+            throw ClaudeManagerError.launcherAlreadyExists(path: profile.appPath)
+        }
+        if request.force, let pid = runningPID(for: profile) {
+            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
+        }
+
+        try ensureInstallDirectoryWritable()
+
+        let reused = directoryHasContents(profile.profilePath)
+        try fileManager.createDirectory(at: profile.profileURL, withIntermediateDirectories: true)
+
+        let icns = try iconPipeline.makeBadgeICNS(
+            realClaude: realClaude,
+            label: profile.label,
+            color: profile.color
+        )
+        try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+
+        // Skip the screen-flashing Dock restart for a brand-new bundle (nothing
+        // cached for its path); restart on a forced rebuild or a trashed twin.
+        let restartDock = request.force || bundle.hasTrashedTwin(appURL: profile.appURL)
+        iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+
+        return AddResult(profile: profile, reusedProfileData: reused)
+    }
+
+    /// Apply edits by rebuilding the launcher, trashing the old bundle on rename.
+    @discardableResult
+    public func update(original: Profile, to updated: Profile) throws -> Profile {
+        if let pid = runningPID(for: original) {
+            throw ClaudeManagerError.profileRunning(name: original.name, pid: pid)
+        }
+        guard Profile.isValidName(updated.name) else {
+            throw ClaudeManagerError.invalidProfileName(updated.name)
+        }
+        let renaming = updated.appPath != original.appPath
+        if renaming, fileManager.fileExists(atPath: updated.appPath) {
+            throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
+        }
+
+        try ensureInstallDirectoryWritable()
+        try fileManager.createDirectory(at: updated.profileURL, withIntermediateDirectories: true)
+
+        let icns = try iconPipeline.makeBadgeICNS(
+            realClaude: realClaude,
+            label: updated.label,
+            color: updated.color
+        )
+        try bundle.build(profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+
+        if renaming, fileManager.fileExists(atPath: original.appPath) {
+            _ = try? bundle.moveToTrash(appURL: original.appURL)
+        }
+
+        // In-place rebuild has a stale cached icon → restart the Dock; a fresh
+        // path only needs a restart if a same-named twin is in the Trash.
+        let restartDock = !renaming || bundle.hasTrashedTwin(appURL: updated.appURL)
+        iconCache.refresh(appURL: updated.appURL, restartDock: restartDock)
+        return updated
+    }
+
+    /// Move the launcher to Trash (and optionally delete the profile data).
+    @discardableResult
+    public func remove(_ profile: Profile, purgeProfile: Bool) throws -> RemovalResult {
+        if let pid = runningPID(for: profile) {
+            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
+        }
+        let trashed = try bundle.moveToTrash(appURL: profile.appURL)
+        var purged = false
+        if purgeProfile, fileManager.fileExists(atPath: profile.profilePath) {
+            try fileManager.removeItem(at: profile.profileURL)
+            purged = true
+        }
+        return RemovalResult(
+            trashedAppURL: trashed,
+            profilePath: profile.profilePath,
+            purgedProfileData: purged
+        )
+    }
+
+    /// Launch the profile (a fresh instance; the launcher's own guard prevents
+    /// duplicates on the same user-data-dir).
+    public func open(_ profile: Profile) throws {
+        try runner.runChecked(CoreConstants.openPath, ["-n", profile.appPath])
+    }
+
+    /// Stop the running instance, polling until it exits or the timeout elapses.
+    @discardableResult
+    public func stop(
+        _ profile: Profile,
+        force: Bool,
+        pollInterval: TimeInterval = 0.5,
+        maxPolls: Int = 20
+    ) -> StopOutcome {
+        guard let pid = runningPID(for: profile) else { return .notRunning }
+        _ = signalSender(pid, force ? SIGKILL : SIGTERM)
+        for _ in 0 ..< maxPolls {
+            Thread.sleep(forTimeInterval: pollInterval)
+            if runningPID(for: profile) == nil { return .stopped }
+        }
+        return .stillRunning(pid: pid)
+    }
+
+    /// Rebuild one launcher's badge icon.
+    public func regenerateIcon(for profile: Profile, restartDock: Bool = true) throws {
+        guard fileManager.fileExists(atPath: profile.appPath) else {
+            throw ClaudeManagerError.launcherNotFound(name: profile.name)
+        }
+        let icns = try iconPipeline.makeBadgeICNS(
+            realClaude: realClaude,
+            label: profile.label,
+            color: profile.color
+        )
+        try icns.write(to: profile.appURL.appendingPathComponent("Contents/Resources/Badge.icns"))
+        iconCache.refresh(appURL: profile.appURL, restartDock: false)
+        if restartDock { iconCache.restartDock() }
+    }
+
+    /// Rebuild every launcher's icon, restarting the Dock once for the batch.
+    @discardableResult
+    public func regenerateAllIcons() throws -> [Profile] {
+        let profiles = list().map(\.profile)
+        for profile in profiles {
+            try regenerateIcon(for: profile, restartDock: false)
+        }
+        if !profiles.isEmpty { iconCache.restartDock() }
+        return profiles
+    }
+
+    /// All running Claude instances across every bundle (for the status view).
+    public func runningInstances() -> [ClaudeInstance] {
+        processProbe.allClaudeMains()
+    }
+
+    /// Health check.
+    public func doctor() -> [Diagnostic] {
+        Doctor(
+            realClaude: realClaude,
+            configuration: configuration,
+            bundle: bundle,
+            processProbe: processProbe,
+            fileManager: fileManager
+        ).run()
+    }
+
+    // MARK: - Helpers
+
+    func runningPID(for profile: Profile) -> Int32? {
+        processProbe.mainPID(
+            forProfilePath: profile.profilePath,
+            realBinaryPath: realClaude.binaryURL.path
+        )
+    }
+
+    func directoryHasContents(_ path: String) -> Bool {
+        guard fileManager.fileExists(atPath: path) else { return false }
+        let contents = (try? fileManager.contentsOfDirectory(atPath: path)) ?? []
+        return !contents.isEmpty
+    }
+
+    func diskSize(of path: String) -> String? {
+        guard fileManager.fileExists(atPath: path),
+              let output = try? runner.run(CoreConstants.duPath, ["-sh", path]),
+              output.succeeded
+        else { return nil }
+        return output.trimmedOutput.split(whereSeparator: \.isWhitespace).first.map(String.init)
+    }
+
+    func ensureInstallDirectoryWritable() throws {
+        let dir = configuration.installDirectory
+        if !fileManager.fileExists(atPath: dir.path) {
+            do {
+                try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                throw ClaudeManagerError.installDirectoryNotWritable(path: dir.path)
+            }
+        }
+        guard fileManager.isWritableFile(atPath: dir.path) else {
+            throw ClaudeManagerError.installDirectoryNotWritable(path: dir.path)
+        }
+    }
+}
