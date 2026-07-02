@@ -37,13 +37,19 @@ public struct LauncherBundle {
     /// at the same path — callers enforce the force/running policy first.
     public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws {
         let appURL = profile.appURL
-        let contents = appURL.appendingPathComponent("Contents")
+        let parent = appURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+
+        // Assemble into a hidden sibling first, then swap it into place — an
+        // existing launcher is only removed once the new one is fully written, so
+        // a mid-build failure can't leave the user without a working launcher.
+        // Same parent dir keeps the final move on one volume (atomic rename).
+        let tempURL = parent.appendingPathComponent(".\(appURL.lastPathComponent).build-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: tempURL) }
+
+        let contents = tempURL.appendingPathComponent("Contents")
         let macOS = contents.appendingPathComponent("MacOS")
         let resources = contents.appendingPathComponent("Resources")
-
-        if fileManager.fileExists(atPath: appURL.path) {
-            try fileManager.removeItem(at: appURL)
-        }
         try fileManager.createDirectory(at: macOS, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
 
@@ -71,6 +77,12 @@ public struct LauncherBundle {
             profile: profile,
             marker: marker
         )
+
+        if fileManager.fileExists(atPath: appURL.path) {
+            _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+        } else {
+            try fileManager.moveItem(at: tempURL, to: appURL)
+        }
     }
 
     func writeInfoPlist(at url: URL, profile: Profile, marker: LauncherMarker) throws {

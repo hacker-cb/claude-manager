@@ -97,7 +97,14 @@ enum Fixture {
         let trash = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
         guard let entries = try? fileManager.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
         else { return }
-        for entry in entries where entry.lastPathComponent.hasPrefix(prefix) {
+        let bundle = LauncherBundle(fileManager: fileManager)
+        // Only ever delete our own managed launcher bundles — never an unrelated
+        // user file in ~/.Trash that happens to share the prefix.
+        for entry in entries {
+            guard entry.lastPathComponent.hasPrefix(prefix),
+                  entry.pathExtension == "app",
+                  bundle.isManagedLauncher(at: entry)
+            else { continue }
             try? fileManager.removeItem(at: entry)
         }
     }
