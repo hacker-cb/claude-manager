@@ -1,0 +1,65 @@
+name: ClaudeManager
+options:
+  bundleIdPrefix: me.sokolov.claude-manager
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  ClaudeManagerCore:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Signing is supplied at release time via CI (Developer ID). Local/PR builds
+    # pass CODE_SIGNING_ALLOWED=NO, so no team is required to compile.
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Manual
+
+targets:
+  ClaudeManager:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/ClaudeManagerApp
+    dependencies:
+      - package: ClaudeManagerCore
+        product: ClaudeManagerCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.sokolov.claude-manager
+        PRODUCT_NAME: Claude Manager
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_IDENTITY: "-"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Pavel Sokolov. MIT-licensed."
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+    info:
+      path: Sources/ClaudeManagerApp/Resources/Info.plist
+      properties:
+        CFBundleName: Claude Manager
+        CFBundleDisplayName: Claude Manager
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: "Copyright © 2026 Pavel Sokolov. MIT-licensed."
+        # We activate/quit other Claude processes; the launcher scripts use System
+        # Events. Declare the usage string so the one-time TCC prompt is legible.
+        NSAppleEventsUsageDescription: "Claude Manager brings profile windows to the front and quits running profiles."
+    entitlements:
+      path: Sources/ClaudeManagerApp/Resources/ClaudeManager.entitlements
+      properties:
+        # Non-sandboxed by necessity: the app writes launcher bundles next to the
+        # real Claude.app, runs lsregister/iconutil, and restarts the Dock —
+        # none of which is possible inside the App Sandbox. Distribution is
+        # Developer ID + notarization (never the App Store).
+        com.apple.security.app-sandbox: false
+        com.apple.security.automation.apple-events: true

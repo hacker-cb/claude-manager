@@ -1,0 +1,14 @@
+# SwiftFormat configuration — see https://github.com/nicklockwood/SwiftFormat
+--swiftversion 6.0
+--self remove
+--importgrouping testable-bottom
+--commas inline
+--trimwhitespace always
+--indent 4
+--maxwidth 110
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--funcattributes prev-line
+--typeattributes prev-line
+--exclude .build,DerivedData,dist,Sources/ClaudeManagerApp/Resources
