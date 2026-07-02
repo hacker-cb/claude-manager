@@ -314,6 +314,12 @@ public struct ProfileStore {
     /// waiting up to `pollInterval * maxPolls` (~10s by default), and this runs off
     /// the main actor on the shared cooperative pool. Suspending instead of blocking
     /// keeps that thread free for other work while we wait.
+    ///
+    /// Cancellation stops the wait: a cancelled `Task.sleep` throws, and we break out
+    /// rather than swallowing it and busy-spinning `runningPID` for the rest of the
+    /// budget. `pollInterval` is clamped only to keep a negative value out of
+    /// `Duration.seconds`; a zero or tiny interval still returns near-immediately, so
+    /// the loop can spin fast — bounded, either way, only by the `maxPolls` cap.
     @discardableResult
     public func stop(
         _ profile: Profile,
@@ -323,8 +329,13 @@ public struct ProfileStore {
     ) async -> StopOutcome {
         guard let pid = runningPID(for: profile) else { return .notRunning }
         _ = signalSender(pid, force ? SIGKILL : SIGTERM)
+        let interval = Duration.seconds(max(0, pollInterval))
         for _ in 0 ..< maxPolls {
-            try? await Task.sleep(for: .seconds(pollInterval))
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                break // cancelled — stop waiting
+            }
             if runningPID(for: profile) == nil { return .stopped }
         }
         return .stillRunning(pid: pid)

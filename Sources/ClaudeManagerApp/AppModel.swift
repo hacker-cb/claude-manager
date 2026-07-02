@@ -183,8 +183,8 @@ final class AppModel: ObservableObject {
 
     // MARK: - Plumbing
 
-    /// Run a blocking store operation off the main actor, surfacing errors as an
-    /// alert. Returns `nil` on failure.
+    /// Run a store operation off the main actor — it may block or suspend (e.g. the
+    /// async `stop`) — surfacing errors as an alert. Returns `nil` on failure.
     private func perform<T: Sendable>(
         _ body: @Sendable @escaping (ProfileStore) async throws -> T
     ) async -> T? {
