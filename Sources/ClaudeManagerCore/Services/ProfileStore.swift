@@ -309,17 +309,22 @@ public struct ProfileStore {
     }
 
     /// Stop the running instance, polling until it exits or the timeout elapses.
+    ///
+    /// Polls with `Task.sleep`, not `Thread.sleep`: a stubborn process can keep us
+    /// waiting up to `pollInterval * maxPolls` (~10s by default), and this runs off
+    /// the main actor on the shared cooperative pool. Suspending instead of blocking
+    /// keeps that thread free for other work while we wait.
     @discardableResult
     public func stop(
         _ profile: Profile,
         force: Bool,
         pollInterval: TimeInterval = 0.5,
         maxPolls: Int = 20
-    ) -> StopOutcome {
+    ) async -> StopOutcome {
         guard let pid = runningPID(for: profile) else { return .notRunning }
         _ = signalSender(pid, force ? SIGKILL : SIGTERM)
         for _ in 0 ..< maxPolls {
-            Thread.sleep(forTimeInterval: pollInterval)
+            try? await Task.sleep(for: .seconds(pollInterval))
             if runningPID(for: profile) == nil { return .stopped }
         }
         return .stillRunning(pid: pid)

@@ -235,15 +235,15 @@ struct ProfileStoreTests {
     }
 
     @Test
-    func stopReturnsNotRunningWhenAbsent() throws {
+    func stopReturnsNotRunningWhenAbsent() async throws {
         let env = try makeEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        #expect(env.store.stop(profile, force: false) == .notRunning)
+        #expect(await env.store.stop(profile, force: false) == .notRunning)
     }
 
     @Test
-    func stopReturnsStoppedWhenProcessDisappears() throws {
+    func stopReturnsStoppedWhenProcessDisappears() async throws {
         let counter = CallCounter()
         let env = try makeEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
@@ -259,7 +259,7 @@ struct ProfileStoreTests {
         })
         defer { try? fm.removeItem(at: env.root) }
         let profile = env.store.draft(name: env.name("work"))
-        let outcome = env.store.stop(profile, force: false, pollInterval: 0.01, maxPolls: 10)
+        let outcome = await env.store.stop(profile, force: false, pollInterval: 0.01, maxPolls: 10)
         #expect(outcome == .stopped)
     }
 

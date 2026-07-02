@@ -155,7 +155,7 @@ final class AppModel: ObservableObject {
     }
 
     func stop(_ profile: Profile, force: Bool) async {
-        let outcome = await perform { store in store.stop(profile, force: force) }
+        let outcome = await perform { store in await store.stop(profile, force: force) }
         if case let .stillRunning(pid)? = outcome {
             currentError =
                 AppError(message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop.")
@@ -186,7 +186,7 @@ final class AppModel: ObservableObject {
     /// Run a blocking store operation off the main actor, surfacing errors as an
     /// alert. Returns `nil` on failure.
     private func perform<T: Sendable>(
-        _ body: @Sendable @escaping (ProfileStore) throws -> T
+        _ body: @Sendable @escaping (ProfileStore) async throws -> T
     ) async -> T? {
         guard let real = realClaude, let config = currentConfiguration() else {
             currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
@@ -197,7 +197,7 @@ final class AppModel: ObservableObject {
         do {
             return try await Task.detached {
                 let store = ProfileStore(realClaude: real, configuration: config)
-                return try body(store)
+                return try await body(store)
             }.value
         } catch {
             currentError = AppError(message: Self.describe(error))
