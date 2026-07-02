@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Format + lint gate. Enable with:  git config core.hooksPath .githooks  (or `make setup`).
+set -euo pipefail
+
+if ! git diff --cached --name-only --diff-filter=ACM | grep -q '\.swift$'; then
+  exit 0
+fi
+
+if command -v swiftformat >/dev/null 2>&1; then
+  swiftformat --lint . || {
+    echo "✗ swiftformat found issues — run 'make format' and re-stage." >&2
+    exit 1
+  }
+else
+  echo "⚠ swiftformat not installed (run 'brew bundle') — skipping format check." >&2
+fi
+
+if command -v swiftlint >/dev/null 2>&1; then
+  swiftlint --strict --quiet || {
+    echo "✗ swiftlint failed." >&2
+    exit 1
+  }
+else
+  echo "⚠ swiftlint not installed (run 'brew bundle') — skipping lint." >&2
+fi

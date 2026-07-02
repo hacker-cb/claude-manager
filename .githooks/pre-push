@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Run the headless core test suite before pushing.
+set -euo pipefail
+
+if command -v swift >/dev/null 2>&1; then
+  echo "→ swift test (pre-push)…"
+  swift test
+else
+  echo "⚠ swift not found — skipping pre-push tests." >&2
+fi
