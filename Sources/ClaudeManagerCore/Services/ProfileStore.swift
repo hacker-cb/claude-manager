@@ -190,6 +190,9 @@ public struct ProfileStore {
         guard Profile.isValidDisplayName(profile.displayName) else {
             throw ClaudeManagerError.invalidDisplayName(profile.displayName)
         }
+        guard Profile.isValidBundleID(profile.bundleID) else {
+            throw ClaudeManagerError.invalidBundleID(profile.bundleID)
+        }
 
         if fileManager.fileExists(atPath: profile.appPath), !request.force {
             throw ClaudeManagerError.launcherAlreadyExists(path: profile.appPath)
@@ -232,6 +235,9 @@ public struct ProfileStore {
         }
         guard Profile.isValidDisplayName(updated.displayName) else {
             throw ClaudeManagerError.invalidDisplayName(updated.displayName)
+        }
+        guard Profile.isValidBundleID(updated.bundleID) else {
+            throw ClaudeManagerError.invalidBundleID(updated.bundleID)
         }
         // Re-derive the bundle path from the install dir + validated display name
         // rather than trusting the caller's appPath — the only injection-proof
@@ -382,7 +388,14 @@ public struct ProfileStore {
 
     func ensureInstallDirectoryWritable() throws {
         let dir = configuration.installDirectory
-        if !fileManager.fileExists(atPath: dir.path) {
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: dir.path, isDirectory: &isDirectory) {
+            // A regular file at the install path would pass the writability check
+            // but fail confusingly when we create Contents/ under it.
+            guard isDirectory.boolValue else {
+                throw ClaudeManagerError.installDirectoryNotWritable(path: dir.path)
+            }
+        } else {
             do {
                 try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
             } catch {

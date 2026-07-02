@@ -114,6 +114,36 @@ struct ProfileStoreTests {
     }
 
     @Test
+    func addRejectsInvalidBundleID() throws {
+        let env = try makeEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        #expect(throws: ClaudeManagerError.self) {
+            try env.store.add(AddProfileRequest(name: env.name("work"), bundleID: "no dots here"))
+        }
+    }
+
+    @Test
+    func addRejectsInstallDirectoryThatIsAFile() throws {
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let fileAsInstallDir = root.appendingPathComponent("not-a-dir")
+        try Data("x".utf8).write(to: fileAsInstallDir)
+        let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
+        let store = ProfileStore(
+            realClaude: real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: fileAsInstallDir,
+                defaultProfilesDirectory: root.appendingPathComponent("profiles")
+            ),
+            runner: RecordingCommandRunner.delegating(stub: idleStub),
+            signalSender: { _, _ in 0 }
+        )
+        #expect(throws: ClaudeManagerError.self) {
+            try store.add(AddProfileRequest(name: "work"))
+        }
+    }
+
+    @Test
     func addRefusedWhileProfileRunning() throws {
         // The profile's user-data-dir already has a live instance → refuse
         // regardless of force (guards against rebuilding under a running process).

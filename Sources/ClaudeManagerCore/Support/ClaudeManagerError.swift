@@ -11,6 +11,7 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case profileRunning(name: String, pid: Int32)
     case invalidProfileName(String)
     case invalidDisplayName(String)
+    case invalidBundleID(String)
     case invalidColor(String)
     case invalidHexColor(String)
     case iconGenerationFailed(String)
@@ -36,6 +37,8 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):
             return "Invalid display name \"\(name)\". It can't be empty, start with a dot, or contain a slash or colon."
+        case let .invalidBundleID(value):
+            return "Invalid bundle identifier \"\(value)\". Use reverse-DNS form, e.g. com.example.app."
         case let .invalidColor(value):
             return "Unknown color \"\(value)\". Use a palette name or a #RRGGBB hex value."
         case let .invalidHexColor(value):

@@ -84,4 +84,15 @@ public extension Profile {
         let forbidden = CharacterSet(charactersIn: "/:\\").union(.newlines).union(.controlCharacters)
         return displayName.rangeOfCharacter(from: forbidden) == nil
     }
+
+    /// Reverse-DNS-ish bundle identifier written to `CFBundleIdentifier`: only
+    /// letters, digits, dots and hyphens, at least one dot, and no empty segments.
+    static func isValidBundleID(_ bundleID: String) -> Bool {
+        guard bundleID.contains("."), !bundleID.hasPrefix("."), !bundleID.hasSuffix("."),
+              !bundleID.contains("..")
+        else { return false }
+        let allowed = CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        return bundleID.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
 }

@@ -21,6 +21,29 @@ struct ProfileDefaultsTests {
     }
 
     @Test
+    func validatesDisplayNames() {
+        #expect(Profile.isValidDisplayName("Claude WORK"))
+        #expect(Profile.isValidDisplayName("a..b"))
+        #expect(!Profile.isValidDisplayName(""))
+        #expect(!Profile.isValidDisplayName("."))
+        #expect(!Profile.isValidDisplayName(".hidden"))
+        #expect(!Profile.isValidDisplayName("has/slash"))
+        #expect(!Profile.isValidDisplayName("has:colon"))
+    }
+
+    @Test
+    func validatesBundleIDs() {
+        #expect(Profile.isValidBundleID("io.github.hacker-cb.claude-manager.launcher.work"))
+        #expect(Profile.isValidBundleID("com.example.app"))
+        #expect(!Profile.isValidBundleID("noDot"))
+        #expect(!Profile.isValidBundleID("has space.app"))
+        #expect(!Profile.isValidBundleID(".leading"))
+        #expect(!Profile.isValidBundleID("trailing."))
+        #expect(!Profile.isValidBundleID("double..dot"))
+        #expect(!Profile.isValidBundleID("has/slash.app"))
+    }
+
+    @Test
     func identityIsAppPath() {
         let profile = Profile(
             name: "a", displayName: "Claude A", label: "A", color: .named("red"),
