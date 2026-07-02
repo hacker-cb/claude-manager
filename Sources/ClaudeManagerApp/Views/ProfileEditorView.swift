@@ -56,6 +56,21 @@ struct ProfileEditorView: View {
         Profile.isValidName(name)
     }
 
+    /// Display name and bundle id are optional (empty ⇒ keep default), so an empty
+    /// field is valid; a non-empty one must satisfy the same rule the core enforces,
+    /// otherwise Save would only fail with an alert after a round-trip.
+    private var displayNameIsValid: Bool {
+        displayName.isEmpty || Profile.isValidDisplayName(displayName)
+    }
+
+    private var bundleIDIsValid: Bool {
+        bundleID.isEmpty || Profile.isValidBundleID(bundleID)
+    }
+
+    private var canSave: Bool {
+        !saving && (isEdit || nameIsValid) && displayNameIsValid && bundleIDIsValid
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -113,6 +128,13 @@ struct ProfileEditorView: View {
                 prompt: Text(Profile.defaultDisplayName(for: name.isEmpty ? "NAME" : name))
             )
             .help("The app name shown in the Dock and Finder.")
+            if !displayNameIsValid {
+                Label(
+                    "Avoid / : \\ or a leading dot — this becomes the app filename.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption).foregroundStyle(.orange)
+            }
 
             DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                 TextField(
@@ -120,6 +142,13 @@ struct ProfileEditorView: View {
                     text: $bundleID,
                     prompt: Text(Profile.defaultBundleID(for: name.isEmpty ? "name" : name))
                 )
+                if !bundleIDIsValid {
+                    Label(
+                        "Reverse-DNS: letters, digits, dots, hyphens; at least one dot.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption).foregroundStyle(.orange)
+                }
                 if isEdit {
                     LabeledContent("Profile data", value: PathUtils.abbreviatingHome(profilePath))
                 } else {
@@ -177,7 +206,7 @@ struct ProfileEditorView: View {
             Button(isEdit ? "Save" : "Create") { Task { await save() } }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .disabled(saving || (!isEdit && !nameIsValid))
+                .disabled(!canSave)
         }
         .padding(16)
     }
