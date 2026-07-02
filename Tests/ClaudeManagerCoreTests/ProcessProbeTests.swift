@@ -59,7 +59,7 @@ struct ProcessProbeTests {
 
     @Test
     func allClaudeMainsIgnoresFailedPs() {
-        // A non-zero `ps` exit must not be read as "nothing running".
+        // A non-zero `ps` exit yields no instances — its output is ignored.
         let runner = RecordingCommandRunner { _, _ in
             CommandOutput(
                 exitCode: 1,

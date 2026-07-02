@@ -58,7 +58,8 @@ public struct RealClaude: Equatable, Sendable {
 }
 
 /// Finds the real Claude app via LaunchServices (bundle id) with path fallbacks.
-/// Every external dependency is injectable so `locate()` is fully unit-testable.
+/// The bundle-id resolver and existence check are injectable, so `locate()` is
+/// unit-testable without touching the real system.
 public struct RealClaudeLocator {
     public typealias BundleIDResolver = @Sendable (String) -> URL?
     public typealias ExistenceCheck = @Sendable (URL) -> Bool
