@@ -355,8 +355,9 @@ struct ProfileStoreTests {
 // MARK: - Shared test environment
 
 /// A store wired to temp directories and a fake real app, shared across the
-/// ProfileStore suites. Kept at file scope so no single suite's body grows unwieldy.
-struct Env {
+/// ProfileStore suites. Kept at file scope so no single suite's body grows unwieldy;
+/// `private` so the generic name can't collide elsewhere in the test target.
+private struct Env {
     let root: URL
     let installDir: URL
     let profilesDir: URL
@@ -382,7 +383,7 @@ struct Env {
 
 /// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
 /// stubbed, so no process is killed and the Dock is never restarted for real.
-func makeEnv(stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub) throws -> Env {
+private func makeEnv(stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub) throws -> Env {
     let fm = FileManager.default
     let root = try Fixture.makeTempDir()
     let installDir = root.appendingPathComponent("apps")

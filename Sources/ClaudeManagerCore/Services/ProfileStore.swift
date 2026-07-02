@@ -317,9 +317,9 @@ public struct ProfileStore {
     ///
     /// Cancellation stops the wait: a cancelled `Task.sleep` throws, and we break out
     /// rather than swallowing it and busy-spinning `runningPID` for the rest of the
-    /// budget. `pollInterval` is clamped non-negative so a negative value can't trap
-    /// `Duration.seconds` or collapse the sleep into an immediate return (a zero or
-    /// tiny interval is still honored — the `maxPolls` cap bounds the loop either way).
+    /// budget. `pollInterval` is clamped only to keep a negative value out of
+    /// `Duration.seconds`; a zero or tiny interval still returns near-immediately, so
+    /// the loop can spin fast — bounded, either way, only by the `maxPolls` cap.
     @discardableResult
     public func stop(
         _ profile: Profile,
