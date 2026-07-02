@@ -17,8 +17,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var realClaude: RealClaude?
     @Published private(set) var realClaudeVersion: String?
     @Published var locateError: String?
-    @Published var isBusy = false
+    @Published private(set) var isBusy = false
     @Published var currentError: AppError?
+
+    /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
+    /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
+    private var inflight = 0 {
+        didSet { isBusy = inflight > 0 }
+    }
+
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
@@ -185,8 +192,8 @@ final class AppModel: ObservableObject {
             currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
             return nil
         }
-        isBusy = true
-        defer { isBusy = false }
+        inflight += 1
+        defer { inflight -= 1 }
         do {
             return try await Task.detached {
                 let store = ProfileStore(realClaude: real, configuration: config)

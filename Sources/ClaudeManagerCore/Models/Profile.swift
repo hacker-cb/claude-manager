@@ -74,4 +74,14 @@ public extension Profile {
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
         return name.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
+
+    /// A display name becomes the launcher's `.app` filename, so it must stay a
+    /// single path component — no separators or traversal — to keep the bundle
+    /// path inside the install directory. Spaces are allowed (e.g. "Claude WORK").
+    static func isValidDisplayName(_ displayName: String) -> Bool {
+        guard !displayName.isEmpty, displayName != ".", displayName != ".." else { return false }
+        if displayName.hasPrefix(".") { return false }
+        let forbidden = CharacterSet(charactersIn: "/:\\").union(.newlines).union(.controlCharacters)
+        return displayName.rangeOfCharacter(from: forbidden) == nil
+    }
 }

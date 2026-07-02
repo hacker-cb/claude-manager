@@ -180,11 +180,19 @@ public struct ProfileStore {
             bundleID: request.bundleID,
             profilePath: request.profilePath
         )
+        // The display name becomes the .app filename — reject anything that would
+        // let the bundle path escape the install directory.
+        guard Profile.isValidDisplayName(profile.displayName) else {
+            throw ClaudeManagerError.invalidDisplayName(profile.displayName)
+        }
 
         if fileManager.fileExists(atPath: profile.appPath), !request.force {
             throw ClaudeManagerError.launcherAlreadyExists(path: profile.appPath)
         }
-        if request.force, let pid = runningPID(for: profile) {
+        // Refuse whenever this profile's user-data-dir already has a live instance,
+        // not only on a forced rebuild — otherwise re-adding a name whose bundle was
+        // deleted while running would rebuild under the live process.
+        if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
 
@@ -217,6 +225,16 @@ public struct ProfileStore {
         guard Profile.isValidName(updated.name) else {
             throw ClaudeManagerError.invalidProfileName(updated.name)
         }
+        guard Profile.isValidDisplayName(updated.displayName) else {
+            throw ClaudeManagerError.invalidDisplayName(updated.displayName)
+        }
+        // Re-derive the bundle path from the install dir + validated display name
+        // rather than trusting the caller's appPath — the only injection-proof
+        // source for where the .app lands.
+        var updated = updated
+        updated.appPath = configuration.installDirectory
+            .appendingPathComponent("\(updated.displayName).app").path
+
         let renaming = updated.appPath != original.appPath
         if renaming, fileManager.fileExists(atPath: updated.appPath) {
             throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
@@ -252,8 +270,15 @@ public struct ProfileStore {
         let trashed = try bundle.moveToTrash(appURL: profile.appURL)
         var purged = false
         if purgeProfile, fileManager.fileExists(atPath: profile.profilePath) {
-            try fileManager.removeItem(at: profile.profileURL)
-            purged = true
+            // Never delete data another launcher still points at (the launcher we
+            // just trashed is already gone from the scan).
+            let sharedByAnother = bundle
+                .scan(installDirectory: configuration.installDirectory)
+                .contains { $0.marker.profile == profile.profilePath }
+            if !sharedByAnother {
+                try fileManager.removeItem(at: profile.profileURL)
+                purged = true
+            }
         }
         return RemovalResult(
             trashedAppURL: trashed,

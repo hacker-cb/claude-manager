@@ -42,11 +42,16 @@ public struct Doctor {
     // MARK: - Individual checks
 
     private func realClaudeDiagnostic() -> Diagnostic {
-        guard let realClaude, realClaude.binaryExists(fileManager: fileManager) else {
+        guard let realClaude else {
+            return Diagnostic(severity: .error, title: "Real Claude.app is missing")
+        }
+        guard realClaude.binaryExists(fileManager: fileManager) else {
+            // The bundle resolved but its executable is absent — distinct from a
+            // truly missing app (e.g. a broken/partial update).
             return Diagnostic(
                 severity: .error,
-                title: "Real Claude.app is missing",
-                detail: realClaude.map { PathUtils.abbreviatingHome($0.appURL.path) }
+                title: "Real Claude.app has no executable",
+                detail: PathUtils.abbreviatingHome(realClaude.binaryURL.path)
             )
         }
         let version = realClaude.version(fileManager: fileManager).map { "v\($0)" } ?? "version unknown"

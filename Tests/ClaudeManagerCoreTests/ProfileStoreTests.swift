@@ -114,7 +114,9 @@ struct ProfileStoreTests {
     }
 
     @Test
-    func forceRebuildRefusedWhileRunning() throws {
+    func addRefusedWhileProfileRunning() throws {
+        // The profile's user-data-dir already has a live instance → refuse
+        // regardless of force (guards against rebuilding under a running process).
         let env = try makeEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "999\n", standardError: "")
@@ -122,10 +124,52 @@ struct ProfileStoreTests {
             return idleStub(executable, args)
         })
         defer { try? fm.removeItem(at: env.root) }
-        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.add(AddProfileRequest(name: env.name("work"), force: true))
+            try env.store.add(AddProfileRequest(name: env.name("work")))
         }
+    }
+
+    @Test
+    func addRejectsTraversalDisplayName() throws {
+        let env = try makeEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        #expect(throws: ClaudeManagerError.self) {
+            try env.store.add(AddProfileRequest(name: env.name("work"), displayName: "../../../Evil"))
+        }
+        #expect(!fm.fileExists(atPath: env.root.appendingPathComponent("Evil.app").path))
+    }
+
+    @Test
+    func updateRejectsTraversalDisplayName() throws {
+        let env = try makeEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var evil = original
+        evil.displayName = "../../../Evil"
+        #expect(throws: ClaudeManagerError.self) {
+            try env.store.update(original: original, to: evil)
+        }
+    }
+
+    @Test
+    func removeKeepsDataSharedByAnotherLauncher() throws {
+        let env = try makeEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("aa"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("bb"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared").path
+        let first = try env.store.add(AddProfileRequest(name: env.name("aa"), profilePath: shared)).profile
+        _ = try env.store.add(AddProfileRequest(name: env.name("bb"), profilePath: shared)).profile
+
+        let result = try env.store.remove(first, purgeProfile: true)
+        // The second launcher still points at the shared dir, so its data is kept.
+        #expect(!result.purgedProfileData)
+        #expect(fm.fileExists(atPath: shared))
     }
 
     @Test

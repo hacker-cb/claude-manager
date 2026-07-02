@@ -29,11 +29,21 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          # Pass event data through env, never interpolate ${{ }} into the shell —
+          # a crafted workflow_dispatch input must not become executable code.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            V="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            V="$INPUT_VERSION"
           else
-            V="${GITHUB_REF_NAME#v}"
+            V="${REF_NAME#v}"
+          fi
+          if ! printf '%s' "$V" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+            echo "Invalid version '$V' (allowed: letters, digits, . _ -)" >&2
+            exit 1
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -80,10 +90,18 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DMG: ${{ steps.package.outputs.dmg }}
         run: |
-          gh release create "${GITHUB_REF_NAME:-v${{ steps.version.outputs.version }}}" \
-            "${{ steps.package.outputs.dmg }}" \
-            --title "Claude Manager ${{ steps.version.outputs.version }}" \
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="v$VERSION"
+          else
+            TAG="$REF_NAME"
+          fi
+          gh release create "$TAG" "$DMG" \
+            --title "Claude Manager $VERSION" \
             --generate-notes
 
       - name: Clean up secrets

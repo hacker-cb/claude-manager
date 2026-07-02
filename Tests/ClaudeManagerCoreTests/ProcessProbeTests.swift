@@ -40,6 +40,24 @@ struct ProcessProbeTests {
     }
 
     @Test
+    func extractsProfilePathContainingSpaces() {
+        // The default profiles dir lives under "Application Support/Claude Manager".
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/Users/x/Library/Application Support/Claude Manager/Profiles/work"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains.count == 1)
+        #expect(mains[0].profilePath == "/Users/x/Library/Application Support/Claude Manager/Profiles/work")
+    }
+
+    @Test
+    func stopsProfileCaptureAtNextFlag() {
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/data/my work --enable-logging"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains[0].profilePath == "/data/my work")
+    }
+
+    @Test
     func mainPIDUsesPgrepAndTrustsExitCode() {
         let running = RecordingCommandRunner { executable, _ in
             #expect(executable == CoreConstants.pgrepPath)

@@ -51,64 +51,56 @@ public struct SystemCommandRunner: CommandRunner {
 
     @discardableResult
     public func run(_ executable: String, _ arguments: [String]) throws -> CommandOutput {
+        let fileManager = FileManager.default
+        let outURL = fileManager.temporaryDirectory.appendingPathComponent("cmd-out-\(UUID().uuidString)")
+        let errURL = fileManager.temporaryDirectory.appendingPathComponent("cmd-err-\(UUID().uuidString)")
+        fileManager.createFile(atPath: outURL.path, contents: nil)
+        fileManager.createFile(atPath: errURL.path, contents: nil)
+        defer {
+            try? fileManager.removeItem(at: outURL)
+            try? fileManager.removeItem(at: errURL)
+        }
+
+        // Redirect to files rather than pipes: no 64 KB pipe-buffer deadlock on
+        // chatty commands (e.g. `ps ax`), and — crucially — no concurrent pipe
+        // reads competing for libdispatch threads. Under a saturated cooperative
+        // pool (e.g. the parallel test suite) that competition can starve
+        // `Process`'s own termination monitoring and wedge `waitUntilExit()`.
+        guard let outHandle = try? FileHandle(forWritingTo: outURL),
+              let errHandle = try? FileHandle(forWritingTo: errURL)
+        else {
+            throw ClaudeManagerError.commandLaunchFailed(
+                executable: executable,
+                message: "could not open capture files"
+            )
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
+        process.standardOutput = outHandle
+        process.standardError = errHandle
 
         do {
             try process.run()
         } catch {
+            try? outHandle.close()
+            try? errHandle.close()
             throw ClaudeManagerError.commandLaunchFailed(
                 executable: executable,
                 message: error.localizedDescription
             )
         }
-
-        // Drain both pipes concurrently: reading one to EOF while the other's
-        // buffer fills would otherwise deadlock on chatty commands.
-        let box = OutputBox()
-        let group = DispatchGroup()
-        for (pipe, isStdout) in [(outPipe, true), (errPipe, false)] {
-            group.enter()
-            DispatchQueue.global().async {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                box.set(data, isStdout: isStdout)
-                group.leave()
-            }
-        }
         process.waitUntilExit()
-        group.wait()
+        try? outHandle.close()
+        try? errHandle.close()
 
+        let outData = (try? Data(contentsOf: outURL)) ?? Data()
+        let errData = (try? Data(contentsOf: errURL)) ?? Data()
         return CommandOutput(
             exitCode: process.terminationStatus,
-            standardOutput: String(decoding: box.stdout, as: UTF8.self),
-            standardError: String(decoding: box.stderr, as: UTF8.self)
+            standardOutput: String(decoding: outData, as: UTF8.self),
+            standardError: String(decoding: errData, as: UTF8.self)
         )
-    }
-}
-
-/// Thread-safe accumulator for the two pipe reads.
-private final class OutputBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var out = Data()
-    private var err = Data()
-
-    func set(_ data: Data, isStdout: Bool) {
-        lock.lock()
-        defer { lock.unlock() }
-        if isStdout { out = data } else { err = data }
-    }
-
-    var stdout: Data {
-        lock.lock(); defer { lock.unlock() }; return out
-    }
-
-    var stderr: Data {
-        lock.lock(); defer { lock.unlock() }; return err
     }
 }

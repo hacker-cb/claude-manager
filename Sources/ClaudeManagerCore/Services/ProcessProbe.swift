@@ -97,7 +97,11 @@ public struct ProcessProbe {
         )
     }
 
-    private static let profileRegex = makeRegex(#"--user-data-dir=(\S+)"#)
+    /// Capture the whole --user-data-dir value, including spaces (the default
+    /// profiles dir lives under "Application Support/Claude Manager/…"), stopping
+    /// only before the next `--flag` or end of line. `ps` space-joins argv, so a
+    /// greedy `\S+` would truncate any path containing a space.
+    private static let profileRegex = makeRegex(#"--user-data-dir=(.+?)(?=\s--|$)"#)
 
     private static func userDataDir(in arguments: String) -> String? {
         let range = NSRange(arguments.startIndex ..< arguments.endIndex, in: arguments)

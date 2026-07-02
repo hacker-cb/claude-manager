@@ -10,6 +10,7 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case launcherAlreadyExists(path: String)
     case profileRunning(name: String, pid: Int32)
     case invalidProfileName(String)
+    case invalidDisplayName(String)
     case invalidColor(String)
     case invalidHexColor(String)
     case iconGenerationFailed(String)
@@ -33,6 +34,8 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
+        case let .invalidDisplayName(name):
+            return "Invalid display name \"\(name)\". It must be a single name without \"/\", \":\", or \"..\"."
         case let .invalidColor(value):
             return "Unknown color \"\(value)\". Use a palette name or a #RRGGBB hex value."
         case let .invalidHexColor(value):
