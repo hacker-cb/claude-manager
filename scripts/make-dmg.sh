@@ -23,7 +23,7 @@ if command -v create-dmg >/dev/null 2>&1; then
     --icon-size 110 \
     --icon "Claude Manager.app" 140 180 \
     --app-drop-link 400 180 \
-    "$DMG" "$APP" || true
+    "$DMG" "$APP" || rm -f "$DMG"
 fi
 
 if [ ! -f "$DMG" ]; then

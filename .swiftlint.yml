@@ -15,6 +15,7 @@ opt_in_rules:
 
 excluded:
   - .build
+  - build
   - DerivedData
   - dist
   - scripts

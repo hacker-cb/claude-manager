@@ -67,7 +67,8 @@ struct RootView: View {
             .help("Rescan launchers and running state")
         }
         ToolbarItem {
-            Button { showDoctor = true; Task { await model.runDoctor() } } label: {
+            // DoctorView runs the checks in its own `.task`; just present it.
+            Button { showDoctor = true } label: {
                 Label("Doctor", systemImage: "stethoscope")
             }
             .help("Run health checks")

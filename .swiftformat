@@ -11,4 +11,4 @@
 --wrapcollections before-first
 --funcattributes prev-line
 --typeattributes prev-line
---exclude .build,DerivedData,dist,Sources/ClaudeManagerApp/Resources
+--exclude .build,build,DerivedData,dist,Sources/ClaudeManagerApp/Resources
