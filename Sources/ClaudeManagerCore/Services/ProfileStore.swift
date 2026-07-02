@@ -146,8 +146,13 @@ public struct ProfileStore {
     ) -> Profile {
         let display = displayName?.isEmpty == false ? displayName! : Profile.defaultDisplayName(for: name)
         let app = configuration.installDirectory.appendingPathComponent("\(display).app")
-        let resolvedProfile = profilePath.map(PathUtils.expandingTilde)
-            ?? configuration.defaultProfilesDirectory.appendingPathComponent(name.lowercased()).path
+        let resolvedProfile: String = if let profilePath, !profilePath.isEmpty {
+            // Normalize to absolute so a relative path never resolves against the
+            // process working directory (unpredictable for a GUI app).
+            PathUtils.absolutePath(profilePath, relativeTo: configuration.defaultProfilesDirectory)
+        } else {
+            configuration.defaultProfilesDirectory.appendingPathComponent(name.lowercased()).path
+        }
         let resolvedLabel = (label?.isEmpty == false ? label! : Profile.defaultLabel(for: name)).uppercased()
         return Profile(
             name: name,

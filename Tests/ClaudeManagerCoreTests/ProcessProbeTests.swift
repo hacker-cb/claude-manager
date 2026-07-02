@@ -58,6 +58,19 @@ struct ProcessProbeTests {
     }
 
     @Test
+    func allClaudeMainsIgnoresFailedPs() {
+        // A non-zero `ps` exit must not be read as "nothing running".
+        let runner = RecordingCommandRunner { _, _ in
+            CommandOutput(
+                exitCode: 1,
+                standardOutput: "  1 1 /Applications/Claude.app/Contents/MacOS/Claude",
+                standardError: "boom"
+            )
+        }
+        #expect(ProcessProbe(runner: runner).allClaudeMains().isEmpty)
+    }
+
+    @Test
     func mainPIDUsesPgrepAndTrustsExitCode() {
         let running = RecordingCommandRunner { executable, _ in
             #expect(executable == CoreConstants.pgrepPath)

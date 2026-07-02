@@ -44,9 +44,11 @@ public struct ProcessProbe {
 
     /// All running Claude main processes across every bundle.
     public func allClaudeMains() -> [ClaudeInstance] {
-        guard let output = try? runner.run(CoreConstants.psPath, ["ax", "-o", "pid=,ppid=,command="]) else {
-            return []
-        }
+        // Trust the output only on a clean exit — a failed `ps` must not be read as
+        // "nothing running" (which would cascade into wrong running-state UI).
+        guard let output = try? runner.run(CoreConstants.psPath, ["ax", "-o", "pid=,ppid=,command="]),
+              output.succeeded
+        else { return [] }
         return Self.parseMains(psOutput: output.standardOutput)
     }
 

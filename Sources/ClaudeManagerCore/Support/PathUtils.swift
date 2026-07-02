@@ -18,6 +18,17 @@ public enum PathUtils {
         (path as NSString).expandingTildeInPath
     }
 
+    /// Make `path` absolute: expand a leading `~`, and resolve a still-relative
+    /// path against `base` (so it never depends on the process working directory).
+    /// An already-absolute path is returned unchanged (standardized).
+    public static func absolutePath(_ path: String, relativeTo base: URL) -> String {
+        let expanded = expandingTilde(path)
+        if expanded.hasPrefix("/") {
+            return (expanded as NSString).standardizingPath
+        }
+        return base.appendingPathComponent(expanded).standardizedFileURL.path
+    }
+
     /// Escape a literal string so it can be embedded in an extended regular
     /// expression (as consumed by `pgrep -f`) and match itself verbatim. Without
     /// this a `.` in a path would match any character and a `(` would open a group.

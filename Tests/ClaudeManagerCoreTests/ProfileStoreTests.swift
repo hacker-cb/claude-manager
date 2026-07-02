@@ -185,6 +185,16 @@ struct ProfileStoreTests {
     }
 
     @Test
+    func draftNormalizesRelativeProfilePath() throws {
+        let env = try makeEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        // A relative path must resolve against the profiles dir, never the CWD.
+        let draft = env.store.draft(name: "work", profilePath: "relative/data")
+        #expect(draft.profilePath.hasPrefix("/"))
+        #expect(draft.profilePath == env.profilesDir.appendingPathComponent("relative/data").path)
+    }
+
+    @Test
     func openInvokesOpenWithNewInstanceFlag() throws {
         let env = try makeEnv()
         defer { try? fm.removeItem(at: env.root) }
