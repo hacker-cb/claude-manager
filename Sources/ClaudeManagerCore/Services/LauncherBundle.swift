@@ -148,8 +148,22 @@ public struct LauncherBundle {
 
     /// True when a same-named bundle already sits in the Trash — a hint that this
     /// path had a launcher before, so IconServices may hold a stale cached icon.
+    /// Also matches Finder's collision renames (`Name 2.app`), since `trashItem`
+    /// renames on conflict.
     public func hasTrashedTwin(appURL: URL) -> Bool {
         let trash = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
-        return fileManager.fileExists(atPath: trash.appendingPathComponent(appURL.lastPathComponent).path)
+        let name = appURL.lastPathComponent
+        if fileManager.fileExists(atPath: trash.appendingPathComponent(name).path) {
+            return true
+        }
+        // Scan for a `<base> <n>.<ext>` collision rename when the Trash is listable.
+        guard let entries = try? fileManager.contentsOfDirectory(atPath: trash.path) else { return false }
+        let base = appURL.deletingPathExtension().lastPathComponent
+        let suffix = appURL.pathExtension.isEmpty ? "" : "." + appURL.pathExtension
+        return entries.contains { entry in
+            guard entry.hasPrefix(base + " "), entry.hasSuffix(suffix) else { return false }
+            let middle = entry.dropFirst(base.count + 1).dropLast(suffix.count)
+            return !middle.isEmpty && middle.allSatisfy(\.isNumber)
+        }
     }
 }
