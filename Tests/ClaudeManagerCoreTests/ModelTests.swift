@@ -17,6 +17,17 @@ struct ProfileDefaultsTests {
     }
 
     @Test
+    func rejectsDisplayNamesWithSeparatorsOrControlChars() {
+        // The display name becomes the .app filename, so path separators, a leading
+        // dot, and control characters must be rejected to keep it a single component.
+        #expect(!Profile.isValidDisplayName("has/slash"))
+        #expect(!Profile.isValidDisplayName("has:colon"))
+        #expect(!Profile.isValidDisplayName("has\\backslash"))
+        #expect(!Profile.isValidDisplayName("has\nnewline"))
+        #expect(Profile.isValidDisplayName("Claude WORK")) // spaces are allowed
+    }
+
+    @Test
     func defaultLabelIsNeverBlankForAValidName() {
         // A name of only separators is valid per isValidName but yields no words; the
         // label must fall back to the raw name rather than render a blank badge.

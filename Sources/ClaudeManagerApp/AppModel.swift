@@ -6,6 +6,24 @@ import SwiftUI
 struct AppError: Identifiable {
     let id = UUID()
     let message: String
+
+    init(message: String) {
+        self.message = message
+    }
+
+    /// Prefer a domain error's `errorDescription` over the opaque `localizedDescription`.
+    init(_ error: Error) {
+        message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+/// A message-carrying error so a thrown failure can surface a specific reason (e.g.
+/// the concrete `locateError`) through the editor's alert instead of a generic one.
+struct MessageError: LocalizedError {
+    let message: String
+    var errorDescription: String? {
+        message
+    }
 }
 
 /// The single source of view state. All blocking core operations are dispatched
@@ -178,18 +196,18 @@ final class AppModel: ObservableObject {
 
     // MARK: - Mutations
 
-    @discardableResult
-    func addProfile(_ request: AddProfileRequest) async -> Bool {
-        let result = await perform { store in try store.add(request) }
+    /// Create a launcher. Throws so the editor can present the failure *itself* (its
+    /// sheet covers the window-level alert, so a swallowed error would be invisible
+    /// until the editor is dismissed).
+    func addProfile(_ request: AddProfileRequest) async throws {
+        _ = try await performThrowing { store in try store.add(request) }
         await refresh()
-        return result != nil
     }
 
-    @discardableResult
-    func updateProfile(original: Profile, to updated: Profile) async -> Bool {
-        let result = await perform { store in try store.update(original: original, to: updated) }
+    /// Apply edits. Throws for the same reason as `addProfile`.
+    func updateProfile(original: Profile, to updated: Profile) async throws {
+        _ = try await performThrowing { store in try store.update(original: original, to: updated) }
         await refresh()
-        return result != nil
     }
 
     func removeProfile(_ profile: Profile, purgeProfile: Bool) async {
@@ -248,9 +266,27 @@ final class AppModel: ObservableObject {
                 return try await body(store)
             }.value
         } catch {
-            currentError = AppError(message: Self.describe(error))
+            currentError = AppError(error)
             return nil
         }
+    }
+
+    /// Like `perform`, but re-throws instead of routing the error to `currentError`.
+    /// The caller (the editor) presents the failure in its own sheet-level alert.
+    private func performThrowing<T: Sendable>(
+        _ body: @Sendable @escaping (ProfileStore) async throws -> T
+    ) async throws -> T {
+        guard let real = realClaude, let config = currentConfiguration() else {
+            // Preserve the specific locate reason (mirrors `perform`'s alert) rather
+            // than a generic realClaudeNotFound, since the editor shows this directly.
+            throw MessageError(message: locateError ?? "Real Claude.app was not found.")
+        }
+        inflight += 1
+        defer { inflight -= 1 }
+        return try await Task.detached {
+            let store = ProfileStore(realClaude: real, configuration: config)
+            return try await body(store)
+        }.value
     }
 
     private static func describe(_ error: Error) -> String {

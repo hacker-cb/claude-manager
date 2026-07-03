@@ -17,6 +17,7 @@ struct ProfileEditorView: View {
     @State private var force = false
     @State private var showAdvanced = false
     @State private var saving = false
+    @State private var saveError: AppError?
 
     private let original: Profile?
 
@@ -89,6 +90,13 @@ struct ProfileEditorView: View {
         }
         .frame(width: 540)
         .frame(minHeight: 520)
+        .alert(
+            isEdit ? "Couldn’t save the profile" : "Couldn’t create the profile",
+            isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } }),
+            presenting: saveError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { Text($0.message) }
     }
 
     private var header: some View {
@@ -211,6 +219,9 @@ struct ProfileEditorView: View {
             Spacer()
             Button("Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+                // Block dismissal mid-save: the failure alert lives on this sheet, so
+                // dismissing before it arrives would drop the error silently.
+                .disabled(saving)
             Button(isEdit ? "Save" : "Create") { Task { await save() } }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
@@ -222,26 +233,32 @@ struct ProfileEditorView: View {
     private func save() async {
         saving = true
         defer { saving = false }
-        if let original {
-            guard let installDir = model.effectiveInstallDirectory else { return }
-            var updated = original
-            updated.displayName = displayName.isEmpty ? original.displayName : displayName
-            updated.label = effectiveLabel
-            updated.color = badge
-            updated.bundleID = bundleID.isEmpty ? original.bundleID : bundleID
-            updated.appPath = installDir.appendingPathComponent("\(updated.displayName).app").path
-            if await model.updateProfile(original: original, to: updated) { dismiss() }
-        } else {
-            let request = AddProfileRequest(
-                name: name,
-                label: label.isEmpty ? nil : label,
-                color: badge,
-                displayName: displayName.isEmpty ? nil : displayName,
-                bundleID: bundleID.isEmpty ? nil : bundleID,
-                profilePath: profilePath.isEmpty ? nil : profilePath,
-                force: force
-            )
-            if await model.addProfile(request) { dismiss() }
+        do {
+            if let original {
+                var updated = original
+                updated.displayName = displayName.isEmpty ? original.displayName : displayName
+                updated.label = effectiveLabel
+                updated.color = badge
+                updated.bundleID = bundleID.isEmpty ? original.bundleID : bundleID
+                // appPath is re-derived by the core (ProfileStore.update) from the
+                // install dir + validated display name, so we don't set it here.
+                try await model.updateProfile(original: original, to: updated)
+            } else {
+                let request = AddProfileRequest(
+                    name: name,
+                    label: label.isEmpty ? nil : label,
+                    color: badge,
+                    displayName: displayName.isEmpty ? nil : displayName,
+                    bundleID: bundleID.isEmpty ? nil : bundleID,
+                    profilePath: profilePath.isEmpty ? nil : profilePath,
+                    force: force
+                )
+                try await model.addProfile(request)
+            }
+            dismiss()
+        } catch {
+            // The editor owns this alert so the failure is visible over its own sheet.
+            saveError = AppError(error)
         }
     }
 }

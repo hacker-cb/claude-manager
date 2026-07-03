@@ -88,6 +88,24 @@ final class CallCounter: @unchecked Sendable {
     }
 }
 
+/// Captures the signals a store's `signalSender` is asked to deliver, for asserting
+/// that stop() sends SIGKILL vs SIGTERM.
+final class SignalRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var captured: [Int32] = []
+    /// Records `signal` and returns success (0), mimicking a delivered signal.
+    func record(_ signal: Int32) -> Int32 {
+        lock.lock(); defer { lock.unlock() }
+        captured.append(signal)
+        return 0
+    }
+
+    var signals: [Int32] {
+        lock.lock(); defer { lock.unlock() }
+        return captured
+    }
+}
+
 enum Fixture {
     struct FixtureError: Error { let message: String }
 
@@ -164,4 +182,59 @@ enum Fixture {
         try data.write(to: app.appendingPathComponent("Contents/Info.plist"))
         return RealClaude(appURL: app, executableName: "Claude", iconFileName: "base.icns")
     }
+}
+
+/// A `ProfileStore` wired to temp directories and a fake real app, shared across the
+/// ProfileStore suites. A specific name (not a generic `Env`) so it can be internal
+/// without risking a collision in the test target.
+struct StoreEnv {
+    let root: URL
+    let installDir: URL
+    let profilesDir: URL
+    let real: RealClaude
+    let runner: RecordingCommandRunner
+    let store: ProfileStore
+    /// Per-test token so trashed launchers never collide across the shared `~/.Trash`
+    /// (Swift Testing runs tests in parallel).
+    let token: String
+
+    func name(_ base: String) -> String {
+        base + token
+    }
+
+    func display(_ base: String) -> String {
+        Profile.defaultDisplayName(for: name(base))
+    }
+
+    func appPath(_ base: String) -> String {
+        installDir.appendingPathComponent("\(display(base)).app").path
+    }
+}
+
+/// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
+/// stubbed, so no process is killed and the Dock is never restarted for real.
+func makeStoreEnv(
+    stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
+) throws -> StoreEnv {
+    let fm = FileManager.default
+    let root = try Fixture.makeTempDir()
+    let installDir = root.appendingPathComponent("apps")
+    let profilesDir = root.appendingPathComponent("profiles")
+    try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
+    let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
+    let runner = RecordingCommandRunner.delegating(stub: stub)
+    let store = ProfileStore(
+        realClaude: real,
+        configuration: ProfileStoreConfiguration(
+            installDirectory: installDir,
+            defaultProfilesDirectory: profilesDir
+        ),
+        runner: runner,
+        signalSender: { _, _ in 0 }
+    )
+    let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
+    return StoreEnv(
+        root: root, installDir: installDir, profilesDir: profilesDir,
+        real: real, runner: runner, store: store, token: token
+    )
 }

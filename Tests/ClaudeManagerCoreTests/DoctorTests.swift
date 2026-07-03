@@ -71,6 +71,36 @@ struct DoctorTests {
     }
 
     @Test
+    func reportsMissingRealApp() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let diags = Doctor(
+            realClaude: nil,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+            ),
+            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
+        ).run()
+        #expect(diags.contains { $0.severity == .error && $0.title.contains("Real Claude.app is missing") })
+    }
+
+    @Test
+    func reportsRealAppWithoutExecutable() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        // The bundle "resolves" but its executable is absent (a broken/partial update).
+        let broken = RealClaude(appURL: scene.root.appendingPathComponent("Missing.app"))
+        let diags = Doctor(
+            realClaude: broken,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+            ),
+            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
+        ).run()
+        #expect(diags.contains { $0.severity == .error && $0.title.contains("no executable") })
+    }
+
+    @Test
     func warnsWhenProfileDirMissing() throws {
         let scene = try makeScene()
         defer { try? fm.removeItem(at: scene.root) }
