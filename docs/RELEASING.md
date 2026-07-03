@@ -1,8 +1,23 @@
 # Releasing Claude Manager
 
-Releases are cut by CI on a `v*` tag: build → Developer ID sign → DMG → notarize →
-staple → GitHub Release. This doc lists exactly what to configure once, and how to
-cut a release.
+Releases are cut by CI on a `v*` tag: build → Developer ID sign → notarize + staple
+the app → DMG → notarize + staple the DMG → GitHub Release. This doc lists exactly
+what to configure once, and how to cut a release.
+
+## Versioning
+
+**The git tag is the single source of truth for the version.** There is nothing to
+bump in the repo — the `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in `project.yml`
+are `0.0.0`/`1` dev placeholders for local/unsigned builds only.
+
+- **Marketing version** (`CFBundleShortVersionString`) comes from the tag: `v1.2.3` →
+  `1.2.3`. CI injects it into the build (`scripts/build-app.sh`) and asserts the
+  exported bundle actually carries it, so a release can never ship mislabelled.
+- **Build number** (`CFBundleVersion`) is the workflow run number — monotonic and
+  zero-maintenance, so two builds of the same marketing version stay distinguishable.
+- Tags are validated **strict semver `X.Y.Z`** (three numeric components — a valid
+  `CFBundleShortVersionString`, ready for Sparkle/Homebrew version comparison). A
+  malformed tag (`v0.1`, `v1.2.3.4`, `v1.2-beta`) fails the release fast.
 
 ## One-time: GitHub Actions secrets
 
@@ -53,8 +68,11 @@ With the same env vars exported locally (and a valid signing identity in your
 login keychain) you can reproduce the pipeline:
 
 ```bash
-DEVELOPMENT_TEAM=TEAMID SIGNING_IDENTITY="Developer ID Application: … (TEAMID)" \
+VERSION=0.1.0 BUILD_NUMBER=1 \
+  DEVELOPMENT_TEAM=TEAMID SIGNING_IDENTITY="Developer ID Application: … (TEAMID)" \
   bash scripts/build-app.sh
+AC_API_KEY_ID=… AC_API_ISSUER_ID=… AC_API_KEY_PATH=AuthKey.p8 \
+  bash scripts/notarize.sh "dist/export/Claude Manager.app"
 VERSION=0.1.0 SIGNING_IDENTITY="…" bash scripts/make-dmg.sh
 AC_API_KEY_ID=… AC_API_ISSUER_ID=… AC_API_KEY_PATH=AuthKey.p8 \
   bash scripts/notarize.sh dist/ClaudeManager-0.1.0.dmg

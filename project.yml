@@ -13,7 +13,11 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
+    # Version SSoT is the git tag. CI injects MARKETING_VERSION (from the v* tag) and
+    # CURRENT_PROJECT_VERSION (from the run number) into the release build via
+    # scripts/build-app.sh. These are dev placeholders for local/unsigned builds only —
+    # do NOT bump them to cut a release; push a `vX.Y.Z` tag instead (docs/RELEASING.md).
+    MARKETING_VERSION: "0.0.0"
     CURRENT_PROJECT_VERSION: "1"
     # Signing is supplied at release time via CI (Developer ID). Local/PR builds
     # pass CODE_SIGNING_ALLOWED=NO, so no team is required to compile.
