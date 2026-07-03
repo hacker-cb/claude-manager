@@ -78,7 +78,7 @@ Manager` holds GUI-only metadata (ordering, notes) and is always optional.
   `touch`, and `killall Dock`. `killall Dock` flashes the screen, so it is gated
   (`IconCache.refresh(restartDock:)`): a brand-new bundle skips it (nothing cached
   for that path); a forced rebuild, a same-named twin in Trash, or a launcher
-  rebuild restart the Dock (the batch rebuild does it once).
+  rebuild restarts the Dock (the batch rebuild does it once).
 - **Process detection**: main Claude processes are `ps` lines at
   `.../Contents/MacOS/<exe>` with **ppid == 1** (launchd). The ppid filter excludes
   Electron's renderer/utility/MCP children (forked from the main). Paths may

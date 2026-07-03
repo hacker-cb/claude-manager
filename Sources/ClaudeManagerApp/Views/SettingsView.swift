@@ -71,7 +71,7 @@ struct SettingsView: View {
             Text(
                 "Each launcher is regenerated with the current badge style and wrapper "
                     + "format (script, icon, Info.plist). Running launchers are skipped; "
-                    + "the Dock refreshes."
+                    + "the Dock refreshes for any that are rebuilt."
             )
         }
     }

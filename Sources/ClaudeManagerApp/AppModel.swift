@@ -252,15 +252,16 @@ final class AppModel: ObservableObject {
     private func rebuildAllNotice(for result: RebuildAllResult) -> String? {
         var parts: [String] = []
         if !result.skippedRunning.isEmpty {
+            let c = result.skippedRunning.count
             let names = result.skippedRunning.map(\.displayName).joined(separator: ", ")
-            parts
-                .append(
-                    "Skipped \(result.skippedRunning.count) running (\(names)) — stop them, then rebuild."
-                )
+            parts.append(
+                "Skipped \(c) running launcher\(c == 1 ? "" : "s") (\(names)) — stop them, then rebuild."
+            )
         }
         if !result.failed.isEmpty {
+            let c = result.failed.count
             let names = result.failed.map(\.displayName).joined(separator: ", ")
-            parts.append("Failed to rebuild \(result.failed.count): \(names).")
+            parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
         }
         guard !parts.isEmpty else { return nil }
         let n = result.rebuilt.count

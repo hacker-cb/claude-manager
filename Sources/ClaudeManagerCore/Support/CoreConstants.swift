@@ -12,9 +12,9 @@ public enum CoreConstants {
     /// Version of the generated launcher *wrapper* — the bash script rendered by
     /// `LauncherScript.render` plus the keys written by `LauncherBundle.writeInfoPlist`.
     /// It is stamped into every launcher's marker at build time. **Bump it whenever
-    /// that generated output changes**: a launcher whose stored version is lower then
-    /// reads back as stale (`Discovered.isStale` / `ManagedProfile.needsRebuild`), and
-    /// the app offers a rebuild. This is the wrapper format version, NOT the app's
+    /// that generated output changes**: a launcher whose stored version is lower than
+    /// this reads back as stale (`Discovered.isStale` / `ManagedProfile.needsRebuild`),
+    /// and the app offers a rebuild. This is the wrapper format version, NOT the app's
     /// `MARKETING_VERSION`.
     ///
     /// History: 1 = MVP. 2 = adds `LSArchitecturePriority` so profiles run native
