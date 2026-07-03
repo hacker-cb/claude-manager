@@ -17,6 +17,15 @@ struct AppError: Identifiable {
     }
 }
 
+/// A message-carrying error so a thrown failure can surface a specific reason (e.g.
+/// the concrete `locateError`) through the editor's alert instead of a generic one.
+struct MessageError: LocalizedError {
+    let message: String
+    var errorDescription: String? {
+        message
+    }
+}
+
 /// The single source of view state. All blocking core operations are dispatched
 /// off the main actor (`perform`) so the UI never stalls; results and errors are
 /// published back on the main actor.
@@ -268,7 +277,9 @@ final class AppModel: ObservableObject {
         _ body: @Sendable @escaping (ProfileStore) async throws -> T
     ) async throws -> T {
         guard let real = realClaude, let config = currentConfiguration() else {
-            throw ClaudeManagerError.realClaudeNotFound
+            // Preserve the specific locate reason (mirrors `perform`'s alert) rather
+            // than a generic realClaudeNotFound, since the editor shows this directly.
+            throw MessageError(message: locateError ?? "Real Claude.app was not found.")
         }
         inflight += 1
         defer { inflight -= 1 }
