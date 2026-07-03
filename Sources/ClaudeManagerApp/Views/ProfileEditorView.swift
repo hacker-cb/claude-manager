@@ -48,8 +48,10 @@ struct ProfileEditorView: View {
         original != nil
     }
 
+    /// The label to store — raw casing preserved; the badge renderer applies the
+    /// uppercase rule at draw time (`BadgeStyle.drawnLabel`) per the global toggle.
     private var effectiveLabel: String {
-        (label.isEmpty ? Profile.defaultLabel(for: name.isEmpty ? "?" : name) : label).uppercased()
+        label.isEmpty ? Profile.defaultLabel(for: name.isEmpty ? "?" : name) : label
     }
 
     private var nameIsValid: Bool {
@@ -85,7 +87,7 @@ struct ProfileEditorView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            BadgePreview(baseIcon: model.realAppIcon, label: effectiveLabel, color: badge, size: 72)
+            BadgePreview(label: effectiveLabel, color: badge, size: 72)
             VStack(alignment: .leading, spacing: 4) {
                 Text(isEdit ? "Edit Profile" : "New Profile").font(.title3).bold()
                 Text(isEdit ? "Rebuilds the launcher with your changes." :

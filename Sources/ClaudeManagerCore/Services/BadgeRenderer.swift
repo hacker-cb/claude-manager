@@ -13,8 +13,15 @@ import UniformTypeIdentifiers
 public struct BadgeRenderer {
     public init() {}
 
-    /// Composite the badge onto `base`, returning a same-size image.
-    public func drawBadge(on base: CGImage, label: String, color: RGBAColor) throws -> CGImage {
+    /// Composite the badge onto `base`, returning a same-size image. `style` drives
+    /// all geometry (size, shape, corner, ring, font); `.default` reproduces the
+    /// original look.
+    public func drawBadge(
+        on base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default
+    ) throws -> CGImage {
         let size = max(base.width, base.height)
         guard let ctx = Self.makeContext(size: size) else {
             throw ClaudeManagerError.iconGenerationFailed("could not create bitmap context")
@@ -23,56 +30,58 @@ public struct BadgeRenderer {
         ctx.draw(base, in: CGRect(x: 0, y: 0, width: size, height: size))
 
         let w = CGFloat(size)
-        let h = (w * 0.34).rounded()
+        let h = (w * style.scale).rounded()
         let fontSize = h * 0.62
 
-        let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
         let white = Self.cgColor(RGBAColor(red: 255, green: 255, blue: 255))
-        let text = label.isEmpty ? " " : label
-        let attributes: [CFString: Any] = [
-            kCTFontAttributeName: font,
-            kCTForegroundColorAttributeName: white
-        ]
-        guard let attributed = CFAttributedStringCreate(nil, text as CFString, attributes as CFDictionary)
-        else {
-            throw ClaudeManagerError.iconGenerationFailed("could not lay out badge text")
-        }
-        let line = CTLineCreateWithAttributedString(attributed)
-        var ascent: CGFloat = 0
-        var descent: CGFloat = 0
-        var leading: CGFloat = 0
-        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let drawn = style.drawnLabel(from: label)
+        let text = drawn.isEmpty ? " " : drawn
+        let fontName = style.fontWeight.fontName
+        var laid = try Self.layoutLine(text, fontName: fontName, fontSize: fontSize, color: white)
 
-        let padding = h * 0.28
-        let pillWidth = max(h, textWidth + 2 * padding)
         let inset = w * 0.055
-        let ring = w * 0.018
+        let ring = w * style.ringWidth
+        let padding = h * 0.28
+        // A circle keeps a fixed square footprint; the other shapes grow with the
+        // text but never wider than the icon minus its insets, so the badge (and its
+        // ring, since ringWidth ≤ inset) can never run off-canvas — even at max scale
+        // with a long label.
+        let maxPillWidth = w - 2 * inset
+        let pillWidth = style.shape == .circle
+            ? h
+            : min(max(h, laid.width + 2 * padding), maxPillWidth)
+        let pillRadius = style.shape == .roundedSquare ? h * 0.28 : h / 2
 
-        let x2 = w - inset
-        let x1 = x2 - pillWidth
-        let y1 = inset
-        let y2 = y1 + h
+        // Shrink the glyphs uniformly if they'd spill past the pill's interior, so a
+        // long label at any scale (or a wide label in a fixed-size circle) stays inside
+        // the badge instead of being clipped by the icon edge.
+        let interior = pillWidth - 2 * padding
+        if laid.width > interior, interior > 0 {
+            laid = try Self.layoutLine(
+                text, fontName: fontName, fontSize: fontSize * (interior / laid.width), color: white
+            )
+        }
 
-        // White ring behind the pill.
-        let ringRect = CGRect(
-            x: x1 - ring,
-            y: y1 - ring,
-            width: (x2 - x1) + 2 * ring,
-            height: (y2 - y1) + 2 * ring
-        )
-        let ringRadius = (h + 2 * ring) / 2
-        ctx.addPath(CGPath(
-            roundedRect: ringRect,
-            cornerWidth: ringRadius,
-            cornerHeight: ringRadius,
-            transform: nil
-        ))
-        ctx.setFillColor(white)
-        ctx.fillPath()
+        // Bottom-left origin: "top" is high y, "trailing" is high x.
+        let x1 = style.corner.isTrailing ? (w - inset - pillWidth) : inset
+        let y1 = style.corner.isTop ? (w - inset - h) : inset
+        let pillRect = CGRect(x: x1, y: y1, width: pillWidth, height: h)
+
+        // White ring behind the pill (skipped when disabled).
+        if ring > 0 {
+            let ringRect = pillRect.insetBy(dx: -ring, dy: -ring)
+            let ringRadius = pillRadius + ring
+            ctx.addPath(CGPath(
+                roundedRect: ringRect,
+                cornerWidth: ringRadius,
+                cornerHeight: ringRadius,
+                transform: nil
+            ))
+            ctx.setFillColor(white)
+            ctx.fillPath()
+        }
 
         // Colored pill.
-        let pillRect = CGRect(x: x1, y: y1, width: pillWidth, height: h)
-        let pillRadius = h / 2
         ctx.addPath(CGPath(
             roundedRect: pillRect,
             cornerWidth: pillRadius,
@@ -84,10 +93,10 @@ public struct BadgeRenderer {
 
         // Centered label (non-flipped context → upright text).
         ctx.textPosition = CGPoint(
-            x: pillRect.midX - textWidth / 2,
-            y: pillRect.midY - (ascent - descent) / 2
+            x: pillRect.midX - laid.width / 2,
+            y: pillRect.midY - (laid.ascent - laid.descent) / 2
         )
-        CTLineDraw(line, ctx)
+        CTLineDraw(laid.line, ctx)
 
         guard let image = ctx.makeImage() else {
             throw ClaudeManagerError.iconGenerationFailed("could not render composited icon")
@@ -96,8 +105,13 @@ public struct BadgeRenderer {
     }
 
     /// Produce the full `.iconset` (all standard sizes) as PNG bytes.
-    public func makeIconSet(base: CGImage, label: String, color: RGBAColor) throws -> [IconImageSize: Data] {
-        let composited = try drawBadge(on: base, label: label, color: color)
+    public func makeIconSet(
+        base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default
+    ) throws -> [IconImageSize: Data] {
+        let composited = try drawBadge(on: base, label: label, color: color, style: style)
         var result: [IconImageSize: Data] = [:]
         for size in IconImageSize.standardSet {
             result[size] = try Self.encodePNG(Self.resize(composited, to: size.pixels))
@@ -106,12 +120,50 @@ public struct BadgeRenderer {
     }
 
     /// Render a single-size PNG for a live UI preview.
-    public func renderPreviewPNG(base: CGImage, label: String, color: RGBAColor, pixels: Int) throws -> Data {
-        let composited = try drawBadge(on: base, label: label, color: color)
+    public func renderPreviewPNG(
+        base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default,
+        pixels: Int
+    ) throws -> Data {
+        let composited = try drawBadge(on: base, label: label, color: color, style: style)
         return try Self.encodePNG(Self.resize(composited, to: pixels))
     }
 
     // MARK: - CoreGraphics helpers
+
+    private struct LaidOutLine {
+        let line: CTLine
+        let width: CGFloat
+        let ascent: CGFloat
+        let descent: CGFloat
+    }
+
+    /// Lay out a single line of white badge text and measure it, so the caller can
+    /// size the pill and, if needed, re-lay-out at a smaller font to fit.
+    private static func layoutLine(
+        _ text: String,
+        fontName: String,
+        fontSize: CGFloat,
+        color: CGColor
+    ) throws -> LaidOutLine {
+        let font = CTFontCreateWithName(fontName as CFString, fontSize, nil)
+        let attributes: [CFString: Any] = [
+            kCTFontAttributeName: font,
+            kCTForegroundColorAttributeName: color
+        ]
+        guard let attributed = CFAttributedStringCreate(nil, text as CFString, attributes as CFDictionary)
+        else {
+            throw ClaudeManagerError.iconGenerationFailed("could not lay out badge text")
+        }
+        let line = CTLineCreateWithAttributedString(attributed)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        var leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        return LaidOutLine(line: line, width: width, ascent: ascent, descent: descent)
+    }
 
     static func makeContext(size: Int) -> CGContext? {
         guard size > 0, let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }

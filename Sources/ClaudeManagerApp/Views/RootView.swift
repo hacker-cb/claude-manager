@@ -73,6 +73,10 @@ struct RootView: View {
             }
             .help("Run health checks")
         }
+        ToolbarItem {
+            SettingsLink { Label("Settings", systemImage: "gearshape") }
+                .help("Open settings")
+        }
         if model.isBusy {
             ToolbarItem { ProgressView().controlSize(.small) }
         }

@@ -6,4 +6,6 @@ enum PreferenceKeys {
     static let installDirectoryOverride = "installDirectoryOverride"
     static let profilesDirectoryOverride = "profilesDirectoryOverride"
     static let measureSizes = "measureSizes"
+    /// JSON-encoded global `BadgeStyle` applied to every launcher icon.
+    static let badgeStyle = "badgeStyle"
 }

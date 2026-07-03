@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var showApply = false
 
     var body: some View {
         Form {
@@ -49,12 +50,66 @@ struct SettingsView: View {
                 }
             }
 
+            badgeSection
+
             Section {
                 Toggle("Measure profile disk sizes (slower)", isOn: $model.measureSizes)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 440)
+        .frame(width: 540, height: 620)
+        .confirmationDialog(
+            "Rebuild all launcher icons?",
+            isPresented: $showApply,
+            titleVisibility: .visible
+        ) {
+            Button("Rebuild \(model.profiles.count) icon\(model.profiles.count == 1 ? "" : "s")") {
+                Task { await model.regenerateAllIcons() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every launcher icon is regenerated with the current badge style. The Dock will refresh.")
+        }
+    }
+
+    private var badgeSection: some View {
+        Section("Badge style") {
+            LabeledContent("Preview") {
+                BadgePreview(label: "Work", color: .named("blue"), size: 88)
+            }
+
+            LabeledContent("Size") {
+                Slider(value: $model.badgeStyle.scale, in: BadgeStyle.scaleRange)
+            }
+            Picker("Shape", selection: $model.badgeStyle.shape) {
+                ForEach(BadgeStyle.Shape.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Picker("Corner", selection: $model.badgeStyle.corner) {
+                ForEach(BadgeStyle.Corner.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Picker("Font weight", selection: $model.badgeStyle.fontWeight) {
+                ForEach(BadgeStyle.FontWeight.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            LabeledContent("Ring") {
+                Slider(value: $model.badgeStyle.ringWidth, in: BadgeStyle.ringRange)
+            }
+            Toggle("Uppercase label", isOn: $model.badgeStyle.uppercase)
+            Stepper(
+                "Max characters: \(model.badgeStyle.maxLabelLength)",
+                value: $model.badgeStyle.maxLabelLength,
+                in: BadgeStyle.labelLengthRange
+            )
+
+            HStack {
+                Button("Reset to defaults") { model.badgeStyle = .default }
+                    .disabled(model.badgeStyle == .default)
+                Spacer()
+                Button("Apply to all launchers") { showApply = true }
+                    .disabled(model.realClaude == nil || model.isBusy || model.profiles.isEmpty)
+            }
+            Text("Editing updates newly created launchers. “Apply” rebuilds every existing icon.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     private var installSelection: Binding<Bool> {
@@ -78,6 +133,40 @@ struct SettingsView: View {
         panel.prompt = "Choose"
         if panel.runModal() == .OK, let url = panel.url {
             completion(url)
+        }
+    }
+}
+
+// MARK: - Badge-style picker labels (UI strings kept out of the core model)
+
+private extension BadgeStyle.Shape {
+    var title: String {
+        switch self {
+        case .pill: "Pill"
+        case .circle: "Circle"
+        case .roundedSquare: "Rounded square"
+        }
+    }
+}
+
+private extension BadgeStyle.Corner {
+    var title: String {
+        switch self {
+        case .bottomTrailing: "Bottom right"
+        case .bottomLeading: "Bottom left"
+        case .topTrailing: "Top right"
+        case .topLeading: "Top left"
+        }
+    }
+}
+
+private extension BadgeStyle.FontWeight {
+    var title: String {
+        switch self {
+        case .light: "Light"
+        case .regular: "Regular"
+        case .medium: "Medium"
+        case .bold: "Bold"
         }
     }
 }

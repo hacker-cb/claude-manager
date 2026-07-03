@@ -42,12 +42,17 @@ public struct IconPipeline {
         self.packer = packer
     }
 
-    public func makeBadgeICNS(realClaude: RealClaude, label: String, color: BadgeColor) throws -> Data {
+    public func makeBadgeICNS(
+        realClaude: RealClaude,
+        label: String,
+        color: BadgeColor,
+        style: BadgeStyle = .default
+    ) throws -> Data {
         guard let iconURL = realClaude.iconURL else {
             throw ClaudeManagerError.iconGenerationFailed("the real app has no icon resource")
         }
         let base = try RealIconExtractor.loadBaseIcon(from: iconURL)
-        let pngs = try renderer.makeIconSet(base: base, label: label, color: color.rgba)
+        let pngs = try renderer.makeIconSet(base: base, label: label, color: color.rgba, style: style)
         return try packer.makeICNS(pngs: pngs)
     }
 }

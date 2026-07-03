@@ -57,9 +57,11 @@ public extension Profile {
         "Claude \(name.uppercased())"
     }
 
-    /// Badge defaults to the first two letters of the name, uppercased.
+    /// Badge defaults to the first two letters of the name. Casing is preserved and
+    /// applied at render time by `BadgeStyle.drawnLabel` (per the uppercase toggle),
+    /// so the label is stored as-is rather than force-uppercased here.
     static func defaultLabel(for name: String) -> String {
-        String(name.prefix(2)).uppercased()
+        String(name.prefix(2))
     }
 
     /// `io.github.hacker-cb.claude-manager.launcher.work`.

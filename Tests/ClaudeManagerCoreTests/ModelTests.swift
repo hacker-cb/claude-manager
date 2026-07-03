@@ -5,8 +5,9 @@ struct ProfileDefaultsTests {
     @Test
     func computesDefaults() {
         #expect(Profile.defaultDisplayName(for: "work") == "Claude WORK")
-        #expect(Profile.defaultLabel(for: "work") == "WO")
-        #expect(Profile.defaultLabel(for: "p") == "P")
+        // Label casing is preserved as-is; the badge renderer uppercases at draw time.
+        #expect(Profile.defaultLabel(for: "work") == "wo")
+        #expect(Profile.defaultLabel(for: "p") == "p")
         #expect(Profile.defaultBundleID(for: "Work") == "io.github.hacker-cb.claude-manager.launcher.work")
     }
 
