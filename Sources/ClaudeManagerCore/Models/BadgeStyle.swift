@@ -4,8 +4,10 @@ import Foundation
 /// text and color stay per-profile (in the launcher marker); everything about the
 /// badge's *shape* lives here and applies to every launcher uniformly.
 ///
-/// `.default` reproduces the original hard-coded look exactly, so an unconfigured
-/// install renders identical icons. All ratios are expressed as a fraction of the
+/// `.default` reproduces the original hard-coded geometry, so an unconfigured
+/// install renders the same badge — with one deliberate difference: the label is
+/// now capped at `maxLabelLength` (default 3), which also bounds the pill width so a
+/// long label can no longer overflow the icon. All ratios are a fraction of the
 /// icon's width, matching `BadgeRenderer`'s coordinate space.
 public struct BadgeStyle: Codable, Sendable, Equatable {
     /// Silhouette of the badge behind the label.

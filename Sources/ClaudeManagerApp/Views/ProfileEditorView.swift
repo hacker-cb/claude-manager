@@ -48,8 +48,10 @@ struct ProfileEditorView: View {
         original != nil
     }
 
+    /// The label to store — raw casing preserved; the badge renderer applies the
+    /// uppercase rule at draw time (`BadgeStyle.drawnLabel`) per the global toggle.
     private var effectiveLabel: String {
-        (label.isEmpty ? Profile.defaultLabel(for: name.isEmpty ? "?" : name) : label).uppercased()
+        label.isEmpty ? Profile.defaultLabel(for: name.isEmpty ? "?" : name) : label
     }
 
     private var nameIsValid: Bool {

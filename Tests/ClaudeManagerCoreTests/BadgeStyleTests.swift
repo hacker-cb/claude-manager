@@ -127,7 +127,68 @@ struct BadgeStyleRenderingTests {
         #expect(plain != styled)
     }
 
+    @Test
+    func extremeStyleStaysWithinTheIcon() throws {
+        let size = 256
+        let base = try Fixture.solidImage(size: size, color: RGBAColor(red: 20, green: 20, blue: 20))
+        // Max scale + longest label in a trailing corner would push the pill off the
+        // left edge without the pill-width clamp; the badge must stay on-canvas.
+        let style = BadgeStyle(scale: 0.45, shape: .pill, corner: .bottomTrailing, maxLabelLength: 6)
+        let out = try render(base, label: "WWWWWW", style: style)
+        // Locate the pill by its saturated red fill (not a diff vs base, which carries
+        // ±1 edge noise from re-drawing the base). Without the clamp the pill would be
+        // drawn from a negative x and its red would reach column 0.
+        let bounds = try pillBounds(out)
+        #expect(bounds.minX > 0)
+        #expect(bounds.maxX < size - 1)
+    }
+
+    @Test
+    func longLabelTextIsShrunkToStayInsideTheBadge() throws {
+        let size = 256
+        let base = try Fixture.solidImage(size: size, color: RGBAColor(red: 20, green: 20, blue: 20))
+        // A wide label in a fixed-size circle would spill its white glyphs far past the
+        // badge without shrink-to-fit; the text must stay within the pill + its ring.
+        let style = BadgeStyle(scale: 0.34, shape: .circle, ringWidth: 0.02, maxLabelLength: 6)
+        let out = try render(base, label: "MMMMMM", style: style)
+        let pill = try pillBounds(out)
+        let white = try whiteBoundsX(out)
+        let ringSlack = Int((0.02 * Double(size)).rounded()) + 3
+        #expect(white.minX >= pill.minX - ringSlack)
+        #expect(white.maxX <= pill.maxX + ringSlack)
+    }
+
     // MARK: - Pixel helpers
+
+    private func pillBounds(_ image: CGImage) throws -> (minX: Int, maxX: Int) {
+        // Saturated red = the pill fill; skip the dark base and the white ring/text.
+        try boundsX(image) { $0 > 150 && $1 < 120 && $2 < 120 }
+    }
+
+    private func whiteBoundsX(_ image: CGImage) throws -> (minX: Int, maxX: Int) {
+        // White = the ring and the glyphs (the base is dark, the pill is red).
+        try boundsX(image) { $0 > 200 && $1 > 200 && $2 > 200 }
+    }
+
+    private func boundsX(
+        _ image: CGImage,
+        _ isMatch: (UInt8, UInt8, UInt8) -> Bool
+    ) throws -> (minX: Int, maxX: Int) {
+        let px = try rgbaBytes(image)
+        let width = image.width
+        var minX = width, maxX = -1
+        var i = 0
+        while i < px.count {
+            if isMatch(px[i], px[i + 1], px[i + 2]) {
+                let x = (i / 4) % width
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+            }
+            i += 4
+        }
+        guard maxX >= 0 else { throw Fixture.FixtureError(message: "no matching pixels") }
+        return (minX, maxX)
+    }
 
     private func render(_ base: CGImage, label: String = "WK", style: BadgeStyle) throws -> CGImage {
         try renderer.drawBadge(

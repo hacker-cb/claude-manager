@@ -158,7 +158,7 @@ struct ProfileStoreTests {
         defer { try? fm.removeItem(at: env.root) }
         let draft = env.store.draft(name: "work")
         #expect(draft.displayName == "Claude WORK")
-        #expect(draft.label == "WO")
+        #expect(draft.label == "wo") // raw casing; uppercased at render by BadgeStyle.drawnLabel
         #expect(draft.appPath == env.installDir.appendingPathComponent("Claude WORK.app").path)
         #expect(draft.profilePath == env.profilesDir.appendingPathComponent("work").path)
         #expect(draft.bundleID == "io.github.hacker-cb.claude-manager.launcher.work")

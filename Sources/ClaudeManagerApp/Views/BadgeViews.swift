@@ -16,15 +16,21 @@ struct BadgePreview: View {
     @State private var image: NSImage?
 
     /// Everything that changes the rendered pixels — drives the async re-render.
+    /// Includes the real app's icon URL so re-detecting Claude.app (Retry) refreshes
+    /// the preview instead of leaving a stale placeholder.
     private struct Inputs: Equatable {
         let label: String
         let color: BadgeColor
         let style: BadgeStyle
         let pixels: Int
+        let iconURL: URL?
     }
 
     private var inputs: Inputs {
-        Inputs(label: label, color: color, style: model.badgeStyle, pixels: Int(size * 2))
+        Inputs(
+            label: label, color: color, style: model.badgeStyle,
+            pixels: Int(size * 2), iconURL: model.realClaude?.iconURL
+        )
     }
 
     var body: some View {
