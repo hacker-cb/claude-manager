@@ -90,7 +90,7 @@ public struct LauncherBundle {
         // from Assets.car and ignores our `.icns`.
         //
         // `LSArchitecturePriority`: our executable is a bash *script*, not a Mach-O.
-        // A scriptless bundle carries no arch slice for LaunchServices to read, so on
+        // A script carries no CPU-architecture slice for LaunchServices to read, so on
         // Apple Silicon it brings `/bin/bash` up under Rosetta (x86_64); the script's
         // `exec` of the universal Claude binary then inherits x86_64 and the whole
         // profile runs translated. Declaring a priority makes LaunchServices launch the

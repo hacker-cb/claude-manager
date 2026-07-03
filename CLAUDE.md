@@ -54,8 +54,8 @@ Manager` holds GUI-only metadata (ordering, notes) and is always optional.
   reads the icon from `Assets.car` and ignores our `.icns`. We write only
   `CFBundleIconFile = Badge.icns`.
 - **Set `LSArchitecturePriority = [arm64, x86_64]` in launcher Info.plists** — the
-  launcher's executable is a bash *script*, not a Mach-O, so a scriptless bundle
-  gives LaunchServices no arch slice to read and it runs `/bin/bash` under Rosetta
+  launcher's executable is a bash *script*, not a Mach-O, so it carries no CPU
+  slice for LaunchServices to read and it runs `/bin/bash` under Rosetta
   on Apple Silicon. The script's `exec` of the universal Claude binary then inherits
   x86_64, so the profile runs translated (shows as **Intel** in Activity Monitor).
   The priority key makes LaunchServices bring the interpreter up native, so the
