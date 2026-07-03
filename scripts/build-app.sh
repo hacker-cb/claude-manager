@@ -8,7 +8,8 @@
 #   BUILD_NUMBER       build number (CFBundleVersion)                 [default: 1]
 #
 # Version SSoT is the git tag: CI passes VERSION (from the v* tag) and BUILD_NUMBER
-# (from the run number). Locally they default to 0.0.0/1 — unsigned/dev only.
+# (from the run number). Locally they default to 0.0.0/1 — this script always signs
+# (Developer ID), so those are just the version stamped on a local/dev archive.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
