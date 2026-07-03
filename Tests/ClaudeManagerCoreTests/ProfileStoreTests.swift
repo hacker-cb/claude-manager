@@ -352,6 +352,43 @@ struct ProfileStoreTests {
     }
 }
 
+/// Preconditions shared by the mutating `ProfileStore` entry points, kept in their
+/// own suite so `ProfileStoreTests` stays under the body-length cap.
+struct ProfileStorePreconditionTests {
+    @Test
+    func mutationsRejectMissingRealBinary() throws {
+        // With the wrapped Claude binary absent, every mutation that bakes its path
+        // into a launcher (`add`, `update`) or reads its icon (`regenerateIcon`)
+        // fails fast with the same domain error. `open` is intentionally exempt — it
+        // never references `realClaude`.
+        let fm = FileManager.default
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let missingReal = RealClaude(appURL: root.appendingPathComponent("Missing.app"))
+        #expect(!missingReal.binaryExists())
+        let store = ProfileStore(
+            realClaude: missingReal,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: root.appendingPathComponent("apps"),
+                defaultProfilesDirectory: root.appendingPathComponent("profiles")
+            ),
+            runner: RecordingCommandRunner.delegating(stub: idleStub),
+            signalSender: { _, _ in 0 }
+        )
+        let profile = store.draft(name: "work")
+
+        #expect(throws: ClaudeManagerError.realClaudeNotFound) {
+            try store.add(AddProfileRequest(name: "work"))
+        }
+        #expect(throws: ClaudeManagerError.realClaudeNotFound) {
+            try store.update(original: profile, to: profile)
+        }
+        #expect(throws: ClaudeManagerError.realClaudeNotFound) {
+            try store.regenerateIcon(for: profile)
+        }
+    }
+}
+
 // MARK: - Shared test environment
 
 /// A store wired to temp directories and a fake real app, shared across the
