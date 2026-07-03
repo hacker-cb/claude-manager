@@ -75,6 +75,9 @@ struct LauncherBundleTests {
         #expect(info["CFBundleIconFile"] as? String == "Badge.icns")
         // CFBundleIconName must be absent, else macOS ignores the .icns.
         #expect(info["CFBundleIconName"] == nil)
+        // Force native execution: without this the script-based bundle launches
+        // /bin/bash under Rosetta on Apple Silicon, so the exec'd Claude runs x86_64.
+        #expect(info["LSArchitecturePriority"] as? [String] == ["arm64", "x86_64"])
         #expect(info[CoreConstants.markerKey] != nil)
     }
 

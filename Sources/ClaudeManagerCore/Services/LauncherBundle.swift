@@ -88,6 +88,15 @@ public struct LauncherBundle {
     func writeInfoPlist(at url: URL, profile: Profile, marker: LauncherMarker) throws {
         // NB: deliberately no `CFBundleIconName` — when present macOS reads the icon
         // from Assets.car and ignores our `.icns`.
+        //
+        // `LSArchitecturePriority`: our executable is a bash *script*, not a Mach-O.
+        // A script carries no CPU-architecture slice for LaunchServices to read, so on
+        // Apple Silicon it brings `/bin/bash` up under Rosetta (x86_64); the script's
+        // `exec` of the universal Claude binary then inherits x86_64 and the whole
+        // profile runs translated. Declaring a priority makes LaunchServices launch the
+        // interpreter native (arm64), so the exec'd Claude is native too. The list is
+        // host-relative — on Intel, arm64 is unavailable and x86_64 is used — so the
+        // same key is correct on both architectures.
         let info: [String: Any] = [
             "CFBundleExecutable": "launcher",
             "CFBundleIdentifier": profile.bundleID,
@@ -99,6 +108,7 @@ public struct LauncherBundle {
             "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1",
             "LSMinimumSystemVersion": "14.0",
+            "LSArchitecturePriority": ["arm64", "x86_64"],
             CoreConstants.markerKey: marker.dictionary
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
