@@ -48,10 +48,16 @@ struct ProfileEditorView: View {
         original != nil
     }
 
+    /// The suggested label for the current name, capped at the global style's max
+    /// length (initials for multi-word names, leading characters otherwise).
+    private var defaultBadgeLabel: String {
+        Profile.defaultLabel(for: name.isEmpty ? "?" : name, maxLength: model.badgeStyle.maxLabelLength)
+    }
+
     /// The label to store — raw casing preserved; the badge renderer applies the
     /// uppercase rule at draw time (`BadgeStyle.drawnLabel`) per the global toggle.
     private var effectiveLabel: String {
-        label.isEmpty ? Profile.defaultLabel(for: name.isEmpty ? "?" : name) : label
+        label.isEmpty ? defaultBadgeLabel : label
     }
 
     private var nameIsValid: Bool {
@@ -118,9 +124,9 @@ struct ProfileEditorView: View {
             TextField(
                 "Badge label",
                 text: $label,
-                prompt: Text(Profile.defaultLabel(for: name.isEmpty ? "?" : name))
+                prompt: Text(defaultBadgeLabel)
             )
-            .help("Text drawn on the badge. Defaults to the first two letters of the name.")
+            .help("Text drawn on the badge. Defaults to the name's initials (multi-word) or leading letters.")
 
             colorPicker
 

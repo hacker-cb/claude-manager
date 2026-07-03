@@ -57,11 +57,23 @@ public extension Profile {
         "Claude \(name.uppercased())"
     }
 
-    /// Badge defaults to the first two letters of the name. Casing is preserved and
-    /// applied at render time by `BadgeStyle.drawnLabel` (per the uppercase toggle),
-    /// so the label is stored as-is rather than force-uppercased here.
-    static func defaultLabel(for name: String) -> String {
-        String(name.prefix(2))
+    /// Badge default label derived from the name: the initials (first letter of each
+    /// word) when the name is multi-word — split on spaces, dashes, or underscores —
+    /// otherwise the leading characters. Capped at `maxLength` (the badge style's
+    /// `maxLabelLength`) and stored as-is; casing is applied at render time by
+    /// `BadgeStyle.drawnLabel` per the uppercase toggle.
+    static func defaultLabel(for name: String, maxLength: Int) -> String {
+        let words = name.split { $0 == "-" || $0 == "_" || $0.isWhitespace }
+        let token: String = if words.count >= 2 {
+            words.compactMap(\.first).map(String.init).joined()
+        } else if let word = words.first {
+            String(word)
+        } else {
+            // A non-empty name made only of separators (e.g. "-", "__") is valid but
+            // has no words — fall back to the raw name so the label is never blank.
+            name
+        }
+        return String(token.prefix(max(1, maxLength)))
     }
 
     /// `io.github.hacker-cb.claude-manager.launcher.work`.

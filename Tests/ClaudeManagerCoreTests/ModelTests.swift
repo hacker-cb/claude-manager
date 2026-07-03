@@ -5,10 +5,24 @@ struct ProfileDefaultsTests {
     @Test
     func computesDefaults() {
         #expect(Profile.defaultDisplayName(for: "work") == "Claude WORK")
-        // Label casing is preserved as-is; the badge renderer uppercases at draw time.
-        #expect(Profile.defaultLabel(for: "work") == "wo")
-        #expect(Profile.defaultLabel(for: "p") == "p")
+        // Leading chars for a single word, initials for a multi-word name (split on
+        // spaces/dashes/underscores), raw casing, capped at maxLength.
+        #expect(Profile.defaultLabel(for: "work", maxLength: 3) == "wor")
+        #expect(Profile.defaultLabel(for: "p", maxLength: 3) == "p")
+        #expect(Profile.defaultLabel(for: "alex-mid-si", maxLength: 3) == "ams")
+        #expect(Profile.defaultLabel(for: "Alex Mid Si", maxLength: 3) == "AMS")
+        #expect(Profile.defaultLabel(for: "web_app", maxLength: 2) == "wa")
+        #expect(Profile.defaultLabel(for: "a-b-c-d", maxLength: 3) == "abc")
         #expect(Profile.defaultBundleID(for: "Work") == "io.github.hacker-cb.claude-manager.launcher.work")
+    }
+
+    @Test
+    func defaultLabelIsNeverBlankForAValidName() {
+        // A name of only separators is valid per isValidName but yields no words; the
+        // label must fall back to the raw name rather than render a blank badge.
+        #expect(Profile.isValidName("-"))
+        #expect(Profile.defaultLabel(for: "-", maxLength: 3) == "-")
+        #expect(Profile.defaultLabel(for: "__", maxLength: 2) == "__")
     }
 
     @Test

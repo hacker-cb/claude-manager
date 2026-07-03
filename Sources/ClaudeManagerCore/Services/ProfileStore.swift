@@ -161,7 +161,9 @@ public struct ProfileStore {
             configuration.defaultProfilesDirectory.appendingPathComponent(name.lowercased()).path
         }
         // Store the label as-is; casing is applied at render by BadgeStyle.drawnLabel.
-        let resolvedLabel = label?.isEmpty == false ? label! : Profile.defaultLabel(for: name)
+        let resolvedLabel = label?.isEmpty == false
+            ? label!
+            : Profile.defaultLabel(for: name, maxLength: configuration.badgeStyle.maxLabelLength)
         return Profile(
             name: name,
             displayName: display,
