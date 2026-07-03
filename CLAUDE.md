@@ -98,6 +98,12 @@ The app is **not sandboxed** (writes launchers next to Claude.app, runs
 never the App Store. Hardened Runtime is on; entitlements are minimal
 (no sandbox, apple-events for activation).
 
+- **The version SSoT is the git tag, not `project.yml`.** `MARKETING_VERSION` /
+  `CURRENT_PROJECT_VERSION` there are `0.0.0` / `1` dev placeholders; `scripts/build-app.sh`
+  injects the real `VERSION` (from the `vX.Y.Z` tag) and `BUILD_NUMBER` (run number) at
+  release time and asserts the exported bundle carries them. Don't bump the placeholders
+  to release — push a tag (validated strict `X.Y.Z`). See [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Development guidelines
 
 - **Never touch the user's real profiles or default Claude** when testing. Tests

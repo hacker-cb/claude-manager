@@ -41,8 +41,8 @@ jobs:
           else
             V="${REF_NAME#v}"
           fi
-          if ! printf '%s' "$V" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-            echo "Invalid version '$V' (allowed: letters, digits, . _ -)" >&2
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid version '$V' (must be strict semver X.Y.Z, e.g. 1.2.3)" >&2
             exit 1
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
@@ -80,8 +80,12 @@ jobs:
           AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
           AC_API_KEY_PATH: ${{ runner.temp }}/ac_api_key.p8
           VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           bash scripts/build-app.sh
+          # Notarize + staple the .app first, so the DMG ships a self-contained bundle
+          # (a stapled app needs no online check on first launch); then the DMG itself.
+          bash scripts/notarize.sh "dist/export/Claude Manager.app"
           bash scripts/make-dmg.sh
           DMG="dist/ClaudeManager-${VERSION}.dmg"
           bash scripts/notarize.sh "$DMG"
@@ -106,4 +110,6 @@ jobs:
 
       - name: Clean up secrets
         if: always()
-        run: rm -f "$RUNNER_TEMP/ac_api_key.p8"
+        run: |
+          rm -f "$RUNNER_TEMP/ac_api_key.p8"
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true
