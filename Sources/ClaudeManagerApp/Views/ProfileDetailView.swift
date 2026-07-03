@@ -16,6 +16,7 @@ struct ProfileDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                if managed.needsRebuild { rebuildBanner }
                 Divider()
                 actions
                 Divider()
@@ -86,7 +87,8 @@ struct ProfileDetailView: View {
 
             Button { editor = .edit(profile) } label: { Label("Edit", systemImage: "pencil") }
             Menu {
-                Button("Regenerate Icon") { Task { await model.regenerateIcon(profile) } }
+                Button("Rebuild Launcher") { Task { await model.rebuild(profile) } }
+                    .disabled(managed.isRunning)
                 Button("Reveal Profile Data in Finder") { model.revealProfileData(profile) }
                 Button("Reveal Launcher in Finder") { model.revealLauncher(profile) }
                 Divider()
@@ -97,6 +99,29 @@ struct ProfileDetailView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
+    }
+
+    /// Shown when the launcher was built by an older wrapper — offers a one-click
+    /// rebuild. Disabled while running (the core refuses to rewrite a live bundle).
+    private var rebuildBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.orange)
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Update available").font(.callout).bold()
+                Text("Built by an older version of Claude Manager. "
+                    + (managed.isRunning ? "Stop it first, then rebuild " : "Rebuild ")
+                    + "to apply the latest launcher improvements.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Rebuild") { Task { await model.rebuild(profile) } }
+                .buttonStyle(.borderedProminent)
+                .disabled(managed.isRunning)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var details: some View {

@@ -9,8 +9,25 @@ public enum CoreConstants {
     /// "ours" when scanning the install directory (the marker is the source of truth).
     public static let markerKey = "ClaudeManagerLauncher"
 
-    /// Current schema version of the marker dictionary, for forward migrations.
-    public static let markerSchemaVersion = 1
+    /// Version of the generated launcher *wrapper* — the bash script rendered by
+    /// `LauncherScript.render` plus the keys written by `LauncherBundle.writeInfoPlist`.
+    /// It is stamped into every launcher's marker at build time. **Bump it whenever
+    /// that generated output changes**: a launcher whose stored version is lower then
+    /// reads back as stale (`Discovered.isStale` / `ManagedProfile.needsRebuild`), and
+    /// the app offers a rebuild. This is the wrapper format version, NOT the app's
+    /// `MARKETING_VERSION`.
+    ///
+    /// History: 1 = MVP. 2 = adds `LSArchitecturePriority` so profiles run native
+    /// (arm64) instead of translated under Rosetta.
+    public static let currentWrapperVersion = 2
+
+    /// The single source of the staleness rule: whether a launcher stamped with
+    /// `version` predates `currentWrapperVersion` and should be offered a rebuild.
+    /// Both `Discovered.isStale` and `ManagedProfile.needsRebuild` defer to this so
+    /// the Doctor warning and the UI rebuild affordance can never disagree.
+    public static func wrapperVersionIsStale(_ version: Int) -> Bool {
+        version < currentWrapperVersion
+    }
 
     /// `~/Library/Application Support/<name>` folder for GUI metadata and the
     /// default location of new profile data directories.

@@ -80,8 +80,18 @@ public enum StopOutcome: Sendable, Equatable {
     case stillRunning(pid: Int32)
 }
 
-/// The façade the app talks to: scan, add, remove, open, stop, edit, regenerate
-/// icons, and run diagnostics. Composed of small injectable services so the whole
+/// Outcome of `rebuildAll`: which launchers were regenerated, which were skipped
+/// because they were running (a live bundle can't be rewritten), and which failed
+/// (e.g. an icon-pipeline error, or a bundle removed mid-batch) — a single bad
+/// launcher never aborts the rest.
+public struct RebuildAllResult: Sendable {
+    public let rebuilt: [Profile]
+    public let skippedRunning: [Profile]
+    public let failed: [Profile]
+}
+
+/// The façade the app talks to: scan, add, remove, open, stop, edit, rebuild
+/// launchers, and run diagnostics. Composed of small injectable services so the whole
 /// thing is testable against temp directories and a mock `CommandRunner`.
 public struct ProfileStore {
     public let realClaude: RealClaude
@@ -137,7 +147,12 @@ public struct ProfileStore {
             let profile = discovered.profile
             let pid = runningPID(for: profile)
             let size = measuringSizes ? diskSize(of: profile.profilePath) : nil
-            return ManagedProfile(profile: profile, pid: pid, diskSize: size)
+            return ManagedProfile(
+                profile: profile,
+                pid: pid,
+                diskSize: size,
+                wrapperVersion: discovered.wrapperVersion
+            )
         }
     }
 
@@ -352,11 +367,19 @@ public struct ProfileStore {
         return .stillRunning(pid: pid)
     }
 
-    /// Rebuild one launcher's badge icon.
-    public func regenerateIcon(for profile: Profile, restartDock: Bool = true) throws {
+    /// Rebuild one launcher end-to-end from the current wrapper format — its bash
+    /// script (freshly stamped with the real-binary path and `currentWrapperVersion`),
+    /// its Info.plist marker, and its badge icon (rendered with the current style).
+    /// This is how a stale launcher is brought up to date and how the user forces a
+    /// fresh regenerate. Refuses while the profile is running: rewriting the bundle
+    /// under a live instance is unsafe (the same reason `update` refuses).
+    public func rebuild(_ profile: Profile, restartDock: Bool = true) throws {
         try ensureRealBinaryPresent()
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
+        }
+        if let pid = runningPID(for: profile) {
+            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
@@ -364,20 +387,38 @@ public struct ProfileStore {
             color: profile.color,
             style: configuration.badgeStyle
         )
-        try icns.write(to: profile.appURL.appendingPathComponent("Contents/Resources/Badge.icns"))
-        iconCache.refresh(appURL: profile.appURL, restartDock: false)
-        if restartDock { iconCache.restartDock() }
+        try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+        iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
     }
 
-    /// Rebuild every launcher's icon, restarting the Dock once for the batch.
+    /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
+    /// batch. A running launcher is *skipped*, not failed — a live bundle can't be
+    /// rewritten — and returned so the caller can report it.
     @discardableResult
-    public func regenerateAllIcons() throws -> [Profile] {
-        let profiles = list().map(\.profile)
-        for profile in profiles {
-            try regenerateIcon(for: profile, restartDock: false)
+    public func rebuildAll() throws -> RebuildAllResult {
+        try ensureRealBinaryPresent()
+        var rebuilt: [Profile] = []
+        var skippedRunning: [Profile] = []
+        var failed: [Profile] = []
+        for managed in list() {
+            if managed.isRunning {
+                skippedRunning.append(managed.profile)
+                continue
+            }
+            do {
+                try rebuild(managed.profile, restartDock: false)
+                rebuilt.append(managed.profile)
+            } catch ClaudeManagerError.profileRunning {
+                // Started between the scan and the rebuild — skip it too.
+                skippedRunning.append(managed.profile)
+            } catch {
+                // A single launcher's failure (icon pipeline, bundle vanished
+                // mid-batch, …) must not abort the rest — record it and continue.
+                failed.append(managed.profile)
+            }
         }
-        if !profiles.isEmpty { iconCache.restartDock() }
-        return profiles
+        if !rebuilt.isEmpty { iconCache.restartDock() }
+        return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
     }
 
     /// All running Claude instances across every bundle (for the status view).
@@ -399,9 +440,9 @@ public struct ProfileStore {
     // MARK: - Helpers
 
     /// Fail fast if the real Claude binary this store wraps is absent. Every
-    /// mutation that bakes `realClaude.binaryURL` into a launcher (`add`, `update`)
-    /// or reads its icon (`regenerateIcon`) shares this precondition instead of
-    /// each trusting `realClaude` blindly.
+    /// mutation that bakes `realClaude.binaryURL` into a launcher (`add`, `update`,
+    /// `rebuild`, `rebuildAll`) shares this precondition instead of each trusting
+    /// `realClaude` blindly.
     ///
     /// `open` is deliberately *not* guarded here: it never references `realClaude`,
     /// only launches an existing launcher whose real-binary path was baked in at

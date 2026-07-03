@@ -86,7 +86,7 @@ struct LauncherMarkerTests {
         let marker = LauncherMarker(name: "work", label: "W", color: "blue", profile: "/data/work")
         let restored = try #require(LauncherMarker(dictionary: marker.dictionary))
         #expect(restored == marker)
-        #expect(restored.schemaVersion == CoreConstants.markerSchemaVersion)
+        #expect(restored.wrapperVersion == CoreConstants.currentWrapperVersion)
     }
 
     @Test
@@ -96,10 +96,38 @@ struct LauncherMarkerTests {
     }
 
     @Test
-    func defaultsSchemaVersionWhenAbsent() throws {
+    func defaultsWrapperVersionToOneWhenAbsent() throws {
+        // A pre-versioning launcher (no wrapperVersion key, or only the old
+        // schemaVersion key) reads back as v1 — i.e. stale — with no legacy fallback.
         let dict: [String: Any] = ["name": "a", "label": "A", "color": "red", "profile": "/p"]
-        let marker = try #require(LauncherMarker(dictionary: dict))
-        #expect(marker.schemaVersion == 1)
+        #expect(try #require(LauncherMarker(dictionary: dict)).wrapperVersion == 1)
+        let legacy: [String: Any] = [
+            "name": "a",
+            "label": "A",
+            "color": "red",
+            "profile": "/p",
+            "schemaVersion": 1
+        ]
+        #expect(try #require(LauncherMarker(dictionary: legacy)).wrapperVersion == 1)
+    }
+}
+
+struct ManagedProfileTests {
+    private func makeProfile() -> Profile {
+        Profile(
+            name: "w", displayName: "W", label: "W", color: .named("blue"),
+            profilePath: "/p", bundleID: "io.example.w", appPath: "/W.app"
+        )
+    }
+
+    @Test
+    func needsRebuildWhenBelowCurrentWrapperVersion() {
+        let stale = ManagedProfile(profile: makeProfile(), pid: nil, wrapperVersion: 1)
+        #expect(stale.needsRebuild == (CoreConstants.currentWrapperVersion > 1))
+        let current = ManagedProfile(
+            profile: makeProfile(), pid: nil, wrapperVersion: CoreConstants.currentWrapperVersion
+        )
+        #expect(!current.needsRebuild)
     }
 }
 

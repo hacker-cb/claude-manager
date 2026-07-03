@@ -49,7 +49,15 @@ struct ProfileRow: View {
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 2) {
-                StatusDot(isRunning: managed.isRunning)
+                HStack(spacing: 4) {
+                    if managed.needsRebuild {
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .help("Update available — rebuild the launcher")
+                    }
+                    StatusDot(isRunning: managed.isRunning)
+                }
                 if let size = managed.diskSize {
                     Text(size).font(.caption2).foregroundStyle(.secondary)
                 }
@@ -61,6 +69,8 @@ struct ProfileRow: View {
             if managed.isRunning {
                 Button("Stop") { Task { await model.stop(managed.profile, force: false) } }
             }
+            Button("Rebuild Launcher") { Task { await model.rebuild(managed.profile) } }
+                .disabled(managed.isRunning)
             Divider()
             Button("Reveal Profile Data in Finder") { model.revealProfileData(managed.profile) }
             Button("Reveal Launcher in Finder") { model.revealLauncher(managed.profile) }

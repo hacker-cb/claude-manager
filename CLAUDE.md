@@ -61,13 +61,24 @@ Manager` holds GUI-only metadata (ordering, notes) and is always optional.
   The priority key makes LaunchServices bring the interpreter up native, so the
   exec'd Claude is native too. The list is host-relative (Intel falls through to
   x86_64), so the same key is correct on both architectures. Only *newly built*
-  bundles get it — `regenerateIcon` rewrites `Badge.icns` only, so existing
-  launchers pick it up on the next `add`/`update` (editing + saving rebuilds).
+  bundles get it; older launchers are flagged stale by the wrapper-version check
+  (below) and updated via **Rebuild** / **Apply to all launchers**.
+- **Bump `CoreConstants.currentWrapperVersion` when the generated launcher changes**
+  — whenever you change the output of `LauncherScript.render` (the bash script) or
+  `LauncherBundle.writeInfoPlist` (keys/values), increment it. Every launcher stamps
+  the version into its marker at build time, so a bundle whose stored version is
+  lower reads back as *stale* (`Discovered.isStale` / `ManagedProfile.needsRebuild`),
+  and the app surfaces a rebuild (per-launcher **Rebuild**, Settings **Apply to all
+  launchers**, and a `Doctor` warning). This is the wrapper/launcher format version,
+  **not** the app's `MARKETING_VERSION`. `ProfileStore.rebuild` / `rebuildAll`
+  regenerate the whole bundle (script + Info.plist + icon) from the current format;
+  a *running* launcher is skipped, not failed (a live bundle can't be rewritten).
+  The marker reads an absent version as `1`, so pre-versioning launchers are stale.
 - **Icon cache is sticky**: after writing a bundle's `.icns`, run `lsregister -f`,
   `touch`, and `killall Dock`. `killall Dock` flashes the screen, so it is gated
   (`IconCache.refresh(restartDock:)`): a brand-new bundle skips it (nothing cached
-  for that path); a forced rebuild, a same-named twin in Trash, or an icon
-  regenerate restart the Dock (the batch regenerate does it once).
+  for that path); a forced rebuild, a same-named twin in Trash, or a launcher
+  rebuild restart the Dock (the batch rebuild does it once).
 - **Process detection**: main Claude processes are `ps` lines at
   `.../Contents/MacOS/<exe>` with **ppid == 1** (launchd). The ppid filter excludes
   Electron's renderer/utility/MCP children (forked from the main). Paths may
