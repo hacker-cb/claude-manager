@@ -60,6 +60,17 @@ struct BadgeStyleTests {
     }
 
     @Test
+    func decodeSurvivesUnknownEnumAndTypeMismatch() throws {
+        // An unknown enum raw (e.g. a value from a newer version) and a mistyped field
+        // each fall back to their own default; valid fields survive — no throw.
+        let json = #"{"shape": "hexagon", "scale": "big", "corner": "topLeading"}"#
+        let decoded = try JSONDecoder().decode(BadgeStyle.self, from: Data(json.utf8))
+        #expect(decoded.shape == BadgeStyle.default.shape) // unknown → default
+        #expect(decoded.scale == BadgeStyle.default.scale) // mistyped → default
+        #expect(decoded.corner == .topLeading) // valid → kept
+    }
+
+    @Test
     func drawnLabelUppercasesAndTruncates() {
         let up = BadgeStyle(uppercase: true, maxLabelLength: 3)
         #expect(up.drawnLabel(from: "workspace") == "WOR")

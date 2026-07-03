@@ -97,20 +97,27 @@ public struct BadgeStyle: Codable, Sendable, Equatable {
         self.maxLabelLength = maxLabelLength.clamped(to: Self.labelLengthRange)
     }
 
-    /// Decode leniently — a missing or out-of-range field falls back to the default
-    /// and is re-clamped, so a stale/partial persisted blob can never yield an
-    /// invalid style or a decode failure.
+    /// Decode leniently — each field that is missing, mistyped, or (for an enum) an
+    /// unknown value falls back to the default for *that field* and is re-clamped, so
+    /// a stale/partial/forward-version persisted blob can never fail the decode or
+    /// yield an invalid style. Only a non-object payload throws (→ caller uses default).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = BadgeStyle.default
-        try self.init(
-            scale: c.decodeIfPresent(Double.self, forKey: .scale) ?? d.scale,
-            shape: c.decodeIfPresent(Shape.self, forKey: .shape) ?? d.shape,
-            corner: c.decodeIfPresent(Corner.self, forKey: .corner) ?? d.corner,
-            ringWidth: c.decodeIfPresent(Double.self, forKey: .ringWidth) ?? d.ringWidth,
-            fontWeight: c.decodeIfPresent(FontWeight.self, forKey: .fontWeight) ?? d.fontWeight,
-            uppercase: c.decodeIfPresent(Bool.self, forKey: .uppercase) ?? d.uppercase,
-            maxLabelLength: c.decodeIfPresent(Int.self, forKey: .maxLabelLength) ?? d.maxLabelLength
+        /// `try?` swallows a type mismatch or unknown-enum error to the per-field default;
+        /// a present-but-null (or absent) key also falls back.
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            guard let decoded = try? c.decodeIfPresent(T.self, forKey: key) else { return fallback }
+            return decoded ?? fallback
+        }
+        self.init(
+            scale: value(.scale, d.scale),
+            shape: value(.shape, d.shape),
+            corner: value(.corner, d.corner),
+            ringWidth: value(.ringWidth, d.ringWidth),
+            fontWeight: value(.fontWeight, d.fontWeight),
+            uppercase: value(.uppercase, d.uppercase),
+            maxLabelLength: value(.maxLabelLength, d.maxLabelLength)
         )
     }
 
