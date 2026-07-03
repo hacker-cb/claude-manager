@@ -16,6 +16,7 @@ struct ProfileDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                if managed.claudeUpdateAvailable { restartBanner }
                 if managed.needsRebuild { rebuildBanner }
                 Divider()
                 actions
@@ -87,6 +88,9 @@ struct ProfileDetailView: View {
 
             Button { editor = .edit(profile) } label: { Label("Edit", systemImage: "pencil") }
             Menu {
+                if managed.isRunning {
+                    Button("Restart") { Task { await model.restart(profile) } }
+                }
                 Button("Rebuild Launcher") { Task { await model.rebuild(profile) } }
                     .disabled(managed.isRunning)
                 Button("Reveal Profile Data in Finder") { model.revealProfileData(profile) }
@@ -99,6 +103,28 @@ struct ProfileDetailView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
+    }
+
+    /// Shown when the live instance is on an older Claude than the app now on disk —
+    /// Claude.app updated in place. Offers a one-click restart onto the new version.
+    private var restartBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.clockwise")
+                .foregroundStyle(.blue)
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Restart to update").font(.callout).bold()
+                Text("Running \(managed.runningClaudeVersion ?? "an older build") — "
+                    + "Claude \(managed.availableClaudeVersion ?? "") is installed. "
+                    + "Restart to move this profile onto the new version.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Restart") { Task { await model.restart(profile) } }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// Shown when the launcher was built by an older wrapper — offers a one-click

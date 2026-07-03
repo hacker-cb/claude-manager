@@ -141,9 +141,13 @@ public struct ProfileStore {
 
     // MARK: - Read
 
-    /// All managed launchers with live running state (and optional disk usage).
+    /// All managed launchers with live running state (and optional disk usage). Also
+    /// stamps each with the Claude version it's running vs the one on disk, so a
+    /// launcher left on an older build surfaces as "restart to update".
     public func list(measuringSizes: Bool = false) -> [ManagedProfile] {
-        bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
+        let availableVersion = realClaude.version(fileManager: fileManager)
+        let runningVersions = processProbe.runningVersionsByProfilePath()
+        return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
             let profile = discovered.profile
             let pid = runningPID(for: profile)
             let size = measuringSizes ? diskSize(of: profile.profilePath) : nil
@@ -151,7 +155,9 @@ public struct ProfileStore {
                 profile: profile,
                 pid: pid,
                 diskSize: size,
-                wrapperVersion: discovered.wrapperVersion
+                wrapperVersion: discovered.wrapperVersion,
+                runningClaudeVersion: pid != nil ? runningVersions[profile.profilePath] : nil,
+                availableClaudeVersion: availableVersion
             )
         }
     }
@@ -439,16 +445,11 @@ public struct ProfileStore {
 
     // MARK: - Helpers
 
-    /// Fail fast if the real Claude binary this store wraps is absent. Every
-    /// mutation that bakes `realClaude.binaryURL` into a launcher (`add`, `update`,
-    /// `rebuild`, `rebuildAll`) shares this precondition instead of each trusting
-    /// `realClaude` blindly.
-    ///
-    /// `open` is deliberately *not* guarded here: it never references `realClaude`,
-    /// only launches an existing launcher whose real-binary path was baked in at
-    /// build time. Checking the *currently resolved* app would neither cover that
-    /// baked path nor catch it going stale — surfacing a stale launcher is
-    /// `Doctor`'s job.
+    /// Fail fast if the real Claude binary this store wraps is absent. Every mutation
+    /// that bakes `realClaude.binaryURL` into a launcher (`add`, `update`, `rebuild`,
+    /// `rebuildAll`) shares this precondition. `open` is deliberately *not* guarded:
+    /// it launches a launcher whose real-binary path was baked in at build time —
+    /// surfacing a stale one of those is `Doctor`'s job, not this check's.
     private func ensureRealBinaryPresent() throws {
         guard realClaude.binaryExists(fileManager: fileManager) else {
             throw ClaudeManagerError.realClaudeNotFound

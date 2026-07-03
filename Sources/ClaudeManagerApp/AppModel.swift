@@ -1,6 +1,7 @@
 import AppKit
 import ClaudeManagerCore
 import SwiftUI
+import UserNotifications
 
 /// A user-facing error wrapped for `.alert(item:)`.
 struct AppError: Identifiable {
@@ -46,6 +47,13 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
+
+    /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
+    /// a pending update nags once — not on every refresh. A skew that resolves (the
+    /// instance was restarted) drops out, so a later update notifies afresh.
+    private var notifiedClaudeUpdates: Set<String> = []
+    private var monitorTask: Task<Void, Never>?
+    private var activationObserver: (any NSObjectProtocol)?
 
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
@@ -168,6 +176,7 @@ final class AppModel: ObservableObject {
         let sizes = measureSizes
         guard let listed = await perform({ store in store.list(measuringSizes: sizes) }) else { return }
         profiles = listed
+        await notifyClaudeUpdatesIfNeeded()
     }
 
     func runDoctor() async {
@@ -229,6 +238,25 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
+    /// Quit the running instance and relaunch it — how a live instance moves onto a
+    /// freshly-updated Claude (its version is fixed at launch, so only a relaunch
+    /// picks up an in-place app update). Graceful stop first; if it won't exit, leave
+    /// it running and surface the same notice `stop` does rather than force-killing.
+    func restart(_ profile: Profile) async {
+        let outcome = await perform { store in await store.stop(profile, force: false) }
+        switch outcome {
+        case .stopped?, .notRunning?:
+            _ = await perform { store in try store.open(profile) }
+        case let .stillRunning(pid)?:
+            currentError = AppError(
+                message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop, then Open."
+            )
+        case nil:
+            break // perform already surfaced the failure
+        }
+        await refresh()
+    }
+
     /// Rebuild one launcher from the current wrapper format (script + Info.plist +
     /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
     func rebuild(_ profile: Profile) async {
@@ -278,6 +306,108 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([profile.appURL])
     }
 
+    // MARK: - Claude update monitoring
+
+    /// Start watching for the real Claude.app updating out from under running
+    /// instances: refresh when the user returns to the manager, and poll (while the app
+    /// is frontmost) so a background update surfaces even with the window open.
+    /// Idempotent — safe to call from `.task` on every appearance.
+    func startMonitoring() {
+        guard monitorTask == nil else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.reconcile() }
+        }
+        monitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                // Poll only while frontmost — a backgrounded menu-bar app catches up
+                // via didBecomeActive instead of spawning `ps` every minute forever.
+                // @MainActor so NSApp.isActive is read on the main thread.
+                if NSApp.isActive { await reconcile() }
+            }
+        }
+    }
+
+    /// Cancel the poll and drop the activation observer. The root model normally lives
+    /// for the process, but explicit teardown keeps `startMonitoring` restartable.
+    func stopMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = nil
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
+    }
+
+    /// Re-read the on-disk Claude version and rescan running state, so a version skew
+    /// (its badge, banner, and notification) appears without a manual refresh. The
+    /// locate runs off the main actor (LaunchServices + plist reads block); a missing
+    /// Claude is left to the persistent banner rather than re-raising the alert.
+    private func reconcile() async {
+        await locateOffMain()
+        guard realClaude != nil else { return }
+        await refresh()
+    }
+
+    private struct LocateResult {
+        let real: RealClaude?
+        let version: String?
+        let error: String?
+    }
+
+    /// Off-main `locate` for the background monitor: the LaunchServices lookup and
+    /// Info.plist reads run on a detached task; only the published assignment happens
+    /// back on the main actor. `locate()` stays synchronous for one-shot, user-driven
+    /// calls (init, Retry, Re-detect) where the main-thread cost is fine.
+    private func locateOffMain() async {
+        let located = await Task.detached { () -> LocateResult in
+            do {
+                let real = try RealClaudeLocator().locate()
+                return LocateResult(real: real, version: real.version(), error: nil)
+            } catch {
+                return LocateResult(real: nil, version: nil, error: Self.describe(error))
+            }
+        }.value
+        realClaude = located.real
+        realClaudeVersion = located.version
+        locateError = located.error
+    }
+
+    /// Post a local notification for each running launcher newly found to be behind the
+    /// on-disk Claude — once per pending version, and only once notifications are
+    /// actually authorized, so a permission prompt answered later still fires.
+    private func notifyClaudeUpdatesIfNeeded() async {
+        let behind = profiles.filter(\.claudeUpdateAvailable)
+        // Forget skews that resolved (the instance was restarted) so a later update
+        // re-notifies; a key is *added* only after its notification is actually posted.
+        notifiedClaudeUpdates.formIntersection(Set(behind.map(claudeUpdateKey)))
+        let fresh = behind.filter { !notifiedClaudeUpdates.contains(claudeUpdateKey($0)) }
+        guard !fresh.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        // Not (yet) authorized — leave keys unmarked so a later refresh retries once
+        // the user has answered the permission prompt.
+        guard status == .authorized || status == .provisional else { return }
+        for managed in fresh {
+            let content = UNMutableNotificationContent()
+            content.title = "\(managed.profile.displayName): restart to update"
+            content.body = "Running \(managed.runningClaudeVersion ?? "an older build") — "
+                + "Claude \(managed.availableClaudeVersion ?? "") is installed."
+            try? await center.add(UNNotificationRequest(
+                identifier: "claude-update-\(managed.id)", content: content, trigger: nil
+            ))
+            notifiedClaudeUpdates.insert(claudeUpdateKey(managed))
+        }
+    }
+
+    private func claudeUpdateKey(_ managed: ManagedProfile) -> String {
+        "\(managed.id)@\(managed.availableClaudeVersion ?? "")"
+    }
+
     // MARK: - Plumbing
 
     /// Run a store operation off the main actor — it may block or suspend (e.g. the
@@ -320,7 +450,7 @@ final class AppModel: ObservableObject {
         }.value
     }
 
-    private static func describe(_ error: Error) -> String {
+    private nonisolated static func describe(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

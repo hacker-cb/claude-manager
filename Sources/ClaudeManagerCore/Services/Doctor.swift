@@ -35,6 +35,7 @@ public struct Doctor {
         }
 
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
+        diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
@@ -100,6 +101,31 @@ public struct Doctor {
                 severity: .warning,
                 title: "\(launcher.displayName): built by an older launcher format — rebuild to update",
                 detail: "wrapper v\(launcher.wrapperVersion) < v\(CoreConstants.currentWrapperVersion)"
+            )
+        }
+    }
+
+    /// A warning per running launcher whose live instance is on an older Claude than
+    /// the app now on disk — Claude.app auto-updated in place while the instance kept
+    /// its launch-time version. The fix is a restart, not a rebuild (so it's distinct
+    /// from `staleLauncherDiagnostics`). Only managed launchers are checked; other
+    /// Claude processes (the real app, unmanaged copies) are ignored.
+    private func claudeVersionSkewDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        guard let available = realClaude?.version(fileManager: fileManager) else { return [] }
+        let launcherByProfile = Dictionary(
+            discovered.map { ($0.marker.profile, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return processProbe.allClaudeMains().compactMap { instance in
+            guard let profilePath = instance.profilePath,
+                  let launcher = launcherByProfile[profilePath],
+                  let running = instance.runningVersion,
+                  VersionOrder.isNewer(available, than: running)
+            else { return nil }
+            return Diagnostic(
+                severity: .warning,
+                title: "\(launcher.displayName): running v\(running) — Claude v\(available) available, restart to update",
+                detail: PathUtils.abbreviatingHome(profilePath)
             )
         }
     }

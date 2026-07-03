@@ -87,6 +87,35 @@ struct ProcessProbeTests {
     }
 
     @Test
+    func attachesRunningVersionFromChildTelemetry() {
+        // The main carries no version; its Electron child does, in
+        // --desktop-telemetry-config. The child's ppid links it to its main.
+        let ps = """
+          501     1 /Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=/data/work
+          502   501 /Applications/Claude.app/Contents/MacOS/Helper --type=renderer --desktop-telemetry-config={"appVersion":"1.18286.0"}
+          777     1 /Applications/Claude.app/Contents/MacOS/Claude
+        """
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains.count == 2)
+        #expect(mains.first { $0.pid == 501 }?.runningVersion == "1.18286.0")
+        // A main whose subtree reported nothing stays version-unknown, never "current".
+        #expect(mains.first { $0.pid == 777 }?.runningVersion == nil)
+    }
+
+    @Test
+    func runningVersionNilWhenNoChildReportsIt() {
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=/data/work"
+        #expect(ProcessProbe.parseMains(psOutput: ps).first?.runningVersion == nil)
+    }
+
+    @Test
+    func parsesAppVersionFromTelemetryFlag() {
+        let flag = #"--desktop-telemetry-config={"deploymentMode":"1p","appVersion":"1.18286.0"}"#
+        #expect(ProcessProbe.parseAppVersion(flag) == "1.18286.0")
+        #expect(ProcessProbe.parseAppVersion("no version here") == nil)
+    }
+
+    @Test
     func mainPIDSendsEscapedPattern() {
         let runner = RecordingCommandRunner { _, _ in
             CommandOutput(exitCode: 1, standardOutput: "", standardError: "")

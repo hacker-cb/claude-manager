@@ -129,6 +129,25 @@ struct ManagedProfileTests {
         )
         #expect(!current.needsRebuild)
     }
+
+    @Test
+    func claudeUpdateAvailableOnlyWhenRunningBehindTheDiskVersion() {
+        func managed(pid: Int32?, running: String?, available: String?) -> ManagedProfile {
+            ManagedProfile(
+                profile: makeProfile(), pid: pid,
+                runningClaudeVersion: running, availableClaudeVersion: available
+            )
+        }
+        // Running an older build than the app on disk → offer a restart.
+        #expect(managed(pid: 42, running: "1.17377.2", available: "1.18286.0").claudeUpdateAvailable)
+        // Already current, or ahead (a local downgrade), never prompts.
+        #expect(!managed(pid: 42, running: "1.18286.0", available: "1.18286.0").claudeUpdateAvailable)
+        #expect(!managed(pid: 42, running: "1.18286.0", available: "1.17377.2").claudeUpdateAvailable)
+        // Stopped, or version unknown, is not actionable.
+        #expect(!managed(pid: nil, running: "1.17377.2", available: "1.18286.0").claudeUpdateAvailable)
+        #expect(!managed(pid: 42, running: nil, available: "1.18286.0").claudeUpdateAvailable)
+        #expect(!managed(pid: 42, running: "1.17377.2", available: nil).claudeUpdateAvailable)
+    }
 }
 
 struct DiagnosticTests {
