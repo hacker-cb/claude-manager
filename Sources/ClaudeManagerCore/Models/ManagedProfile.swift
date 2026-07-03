@@ -7,11 +7,19 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     public let pid: Int32?
     /// Human-readable disk usage of the profile dir (e.g. `1.2G`), if measured.
     public let diskSize: String?
+    /// Wrapper version stamped into this launcher's marker at build time.
+    public let wrapperVersion: Int
 
-    public init(profile: Profile, pid: Int32?, diskSize: String? = nil) {
+    public init(
+        profile: Profile,
+        pid: Int32?,
+        diskSize: String? = nil,
+        wrapperVersion: Int = CoreConstants.currentWrapperVersion
+    ) {
         self.profile = profile
         self.pid = pid
         self.diskSize = diskSize
+        self.wrapperVersion = wrapperVersion
     }
 
     public var id: String {
@@ -20,5 +28,11 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
 
     public var isRunning: Bool {
         pid != nil
+    }
+
+    /// True when the launcher was built by an older wrapper than the current one —
+    /// the app surfaces this as "update available" and offers a rebuild.
+    public var needsRebuild: Bool {
+        CoreConstants.wrapperVersionIsStale(wrapperVersion)
     }
 }

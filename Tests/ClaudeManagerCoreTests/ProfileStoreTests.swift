@@ -342,14 +342,16 @@ struct ProfileStoreTests {
     }
 
     @Test
-    func regenerateAllIconsRestartsDockOnce() throws {
+    func rebuildAllRestartsDockOnce() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         _ = try env.store.add(AddProfileRequest(name: env.name("work")))
         _ = try env.store.add(AddProfileRequest(name: env.name("home")))
-        let rebuilt = try env.store.regenerateAllIcons()
-        #expect(Set(rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
-        // Exactly one Dock restart for the whole batch (fresh bundles don't restart).
+        let result = try env.store.rebuildAll()
+        #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
+        #expect(result.skippedRunning.isEmpty)
+        #expect(result.failed.isEmpty)
+        // Exactly one Dock restart for the whole batch (per-launcher rebuilds defer it).
         #expect(env.runner.invocations(of: CoreConstants.killallPath).count == 1)
     }
 }
@@ -360,9 +362,8 @@ struct ProfileStorePreconditionTests {
     @Test
     func mutationsRejectMissingRealBinary() throws {
         // With the wrapped Claude binary absent, every mutation that bakes its path
-        // into a launcher (`add`, `update`) or reads its icon (`regenerateIcon`)
-        // fails fast with the same domain error. `open` is intentionally exempt — it
-        // never references `realClaude`.
+        // into a launcher (`add`, `update`, `rebuild`) fails fast with the same domain
+        // error. `open` is intentionally exempt — it never references `realClaude`.
         let fm = FileManager.default
         let root = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: root) }
@@ -386,7 +387,7 @@ struct ProfileStorePreconditionTests {
             try store.update(original: profile, to: profile)
         }
         #expect(throws: ClaudeManagerError.realClaudeNotFound) {
-            try store.regenerateIcon(for: profile)
+            try store.rebuild(profile)
         }
     }
 }

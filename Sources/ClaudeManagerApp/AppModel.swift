@@ -229,12 +229,43 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
-    func regenerateIcon(_ profile: Profile) async {
-        _ = await perform { store in try store.regenerateIcon(for: profile) }
+    /// Rebuild one launcher from the current wrapper format (script + Info.plist +
+    /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
+    func rebuild(_ profile: Profile) async {
+        _ = await perform { store in try store.rebuild(profile) }
+        await refresh()
     }
 
-    func regenerateAllIcons() async {
-        _ = await perform { store in try store.regenerateAllIcons() }
+    /// Rebuild every launcher. Running ones are skipped and per-launcher failures are
+    /// collected by the core (the batch never aborts); surface either as a non-fatal
+    /// notice via the same channel `stop` uses for its running warning.
+    func rebuildAll() async {
+        guard let result = await perform({ store in try store.rebuildAll() }) else { return }
+        if let notice = rebuildAllNotice(for: result) {
+            currentError = AppError(message: notice)
+        }
+        await refresh()
+    }
+
+    /// A non-fatal summary when a batch rebuild didn't touch every launcher, or `nil`
+    /// when all were rebuilt cleanly.
+    private func rebuildAllNotice(for result: RebuildAllResult) -> String? {
+        var parts: [String] = []
+        if !result.skippedRunning.isEmpty {
+            let c = result.skippedRunning.count
+            let names = result.skippedRunning.map(\.displayName).joined(separator: ", ")
+            parts.append(
+                "Skipped \(c) running launcher\(c == 1 ? "" : "s") (\(names)) — stop them, then rebuild."
+            )
+        }
+        if !result.failed.isEmpty {
+            let c = result.failed.count
+            let names = result.failed.map(\.displayName).joined(separator: ", ")
+            parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
+        }
+        guard !parts.isEmpty else { return nil }
+        let n = result.rebuilt.count
+        return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
     }
 
     // MARK: - Finder helpers

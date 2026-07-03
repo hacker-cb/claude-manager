@@ -8,20 +8,23 @@ public struct LauncherMarker: Equatable, Sendable {
     public var label: String
     public var color: String
     public var profile: String
-    public var schemaVersion: Int
+    /// Version of the wrapper (script + Info.plist) that built this launcher, so a
+    /// bundle from an older Claude Manager reads back as stale — see
+    /// `CoreConstants.currentWrapperVersion`.
+    public var wrapperVersion: Int
 
     public init(
         name: String,
         label: String,
         color: String,
         profile: String,
-        schemaVersion: Int = CoreConstants.markerSchemaVersion
+        wrapperVersion: Int = CoreConstants.currentWrapperVersion
     ) {
         self.name = name
         self.label = label
         self.color = color
         self.profile = profile
-        self.schemaVersion = schemaVersion
+        self.wrapperVersion = wrapperVersion
     }
 
     /// Plist-serializable representation embedded into the Info.plist.
@@ -31,7 +34,7 @@ public struct LauncherMarker: Equatable, Sendable {
             "label": label,
             "color": color,
             "profile": profile,
-            "schemaVersion": schemaVersion
+            "wrapperVersion": wrapperVersion
         ]
     }
 
@@ -48,6 +51,8 @@ public struct LauncherMarker: Equatable, Sendable {
         self.label = label
         self.color = color
         self.profile = profile
-        schemaVersion = (dictionary["schemaVersion"] as? Int) ?? 1
+        // A bundle built before wrapper versioning existed has no key — treat it as
+        // v1 so it reads back as stale against the current version.
+        wrapperVersion = (dictionary["wrapperVersion"] as? Int) ?? 1
     }
 }

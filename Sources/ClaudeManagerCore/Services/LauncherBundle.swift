@@ -16,6 +16,18 @@ public struct LauncherBundle {
         public let bundleID: String
         public let displayName: String
 
+        /// The wrapper version stamped into this launcher (older bundles → 1).
+        public var wrapperVersion: Int {
+            marker.wrapperVersion
+        }
+
+        /// True when this launcher was built by an older wrapper than the current
+        /// one, so a rebuild would regenerate its script/Info.plist. Not an error —
+        /// the launcher still runs; it just misses the latest wrapper improvements.
+        public var isStale: Bool {
+            CoreConstants.wrapperVersionIsStale(marker.wrapperVersion)
+        }
+
         /// Reconstruct the full `Profile` from what the bundle stores.
         public var profile: Profile {
             let color = (try? BadgeColor.parse(marker.color)) ?? .named("blue")

@@ -34,6 +34,7 @@ public struct Doctor {
             diagnostics.append(launcherDiagnostic(for: launcher))
         }
 
+        diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
@@ -87,6 +88,20 @@ public struct Doctor {
             title: "\(profile.displayName): ok",
             detail: PathUtils.abbreviatingHome(profile.profilePath)
         )
+    }
+
+    /// A soft warning per launcher built by an older wrapper than the current one —
+    /// it still runs, but a rebuild would refresh its script/Info.plist (e.g. to run
+    /// native instead of under Rosetta). Separate from `launcherDiagnostic` so an
+    /// otherwise-ok launcher is reported as both "ok" and "stale".
+    private func staleLauncherDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        discovered.filter(\.isStale).map { launcher in
+            Diagnostic(
+                severity: .warning,
+                title: "\(launcher.displayName): built by an older launcher format — rebuild to update",
+                detail: "wrapper v\(launcher.wrapperVersion) < v\(CoreConstants.currentWrapperVersion)"
+            )
+        }
     }
 
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {

@@ -59,16 +59,20 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 540, height: 620)
         .confirmationDialog(
-            "Rebuild all launcher icons?",
+            "Rebuild all launchers?",
             isPresented: $showApply,
             titleVisibility: .visible
         ) {
-            Button("Rebuild \(model.profiles.count) icon\(model.profiles.count == 1 ? "" : "s")") {
-                Task { await model.regenerateAllIcons() }
+            Button("Rebuild \(model.profiles.count) launcher\(model.profiles.count == 1 ? "" : "s")") {
+                Task { await model.rebuildAll() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Every launcher icon is regenerated with the current badge style. The Dock will refresh.")
+            Text(
+                "Each launcher is regenerated with the current badge style and wrapper "
+                    + "format (script, icon, Info.plist). Running launchers are skipped; "
+                    + "the Dock refreshes for any that are rebuilt."
+            )
         }
     }
 
@@ -107,7 +111,7 @@ struct SettingsView: View {
                 Button("Apply to all launchers") { showApply = true }
                     .disabled(model.realClaude == nil || model.isBusy || model.profiles.isEmpty)
             }
-            Text("Editing updates newly created launchers. “Apply” rebuilds every existing icon.")
+            Text("Editing updates newly created launchers. “Apply” rebuilds every existing launcher.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
