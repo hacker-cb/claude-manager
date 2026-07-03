@@ -172,4 +172,56 @@ struct DoctorTests {
                 && ($0.detail?.contains("101, 202") ?? false)
         })
     }
+
+    @Test
+    func warnsWhenRunningInstanceIsBehindClaude() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+
+        // A live instance on 9.9.8 (from its child's telemetry) while the app on disk
+        // is 9.9.9 (makeFakeRealApp) — the launcher should be told to restart.
+        let runner = RecordingCommandRunner { executable, args in
+            if executable == CoreConstants.psPath {
+                return CommandOutput(exitCode: 0, standardOutput: """
+                  501     1 /Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=\(profileDir.path)
+                  502   501 /Applications/Claude.app/Contents/MacOS/Claude Helper --type=renderer --desktop-telemetry-config={"appVersion":"9.9.8"}
+                """, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        let diags = doctor(scene, runner: runner)
+        #expect(diags.contains {
+            $0.severity == .warning
+                && $0.title.contains("Claude WORK: running v9.9.8")
+                && $0.title.contains("restart to update")
+        })
+    }
+
+    @Test
+    func noSkewWarningWhenInstanceMatchesDiskVersion() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+
+        // Instance already on 9.9.9 — no restart nudge; and an unmanaged instance on an
+        // old version (a profile no launcher owns) must never be flagged either.
+        let runner = RecordingCommandRunner { executable, args in
+            if executable == CoreConstants.psPath {
+                return CommandOutput(exitCode: 0, standardOutput: """
+                  501     1 /Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=\(profileDir.path)
+                  502   501 /Applications/Claude.app/Contents/MacOS/Claude Helper --type=renderer --desktop-telemetry-config={"appVersion":"9.9.9"}
+                  601     1 /Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=/some/unmanaged
+                  602   601 /Applications/Claude.app/Contents/MacOS/Claude Helper --type=renderer --desktop-telemetry-config={"appVersion":"1.0.0"}
+                """, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        let diags = doctor(scene, runner: runner)
+        #expect(!diags.contains { $0.title.contains("restart to update") })
+    }
 }

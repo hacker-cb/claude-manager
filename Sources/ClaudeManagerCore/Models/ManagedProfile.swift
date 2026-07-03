@@ -9,17 +9,25 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     public let diskSize: String?
     /// Wrapper version stamped into this launcher's marker at build time.
     public let wrapperVersion: Int
+    /// Marketing version the live instance is running (`nil` when stopped or unknown).
+    public let runningClaudeVersion: String?
+    /// Current on-disk version of the real Claude.app this launcher wraps.
+    public let availableClaudeVersion: String?
 
     public init(
         profile: Profile,
         pid: Int32?,
         diskSize: String? = nil,
-        wrapperVersion: Int = CoreConstants.currentWrapperVersion
+        wrapperVersion: Int = CoreConstants.currentWrapperVersion,
+        runningClaudeVersion: String? = nil,
+        availableClaudeVersion: String? = nil
     ) {
         self.profile = profile
         self.pid = pid
         self.diskSize = diskSize
         self.wrapperVersion = wrapperVersion
+        self.runningClaudeVersion = runningClaudeVersion
+        self.availableClaudeVersion = availableClaudeVersion
     }
 
     public var id: String {
@@ -34,5 +42,16 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     /// the app surfaces this as "update available" and offers a rebuild.
     public var needsRebuild: Bool {
         CoreConstants.wrapperVersionIsStale(wrapperVersion)
+    }
+
+    /// True when the live instance is running an older Claude than the one now on
+    /// disk — Claude.app updated in place while this instance kept its launch-time
+    /// version. Distinct from `needsRebuild`: the fix is a restart, not a rebuild.
+    public var claudeUpdateAvailable: Bool {
+        guard isRunning,
+              let running = runningClaudeVersion,
+              let available = availableClaudeVersion
+        else { return false }
+        return VersionOrder.isNewer(available, than: running)
     }
 }

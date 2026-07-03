@@ -15,7 +15,10 @@ struct RootView: View {
             detail
         }
         .toolbar { toolbar }
-        .task { await model.refresh() }
+        .task {
+            model.startMonitoring()
+            await model.refresh()
+        }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)
                 .environmentObject(model)

@@ -34,6 +34,17 @@ struct MenuBarContent: View {
                     }
                 }
             }
+
+            let behind = model.profiles.filter(\.claudeUpdateAvailable)
+            if !behind.isEmpty {
+                Menu("Restart to Update") {
+                    ForEach(behind) { managed in
+                        Button("\(managed.profile.displayName) — v\(managed.availableClaudeVersion ?? "")") {
+                            Task { await model.restart(managed.profile) }
+                        }
+                    }
+                }
+            }
         }
 
         Divider()
