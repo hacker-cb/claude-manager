@@ -64,9 +64,15 @@ public extension Profile {
     /// `BadgeStyle.drawnLabel` per the uppercase toggle.
     static func defaultLabel(for name: String, maxLength: Int) -> String {
         let words = name.split { $0 == "-" || $0 == "_" || $0.isWhitespace }
-        let token = words.count >= 2
-            ? words.compactMap(\.first).map(String.init).joined()
-            : String(words.first ?? "")
+        let token: String = if words.count >= 2 {
+            words.compactMap(\.first).map(String.init).joined()
+        } else if let word = words.first {
+            String(word)
+        } else {
+            // A non-empty name made only of separators (e.g. "-", "__") is valid but
+            // has no words — fall back to the raw name so the label is never blank.
+            name
+        }
         return String(token.prefix(max(1, maxLength)))
     }
 

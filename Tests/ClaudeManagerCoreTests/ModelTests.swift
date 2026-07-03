@@ -17,6 +17,15 @@ struct ProfileDefaultsTests {
     }
 
     @Test
+    func defaultLabelIsNeverBlankForAValidName() {
+        // A name of only separators is valid per isValidName but yields no words; the
+        // label must fall back to the raw name rather than render a blank badge.
+        #expect(Profile.isValidName("-"))
+        #expect(Profile.defaultLabel(for: "-", maxLength: 3) == "-")
+        #expect(Profile.defaultLabel(for: "__", maxLength: 2) == "__")
+    }
+
+    @Test
     func validatesNames() {
         #expect(Profile.isValidName("work"))
         #expect(Profile.isValidName("work-2_test"))
