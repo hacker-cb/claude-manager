@@ -22,6 +22,15 @@ struct MetadataStoreTests {
     }
 
     @Test
+    func invalidJSONLoadsEmpty() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        // A corrupt metadata file must not crash — it degrades to an empty store.
+        try Data("{ not valid json".utf8).write(to: dir.appendingPathComponent("metadata.json"))
+        #expect(MetadataStore(directory: dir).load().isEmpty)
+    }
+
+    @Test
     func updateMutatesSingleEntry() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }

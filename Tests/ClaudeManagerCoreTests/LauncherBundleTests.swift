@@ -20,6 +20,26 @@ struct LauncherBundleTests {
     }
 
     @Test
+    func readMarkerAndIsManagedRejectNonLauncherApp() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        // A plain .app with an Info.plist but no ClaudeManagerLauncher marker.
+        let app = dir.appendingPathComponent("Plain.app")
+        let contents = app.appendingPathComponent("Contents")
+        try fm.createDirectory(at: contents, withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleName": "Plain"], format: .xml, options: 0
+        )
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+
+        let bundle = LauncherBundle()
+        #expect(bundle.readMarker(at: app) == nil)
+        #expect(!bundle.isManagedLauncher(at: app))
+        // A path with no bundle at all is likewise not a launcher.
+        #expect(bundle.readMarker(at: dir.appendingPathComponent("Nope.app")) == nil)
+    }
+
+    @Test
     func buildsExpectedBundleStructure() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }

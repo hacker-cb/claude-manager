@@ -7,7 +7,7 @@ struct ProfileStoreTests {
 
     @Test
     func addCreatesLauncherAndProfileDir() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let result = try env.store.add(AddProfileRequest(
             name: env.name("work"),
@@ -34,7 +34,7 @@ struct ProfileStoreTests {
 
     @Test
     func addReusesExistingProfileData() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profileDir = env.profilesDir.appendingPathComponent(env.name("work"))
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
@@ -46,7 +46,7 @@ struct ProfileStoreTests {
 
     @Test
     func addRejectsDuplicateWithoutForce() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         _ = try env.store.add(AddProfileRequest(name: env.name("work")))
         #expect(throws: ClaudeManagerError.self) {
@@ -56,7 +56,7 @@ struct ProfileStoreTests {
 
     @Test
     func addRejectsInvalidName() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         #expect(throws: ClaudeManagerError.self) {
             try env.store.add(AddProfileRequest(name: "has space"))
@@ -65,7 +65,7 @@ struct ProfileStoreTests {
 
     @Test
     func addRejectsInvalidBundleID() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         #expect(throws: ClaudeManagerError.self) {
             try env.store.add(AddProfileRequest(name: env.name("work"), bundleID: "no dots here"))
@@ -97,7 +97,7 @@ struct ProfileStoreTests {
     func addRefusedWhileProfileRunning() throws {
         // The profile's user-data-dir already has a live instance → refuse
         // regardless of force (guards against rebuilding under a running process).
-        let env = try makeEnv(stub: { executable, args in
+        let env = try makeStoreEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "999\n", standardError: "")
             }
@@ -111,7 +111,7 @@ struct ProfileStoreTests {
 
     @Test
     func addRejectsTraversalDisplayName() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         #expect(throws: ClaudeManagerError.self) {
             try env.store.add(AddProfileRequest(name: env.name("work"), displayName: "../../../Evil"))
@@ -121,7 +121,7 @@ struct ProfileStoreTests {
 
     @Test
     func updateRejectsTraversalDisplayName() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
@@ -136,7 +136,7 @@ struct ProfileStoreTests {
 
     @Test
     func removeKeepsDataSharedByAnotherLauncher() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("aa"))
@@ -154,7 +154,7 @@ struct ProfileStoreTests {
 
     @Test
     func draftUsesDefaults() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let draft = env.store.draft(name: "work")
         #expect(draft.displayName == "Claude WORK")
@@ -168,7 +168,7 @@ struct ProfileStoreTests {
 
     @Test
     func draftNormalizesRelativeProfilePath() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         // A relative path must resolve against the profiles dir, never the CWD.
         let draft = env.store.draft(name: "work", profilePath: "relative/data")
@@ -178,7 +178,7 @@ struct ProfileStoreTests {
 
     @Test
     func openInvokesOpenWithNewInstanceFlag() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         try env.store.open(profile)
@@ -188,7 +188,7 @@ struct ProfileStoreTests {
 
     @Test
     func stopReturnsNotRunningWhenAbsent() async throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         #expect(await env.store.stop(profile, force: false) == .notRunning)
@@ -197,7 +197,7 @@ struct ProfileStoreTests {
     @Test
     func stopReturnsStoppedWhenProcessDisappears() async throws {
         let counter = CallCounter()
-        let env = try makeEnv(stub: { executable, args in
+        let env = try makeStoreEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
                 // Running on the first probe, gone thereafter.
                 let output = counter.next() == 1 ? "555\n" : ""
@@ -222,7 +222,7 @@ struct ProfileStoreTests {
         // cancellation-aware loop returns right after the first (cancelled) sleep,
         // having probed at most a couple of times — a swallowed CancellationError
         // would instead spin `maxPolls` rapid pgrep probes.
-        let env = try makeEnv(stub: { executable, args in
+        let env = try makeStoreEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "777\n", standardError: "")
             }
@@ -257,7 +257,7 @@ struct ProfileStoreTests {
 
     @Test
     func removeTrashesLauncherAndPurgesData() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
@@ -272,7 +272,7 @@ struct ProfileStoreTests {
 
     @Test
     func removeKeepsDataByDefault() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
@@ -285,7 +285,7 @@ struct ProfileStoreTests {
 
     @Test
     func removeThrowsWhenLauncherMissing() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         // A profile whose launcher was never built → consistent domain error.
         let ghost = env.store.draft(name: env.name("ghost"))
@@ -296,7 +296,7 @@ struct ProfileStoreTests {
 
     @Test
     func removeRejectsRunning() throws {
-        let env = try makeEnv(stub: { executable, args in
+        let env = try makeStoreEnv(stub: { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "999\n", standardError: "")
             }
@@ -319,7 +319,7 @@ struct ProfileStoreTests {
 
     @Test
     func updateRenamesLauncherAndTrashesOld() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
@@ -343,7 +343,7 @@ struct ProfileStoreTests {
 
     @Test
     func regenerateAllIconsRestartsDockOnce() throws {
-        let env = try makeEnv()
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         _ = try env.store.add(AddProfileRequest(name: env.name("work")))
         _ = try env.store.add(AddProfileRequest(name: env.name("home")))
@@ -389,59 +389,4 @@ struct ProfileStorePreconditionTests {
             try store.regenerateIcon(for: profile)
         }
     }
-}
-
-// MARK: - Shared test environment
-
-/// A store wired to temp directories and a fake real app, shared across the
-/// ProfileStore suites. Kept at file scope so no single suite's body grows unwieldy;
-/// `private` so the generic name can't collide elsewhere in the test target.
-private struct Env {
-    let root: URL
-    let installDir: URL
-    let profilesDir: URL
-    let real: RealClaude
-    let runner: RecordingCommandRunner
-    let store: ProfileStore
-    /// Per-test token so trashed launchers never collide across the shared
-    /// `~/.Trash` (Swift Testing runs tests in parallel).
-    let token: String
-
-    func name(_ base: String) -> String {
-        base + token
-    }
-
-    func display(_ base: String) -> String {
-        Profile.defaultDisplayName(for: name(base))
-    }
-
-    func appPath(_ base: String) -> String {
-        installDir.appendingPathComponent("\(display(base)).app").path
-    }
-}
-
-/// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
-/// stubbed, so no process is killed and the Dock is never restarted for real.
-private func makeEnv(stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub) throws -> Env {
-    let fm = FileManager.default
-    let root = try Fixture.makeTempDir()
-    let installDir = root.appendingPathComponent("apps")
-    let profilesDir = root.appendingPathComponent("profiles")
-    try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
-    let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
-    let runner = RecordingCommandRunner.delegating(stub: stub)
-    let store = ProfileStore(
-        realClaude: real,
-        configuration: ProfileStoreConfiguration(
-            installDirectory: installDir,
-            defaultProfilesDirectory: profilesDir
-        ),
-        runner: runner,
-        signalSender: { _, _ in 0 }
-    )
-    let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
-    return Env(
-        root: root, installDir: installDir, profilesDir: profilesDir,
-        real: real, runner: runner, store: store, token: token
-    )
 }
