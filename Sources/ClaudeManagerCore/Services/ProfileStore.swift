@@ -170,9 +170,7 @@ public struct ProfileStore {
     /// Create a launcher and its profile dir.
     @discardableResult
     public func add(_ request: AddProfileRequest) throws -> AddResult {
-        guard realClaude.binaryExists(fileManager: fileManager) else {
-            throw ClaudeManagerError.realClaudeNotFound
-        }
+        try ensureRealBinaryPresent()
         guard Profile.isValidName(request.name) else {
             throw ClaudeManagerError.invalidProfileName(request.name)
         }
@@ -227,6 +225,7 @@ public struct ProfileStore {
     /// Apply edits by rebuilding the launcher, trashing the old bundle on rename.
     @discardableResult
     public func update(original: Profile, to updated: Profile) throws -> Profile {
+        try ensureRealBinaryPresent()
         if let pid = runningPID(for: original) {
             throw ClaudeManagerError.profileRunning(name: original.name, pid: pid)
         }
@@ -343,6 +342,7 @@ public struct ProfileStore {
 
     /// Rebuild one launcher's badge icon.
     public func regenerateIcon(for profile: Profile, restartDock: Bool = true) throws {
+        try ensureRealBinaryPresent()
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
         }
@@ -384,6 +384,22 @@ public struct ProfileStore {
     }
 
     // MARK: - Helpers
+
+    /// Fail fast if the real Claude binary this store wraps is absent. Every
+    /// mutation that bakes `realClaude.binaryURL` into a launcher (`add`, `update`)
+    /// or reads its icon (`regenerateIcon`) shares this precondition instead of
+    /// each trusting `realClaude` blindly.
+    ///
+    /// `open` is deliberately *not* guarded here: it never references `realClaude`,
+    /// only launches an existing launcher whose real-binary path was baked in at
+    /// build time. Checking the *currently resolved* app would neither cover that
+    /// baked path nor catch it going stale — surfacing a stale launcher is
+    /// `Doctor`'s job.
+    private func ensureRealBinaryPresent() throws {
+        guard realClaude.binaryExists(fileManager: fileManager) else {
+            throw ClaudeManagerError.realClaudeNotFound
+        }
+    }
 
     func runningPID(for profile: Profile) -> Int32? {
         processProbe.mainPID(
