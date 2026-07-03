@@ -41,6 +41,11 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(profilesOverridePath, forKey: PreferenceKeys.profilesDirectoryOverride) }
     }
 
+    /// Global badge look. Persisted as JSON; new and rebuilt launcher icons use it.
+    @Published var badgeStyle: BadgeStyle {
+        didSet { persistBadgeStyle() }
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -48,7 +53,20 @@ final class AppModel: ObservableObject {
         measureSizes = defaults.bool(forKey: PreferenceKeys.measureSizes)
         installOverridePath = defaults.string(forKey: PreferenceKeys.installDirectoryOverride) ?? ""
         profilesOverridePath = defaults.string(forKey: PreferenceKeys.profilesDirectoryOverride) ?? ""
+        badgeStyle = Self.loadBadgeStyle(from: defaults)
         locate()
+    }
+
+    private static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
+        guard let data = defaults.data(forKey: PreferenceKeys.badgeStyle),
+              let style = try? JSONDecoder().decode(BadgeStyle.self, from: data)
+        else { return .default }
+        return style
+    }
+
+    private func persistBadgeStyle() {
+        guard let data = try? JSONEncoder().encode(badgeStyle) else { return }
+        defaults.set(data, forKey: PreferenceKeys.badgeStyle)
     }
 
     // MARK: - Derived config
@@ -61,12 +79,6 @@ final class AppModel: ObservableObject {
     var effectiveProfilesDirectory: URL {
         if !profilesOverridePath.isEmpty { return URL(fileURLWithPath: profilesOverridePath) }
         return MetadataStore.defaultDirectory().appendingPathComponent("Profiles", isDirectory: true)
-    }
-
-    /// The real Claude app icon, for badge previews.
-    var realAppIcon: NSImage? {
-        guard let real = realClaude else { return nil }
-        return NSWorkspace.shared.icon(forFile: real.appURL.path)
     }
 
     func locate() {
@@ -87,7 +99,27 @@ final class AppModel: ObservableObject {
         var config = ProfileStoreConfiguration.makeDefault(realClaude: real)
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
         config.defaultProfilesDirectory = effectiveProfilesDirectory
+        config.badgeStyle = badgeStyle
         return config
+    }
+
+    /// Render a WYSIWYG badge preview using the authoritative core renderer (same
+    /// path the `.icns` uses), off the main actor. `nil` if the real app is absent.
+    func badgePreview(
+        label: String,
+        color: BadgeColor,
+        style: BadgeStyle,
+        pixels: Int = 128
+    ) async -> NSImage? {
+        guard let iconURL = realClaude?.iconURL else { return nil }
+        return await Task.detached {
+            guard let base = try? RealIconExtractor.loadBaseIcon(from: iconURL),
+                  let png = try? BadgeRenderer().renderPreviewPNG(
+                      base: base, label: label, color: color.rgba, style: style, pixels: pixels
+                  )
+            else { return nil }
+            return NSImage(data: png)
+        }.value
     }
 
     /// Build a store for synchronous, non-blocking calls (e.g. `draft`).

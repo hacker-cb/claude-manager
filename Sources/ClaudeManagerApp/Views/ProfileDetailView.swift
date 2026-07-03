@@ -46,7 +46,7 @@ struct ProfileDetailView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 18) {
-            BadgePreview(baseIcon: model.realAppIcon, label: profile.label, color: profile.color, size: 88)
+            BadgePreview(label: profile.label, color: profile.color, size: 88)
             VStack(alignment: .leading, spacing: 6) {
                 Text(profile.displayName).font(.title2).bold()
                 HStack(spacing: 8) {

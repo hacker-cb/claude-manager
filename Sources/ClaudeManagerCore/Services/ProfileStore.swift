@@ -8,10 +8,17 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     public var installDirectory: URL
     /// Parent directory for auto-created `--user-data-dir`s.
     public var defaultProfilesDirectory: URL
+    /// Global badge look applied to every launcher icon this store builds.
+    public var badgeStyle: BadgeStyle
 
-    public init(installDirectory: URL, defaultProfilesDirectory: URL) {
+    public init(
+        installDirectory: URL,
+        defaultProfilesDirectory: URL,
+        badgeStyle: BadgeStyle = .default
+    ) {
         self.installDirectory = installDirectory
         self.defaultProfilesDirectory = defaultProfilesDirectory
+        self.badgeStyle = badgeStyle
     }
 
     public static func makeDefault(
@@ -210,7 +217,8 @@ public struct ProfileStore {
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: profile.label,
-            color: profile.color
+            color: profile.color,
+            style: configuration.badgeStyle
         )
         try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
 
@@ -256,7 +264,8 @@ public struct ProfileStore {
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: updated.label,
-            color: updated.color
+            color: updated.color,
+            style: configuration.badgeStyle
         )
         try bundle.build(profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
 
@@ -349,7 +358,8 @@ public struct ProfileStore {
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: profile.label,
-            color: profile.color
+            color: profile.color,
+            style: configuration.badgeStyle
         )
         try icns.write(to: profile.appURL.appendingPathComponent("Contents/Resources/Badge.icns"))
         iconCache.refresh(appURL: profile.appURL, restartDock: false)

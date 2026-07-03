@@ -30,8 +30,13 @@ struct ProfileRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            BadgeChip(label: managed.profile.label, color: managed.profile.color, height: 22)
-                .frame(width: 44, alignment: .center)
+            BadgeChip(
+                label: managed.profile.label,
+                color: managed.profile.color,
+                height: 22,
+                style: model.badgeStyle
+            )
+            .frame(width: 44, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
                 Text(managed.profile.displayName)
                     .font(.body)

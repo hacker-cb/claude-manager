@@ -85,7 +85,7 @@ struct ProfileEditorView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            BadgePreview(baseIcon: model.realAppIcon, label: effectiveLabel, color: badge, size: 72)
+            BadgePreview(label: effectiveLabel, color: badge, size: 72)
             VStack(alignment: .leading, spacing: 4) {
                 Text(isEdit ? "Edit Profile" : "New Profile").font(.title3).bold()
                 Text(isEdit ? "Rebuilds the launcher with your changes." :

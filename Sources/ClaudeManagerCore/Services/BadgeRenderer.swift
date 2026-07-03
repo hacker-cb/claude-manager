@@ -13,8 +13,15 @@ import UniformTypeIdentifiers
 public struct BadgeRenderer {
     public init() {}
 
-    /// Composite the badge onto `base`, returning a same-size image.
-    public func drawBadge(on base: CGImage, label: String, color: RGBAColor) throws -> CGImage {
+    /// Composite the badge onto `base`, returning a same-size image. `style` drives
+    /// all geometry (size, shape, corner, ring, font); `.default` reproduces the
+    /// original look.
+    public func drawBadge(
+        on base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default
+    ) throws -> CGImage {
         let size = max(base.width, base.height)
         guard let ctx = Self.makeContext(size: size) else {
             throw ClaudeManagerError.iconGenerationFailed("could not create bitmap context")
@@ -23,12 +30,13 @@ public struct BadgeRenderer {
         ctx.draw(base, in: CGRect(x: 0, y: 0, width: size, height: size))
 
         let w = CGFloat(size)
-        let h = (w * 0.34).rounded()
+        let h = (w * style.scale).rounded()
         let fontSize = h * 0.62
 
-        let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
+        let font = CTFontCreateWithName(style.fontWeight.fontName as CFString, fontSize, nil)
         let white = Self.cgColor(RGBAColor(red: 255, green: 255, blue: 255))
-        let text = label.isEmpty ? " " : label
+        let drawn = style.drawnLabel(from: label)
+        let text = drawn.isEmpty ? " " : drawn
         let attributes: [CFString: Any] = [
             kCTFontAttributeName: font,
             kCTForegroundColorAttributeName: white
@@ -44,35 +52,32 @@ public struct BadgeRenderer {
         let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
 
         let padding = h * 0.28
-        let pillWidth = max(h, textWidth + 2 * padding)
+        // A circle keeps a fixed square footprint; the other shapes grow with text.
+        let pillWidth = style.shape == .circle ? h : max(h, textWidth + 2 * padding)
+        let pillRadius = style.shape == .roundedSquare ? h * 0.28 : h / 2
         let inset = w * 0.055
-        let ring = w * 0.018
+        let ring = w * style.ringWidth
 
-        let x2 = w - inset
-        let x1 = x2 - pillWidth
-        let y1 = inset
-        let y2 = y1 + h
+        // Bottom-left origin: "top" is high y, "trailing" is high x.
+        let x1 = style.corner.isTrailing ? (w - inset - pillWidth) : inset
+        let y1 = style.corner.isTop ? (w - inset - h) : inset
+        let pillRect = CGRect(x: x1, y: y1, width: pillWidth, height: h)
 
-        // White ring behind the pill.
-        let ringRect = CGRect(
-            x: x1 - ring,
-            y: y1 - ring,
-            width: (x2 - x1) + 2 * ring,
-            height: (y2 - y1) + 2 * ring
-        )
-        let ringRadius = (h + 2 * ring) / 2
-        ctx.addPath(CGPath(
-            roundedRect: ringRect,
-            cornerWidth: ringRadius,
-            cornerHeight: ringRadius,
-            transform: nil
-        ))
-        ctx.setFillColor(white)
-        ctx.fillPath()
+        // White ring behind the pill (skipped when disabled).
+        if ring > 0 {
+            let ringRect = pillRect.insetBy(dx: -ring, dy: -ring)
+            let ringRadius = pillRadius + ring
+            ctx.addPath(CGPath(
+                roundedRect: ringRect,
+                cornerWidth: ringRadius,
+                cornerHeight: ringRadius,
+                transform: nil
+            ))
+            ctx.setFillColor(white)
+            ctx.fillPath()
+        }
 
         // Colored pill.
-        let pillRect = CGRect(x: x1, y: y1, width: pillWidth, height: h)
-        let pillRadius = h / 2
         ctx.addPath(CGPath(
             roundedRect: pillRect,
             cornerWidth: pillRadius,
@@ -96,8 +101,13 @@ public struct BadgeRenderer {
     }
 
     /// Produce the full `.iconset` (all standard sizes) as PNG bytes.
-    public func makeIconSet(base: CGImage, label: String, color: RGBAColor) throws -> [IconImageSize: Data] {
-        let composited = try drawBadge(on: base, label: label, color: color)
+    public func makeIconSet(
+        base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default
+    ) throws -> [IconImageSize: Data] {
+        let composited = try drawBadge(on: base, label: label, color: color, style: style)
         var result: [IconImageSize: Data] = [:]
         for size in IconImageSize.standardSet {
             result[size] = try Self.encodePNG(Self.resize(composited, to: size.pixels))
@@ -106,8 +116,14 @@ public struct BadgeRenderer {
     }
 
     /// Render a single-size PNG for a live UI preview.
-    public func renderPreviewPNG(base: CGImage, label: String, color: RGBAColor, pixels: Int) throws -> Data {
-        let composited = try drawBadge(on: base, label: label, color: color)
+    public func renderPreviewPNG(
+        base: CGImage,
+        label: String,
+        color: RGBAColor,
+        style: BadgeStyle = .default,
+        pixels: Int
+    ) throws -> Data {
+        let composited = try drawBadge(on: base, label: label, color: color, style: style)
         return try Self.encodePNG(Self.resize(composited, to: pixels))
     }
 
