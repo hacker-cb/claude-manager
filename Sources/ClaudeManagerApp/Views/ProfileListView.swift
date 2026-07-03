@@ -50,6 +50,14 @@ struct ProfileRow: View {
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 2) {
                 HStack(spacing: 4) {
+                    if managed.claudeUpdateAvailable {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                            .help(
+                                "Claude \(managed.availableClaudeVersion ?? "update") available — restart to update"
+                            )
+                    }
                     if managed.needsRebuild {
                         Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
                             .font(.caption)
@@ -68,6 +76,7 @@ struct ProfileRow: View {
             Button("Open") { Task { await model.open(managed.profile) } }
             if managed.isRunning {
                 Button("Stop") { Task { await model.stop(managed.profile, force: false) } }
+                Button("Restart") { Task { await model.restart(managed.profile) } }
             }
             Button("Rebuild Launcher") { Task { await model.rebuild(managed.profile) } }
                 .disabled(managed.isRunning)
