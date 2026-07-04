@@ -43,7 +43,7 @@ signed binary → everything keeps working and Claude self-updates transparently
 ## The source of truth
 
 Each launcher's `Contents/Info.plist` carries a `ClaudeManagerLauncher` marker
-dict (`name`, `label`, `color`, `profile`, `schemaVersion`). Scanning the install
+dict (`name`, `label`, `color`, `profile`, `wrapperVersion`). Scanning the install
 directory for that key is how launchers are discovered — there is no external
 registry the app depends on. A JSON file in `~/Library/Application Support/Claude
 Manager` holds GUI-only metadata (ordering, notes) and is always optional.
