@@ -1,0 +1,264 @@
+import ClaudeManagerCore
+import SwiftUI
+
+struct ProfileEditorView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    let route: EditorRoute
+
+    @State private var name: String
+    @State private var displayName: String
+    @State private var label: String
+    @State private var bundleID: String
+    @State private var profilePath: String
+    @State private var badge: BadgeColor
+    @State private var customColor: Color
+    @State private var force = false
+    @State private var showAdvanced = false
+    @State private var saving = false
+    @State private var saveError: AppError?
+
+    private let original: Profile?
+
+    init(route: EditorRoute) {
+        self.route = route
+        switch route {
+        case .add:
+            original = nil
+            _name = State(initialValue: "")
+            _displayName = State(initialValue: "")
+            _label = State(initialValue: "")
+            _bundleID = State(initialValue: "")
+            _profilePath = State(initialValue: "")
+            _badge = State(initialValue: .named("blue"))
+            _customColor = State(initialValue: BadgeColor.named("blue").swiftUIColor)
+        case let .edit(profile):
+            original = profile
+            _name = State(initialValue: profile.name)
+            _displayName = State(initialValue: profile.displayName)
+            _label = State(initialValue: profile.label)
+            _bundleID = State(initialValue: profile.bundleID)
+            _profilePath = State(initialValue: profile.profilePath)
+            _badge = State(initialValue: profile.color)
+            _customColor = State(initialValue: profile.color.swiftUIColor)
+        }
+    }
+
+    private var isEdit: Bool {
+        original != nil
+    }
+
+    /// The suggested label for the current name, capped at the global style's max
+    /// length (initials for multi-word names, leading characters otherwise).
+    private var defaultBadgeLabel: String {
+        Profile.defaultLabel(for: name.isEmpty ? "?" : name, maxLength: model.badgeStyle.maxLabelLength)
+    }
+
+    /// The label to store — raw casing preserved; the badge renderer applies the
+    /// uppercase rule at draw time (`BadgeStyle.drawnLabel`) per the global toggle.
+    private var effectiveLabel: String {
+        label.isEmpty ? defaultBadgeLabel : label
+    }
+
+    private var nameIsValid: Bool {
+        Profile.isValidName(name)
+    }
+
+    /// Display name and bundle ID are optional (empty ⇒ keep default), so an empty
+    /// field is valid; a non-empty one must satisfy the same rule the core enforces,
+    /// otherwise Save would only fail with an alert after a round-trip.
+    private var displayNameIsValid: Bool {
+        displayName.isEmpty || Profile.isValidDisplayName(displayName)
+    }
+
+    private var bundleIDIsValid: Bool {
+        bundleID.isEmpty || Profile.isValidBundleID(bundleID)
+    }
+
+    private var canSave: Bool {
+        !saving && (isEdit || nameIsValid) && displayNameIsValid && bundleIDIsValid
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            form
+            Divider()
+            footer
+        }
+        .frame(width: 540)
+        .frame(minHeight: 520)
+        .alert(
+            isEdit ? "Couldn’t save the profile" : "Couldn’t create the profile",
+            isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } }),
+            presenting: saveError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { Text($0.message) }
+    }
+
+    private var header: some View {
+        HStack(spacing: 16) {
+            BadgePreview(label: effectiveLabel, color: badge, size: 72)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isEdit ? "Edit Profile" : "New Profile").font(.title3).bold()
+                Text(isEdit ? "Rebuilds the launcher with your changes." :
+                    "Creates a thin launcher and an isolated profile.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(20)
+    }
+
+    private var form: some View {
+        Form {
+            if !isEdit {
+                TextField("Name", text: $name, prompt: Text("work"))
+                    .help("Short handle, e.g. work. Letters, digits, dashes, underscores.")
+                if !name.isEmpty, !nameIsValid {
+                    Label(
+                        "Use letters, digits, dashes, or underscores.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption).foregroundStyle(.orange)
+                }
+            } else {
+                LabeledContent("Name", value: name)
+            }
+
+            TextField(
+                "Badge label",
+                text: $label,
+                prompt: Text(defaultBadgeLabel)
+            )
+            .help("Text drawn on the badge. Defaults to the name's initials (multi-word) or leading letters.")
+
+            colorPicker
+
+            TextField(
+                "Display name",
+                text: $displayName,
+                prompt: Text(Profile.defaultDisplayName(for: name.isEmpty ? "NAME" : name))
+            )
+            .help("The app name shown in the Dock and Finder.")
+            if !displayNameIsValid {
+                Label(
+                    "Becomes the app filename: no / : \\ and no leading dot (so not . or ..).",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption).foregroundStyle(.orange)
+            }
+
+            DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                TextField(
+                    "Bundle identifier",
+                    text: $bundleID,
+                    prompt: Text(Profile.defaultBundleID(for: name.isEmpty ? "name" : name))
+                )
+                if !bundleIDIsValid {
+                    Label(
+                        "Reverse-DNS: letters, digits, dots, hyphens — dot-separated with no empty parts.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption).foregroundStyle(.orange)
+                }
+                if isEdit {
+                    LabeledContent("Profile data", value: PathUtils.abbreviatingHome(profilePath))
+                } else {
+                    TextField(
+                        "Profile data dir",
+                        text: $profilePath,
+                        prompt: Text(PathUtils
+                            .abbreviatingHome(model.effectiveProfilesDirectory
+                                .appendingPathComponent(name.isEmpty ? "name" : name.lowercased()).path))
+                    )
+                    Toggle("Rebuild if a launcher already exists (force)", isOn: $force)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var colorPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Badge color").font(.callout)
+            HStack(spacing: 8) {
+                ForEach(BadgeColor.paletteNames, id: \.self) { paletteName in
+                    let color = BadgeColor.named(paletteName)
+                    Circle()
+                        .fill(color.swiftUIColor)
+                        .frame(width: 22, height: 22)
+                        .overlay(Circle().strokeBorder(
+                            .primary.opacity(isSelected(paletteName) ? 0.9 : 0),
+                            lineWidth: 2
+                        ))
+                        .onTapGesture { badge = color }
+                        .help(paletteName.capitalized)
+                }
+                Divider().frame(height: 22)
+                ColorPicker("Custom", selection: $customColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .onChange(of: customColor) { _, newValue in
+                        badge = .custom(RGBAColor(newValue))
+                    }
+            }
+        }
+    }
+
+    private func isSelected(_ paletteName: String) -> Bool {
+        if case let .named(current) = badge { return current == paletteName }
+        return false
+    }
+
+    private var footer: some View {
+        HStack {
+            if saving { ProgressView().controlSize(.small) }
+            Spacer()
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                // Block dismissal mid-save: the failure alert lives on this sheet, so
+                // dismissing before it arrives would drop the error silently.
+                .disabled(saving)
+            Button(isEdit ? "Save" : "Create") { Task { await save() } }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSave)
+        }
+        .padding(16)
+    }
+
+    private func save() async {
+        saving = true
+        defer { saving = false }
+        do {
+            if let original {
+                var updated = original
+                updated.displayName = displayName.isEmpty ? original.displayName : displayName
+                updated.label = effectiveLabel
+                updated.color = badge
+                updated.bundleID = bundleID.isEmpty ? original.bundleID : bundleID
+                // appPath is re-derived by the core (ProfileStore.update) from the
+                // install dir + validated display name, so we don't set it here.
+                try await model.updateProfile(original: original, to: updated)
+            } else {
+                let request = AddProfileRequest(
+                    name: name,
+                    label: label.isEmpty ? nil : label,
+                    color: badge,
+                    displayName: displayName.isEmpty ? nil : displayName,
+                    bundleID: bundleID.isEmpty ? nil : bundleID,
+                    profilePath: profilePath.isEmpty ? nil : profilePath,
+                    force: force
+                )
+                try await model.addProfile(request)
+            }
+            dismiss()
+        } catch {
+            // The editor owns this alert so the failure is visible over its own sheet.
+            saveError = AppError(error)
+        }
+    }
+}

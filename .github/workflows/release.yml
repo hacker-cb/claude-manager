@@ -1,0 +1,213 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  # Serialize releases: the appcast lives on one long-lived gh-pages branch, so two
+  # release runs pushing to it concurrently would race (the loser's push is rejected
+  # non-fast-forward). cancel-in-progress: false — a queued release waits, never drops.
+  group: release-appcast
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install tooling
+        run: brew install xcodegen create-dmg
+
+      - name: Fetch Sparkle signing tools
+        # Pinned tarball rather than a floating `brew install sparkle`, so sign_update's
+        # version is deterministic and matches the framework SPM resolves (from: 2.9.0).
+        env:
+          SPARKLE_VERSION: "2.9.4"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          SIGN_UPDATE="$RUNNER_TEMP/sparkle/bin/sign_update"
+          [ -x "$SIGN_UPDATE" ] || { echo "✗ sign_update not found at $SIGN_UPDATE" >&2; exit 1; }
+          echo "SIGN_UPDATE=$SIGN_UPDATE" >> "$GITHUB_ENV"
+
+      - name: Resolve version
+        id: version
+        env:
+          # Pass event data through env, never interpolate ${{ }} into the shell —
+          # a crafted workflow_dispatch input must not become executable code.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            V="$INPUT_VERSION"
+          else
+            V="${REF_NAME#v}"
+          fi
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid version '$V' (must be strict semver X.Y.Z, e.g. 1.2.3)" >&2
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Write App Store Connect API key
+        env:
+          AC_API_KEY_P8_BASE64: ${{ secrets.AC_API_KEY_P8_BASE64 }}
+        run: |
+          echo "$AC_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
+
+      - name: Build, sign, package, notarize
+        id: package
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          AC_API_KEY_PATH: ${{ runner.temp }}/ac_api_key.p8
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          bash scripts/build-app.sh
+          # Notarize + staple the .app first, so both the DMG and the Sparkle .zip ship a
+          # self-contained bundle (a stapled app needs no online check on first launch).
+          bash scripts/notarize.sh "dist/export/Claude Manager.app"
+
+          # Human download: the notarized+stapled DMG.
+          bash scripts/make-dmg.sh
+          DMG="dist/ClaudeManager-${VERSION}.dmg"
+          bash scripts/notarize.sh "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+          # Sparkle enclosure: a .zip of the stapled .app (Sparkle's most reliable
+          # in-place install format — a DMG with an /Applications drop-link is not a
+          # single-bundle archive). ditto --keepParent yields exactly one top-level .app.
+          ZIP="dist/ClaudeManager-${VERSION}.zip"
+          ditto -c -k --keepParent "dist/export/Claude Manager.app" "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+          # EdDSA-sign the enclosure. --ed-key-file - reads the private key from stdin
+          # (the deprecated -s flag is unsupported for keys generated by generate_keys).
+          SIGN_OUTPUT="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - "$ZIP")"
+          echo "sign_update: $SIGN_OUTPUT"
+          ED_SIGNATURE="$(printf '%s' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+          LENGTH="$(printf '%s' "$SIGN_OUTPUT" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
+          [ -n "$ED_SIGNATURE" ] && [ -n "$LENGTH" ] || { echo "✗ could not parse sign_update output" >&2; exit 1; }
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "length=$LENGTH" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="v$VERSION"
+          else
+            TAG="$REF_NAME"
+          fi
+          # Upload both the human DMG and the Sparkle .zip enclosure; the appcast's
+          # enclosure URL points at the .zip asset published here. Idempotent so a re-run
+          # after a later-step failure (appcast push race, Pages lag) recovers instead of
+          # aborting on an already-existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$DMG" "$ZIP" \
+              --title "Claude Manager $VERSION" \
+              --generate-notes
+          fi
+
+      # gh-pages hosts the cumulative appcast at a fixed URL (SUFeedURL never changes).
+      # Separate checkout so this tag-triggered job can read+amend the branch's history.
+      - name: Check out gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+
+      - name: Publish appcast to gh-pages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          ED_SIGNATURE: ${{ steps.package.outputs.ed_signature }}
+          LENGTH: ${{ steps.package.outputs.length }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          # Build the enclosure URL from the exact uploaded asset basename so the appcast
+          # can't drift from the release asset name (a mismatch would 404 every download).
+          ZIP_NAME="$(basename "$ZIP")"
+          ENCLOSURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${ZIP_NAME}"
+          ENCLOSURE_URL="$ENCLOSURE_URL" APPCAST_PATH="gh-pages/appcast.xml" \
+            bash scripts/appcast.sh
+          cd gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Appcast: Claude Manager ${VERSION} (build ${BUILD_NUMBER})"
+          git push origin gh-pages
+
+      - name: Verify appcast published
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          # Assert THIS run's entry is live. Match on sparkle:version (= BUILD_NUMBER), the
+          # per-run identity Sparkle compares on — not the marketing version, which a prior
+          # run may already have published (a stale match would mask a failed push). Read
+          # the raw gh-pages blob (immediate) rather than the Pages URL (CDN-cached, lags).
+          RAW="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/appcast.xml"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL "$RAW" | grep -q "<sparkle:version>${BUILD_NUMBER}</sparkle:version>"; then
+              echo "✓ appcast live with v${VERSION} (build ${BUILD_NUMBER})"; exit 0
+            fi
+            echo "appcast not yet reflecting build ${BUILD_NUMBER} (attempt $attempt)…"; sleep 5
+          done
+          echo "✗ appcast did not reflect build ${BUILD_NUMBER} after publish" >&2; exit 1
+
+      - name: Clean up secrets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/ac_api_key.p8"
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true
