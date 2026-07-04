@@ -1,7 +1,8 @@
 # Releasing Claude Manager
 
 Releases are cut by CI on a `v*` tag: build → Developer ID sign → notarize + staple
-the app → DMG → notarize + staple the DMG → GitHub Release. This doc lists exactly
+the app → DMG → notarize + staple the DMG → sign a Sparkle `.zip` → GitHub Release
+(DMG + `.zip`) → publish the appcast to `gh-pages`. This doc lists exactly
 what to configure once, and how to cut a release.
 
 ## Versioning
