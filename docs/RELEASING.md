@@ -87,9 +87,10 @@ cumulative `appcast.xml` served from the `gh-pages` branch at a **fixed** URL
 
 **Version mapping (nothing to bump manually):** `sparkle:shortVersionString` reuses the
 injected `MARKETING_VERSION` (the tag) and `sparkle:version` reuses `CFBundleVersion`
-(the run number). The appcast step **refuses to publish** a build number that isn't
-greater than the latest published one, so a re-dispatch of an old tag can't ship a
-silent no-op update.
+(the run number). The appcast step **refuses to publish** either a build number that
+isn't greater than the latest published one (a no-op) **or** a marketing version older
+than the latest published one (a downgrade Sparkle would otherwise offer as an update) —
+so a re-dispatch of an old tag is rejected rather than shipped.
 
 **Before the first real release**, rehearse the full loop with two throwaway tags
 (`vN` → `vN+1`): install `vN`, publish its appcast, then tag `vN+1` and confirm the

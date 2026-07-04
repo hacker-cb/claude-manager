@@ -13,6 +13,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  # Serialize releases: the appcast lives on one long-lived gh-pages branch, so two
+  # release runs pushing to it concurrently would race (the loser's push is rejected
+  # non-fast-forward). cancel-in-progress: false — a queued release waits, never drops.
+  group: release-appcast
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-15
@@ -140,10 +147,16 @@ jobs:
             TAG="$REF_NAME"
           fi
           # Upload both the human DMG and the Sparkle .zip enclosure; the appcast's
-          # enclosure URL points at the .zip asset published here.
-          gh release create "$TAG" "$DMG" "$ZIP" \
-            --title "Claude Manager $VERSION" \
-            --generate-notes
+          # enclosure URL points at the .zip asset published here. Idempotent so a re-run
+          # after a later-step failure (appcast push race, Pages lag) recovers instead of
+          # aborting on an already-existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$DMG" "$ZIP" \
+              --title "Claude Manager $VERSION" \
+              --generate-notes
+          fi
 
       # gh-pages hosts the cumulative appcast at a fixed URL (SUFeedURL never changes).
       # Separate checkout so this tag-triggered job can read+amend the branch's history.
@@ -160,11 +173,13 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           ED_SIGNATURE: ${{ steps.package.outputs.ed_signature }}
           LENGTH: ${{ steps.package.outputs.length }}
+          ZIP: ${{ steps.package.outputs.zip }}
         run: |
-          ENCLOSURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/ClaudeManager-${VERSION}.zip"
-          RELEASE_NOTES_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}"
-          ENCLOSURE_URL="$ENCLOSURE_URL" RELEASE_NOTES_URL="$RELEASE_NOTES_URL" \
-            APPCAST_PATH="gh-pages/appcast.xml" \
+          # Build the enclosure URL from the exact uploaded asset basename so the appcast
+          # can't drift from the release asset name (a mismatch would 404 every download).
+          ZIP_NAME="$(basename "$ZIP")"
+          ENCLOSURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${ZIP_NAME}"
+          ENCLOSURE_URL="$ENCLOSURE_URL" APPCAST_PATH="gh-pages/appcast.xml" \
             bash scripts/appcast.sh
           cd gh-pages
           git config user.name "github-actions[bot]"
@@ -176,17 +191,20 @@ jobs:
       - name: Verify appcast published
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          # Assert the pushed appcast is live and lists this release. Read the raw
-          # gh-pages blob (immediate) rather than the Pages URL (CDN-cached, lags).
+          # Assert THIS run's entry is live. Match on sparkle:version (= BUILD_NUMBER), the
+          # per-run identity Sparkle compares on — not the marketing version, which a prior
+          # run may already have published (a stale match would mask a failed push). Read
+          # the raw gh-pages blob (immediate) rather than the Pages URL (CDN-cached, lags).
           RAW="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/appcast.xml"
           for attempt in 1 2 3 4 5; do
-            if curl -fsSL "$RAW" | grep -q "<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>"; then
-              echo "✓ appcast live with v${VERSION}"; exit 0
+            if curl -fsSL "$RAW" | grep -q "<sparkle:version>${BUILD_NUMBER}</sparkle:version>"; then
+              echo "✓ appcast live with v${VERSION} (build ${BUILD_NUMBER})"; exit 0
             fi
-            echo "appcast not yet reflecting v${VERSION} (attempt $attempt)…"; sleep 5
+            echo "appcast not yet reflecting build ${BUILD_NUMBER} (attempt $attempt)…"; sleep 5
           done
-          echo "✗ appcast did not reflect v${VERSION} after publish" >&2; exit 1
+          echo "✗ appcast did not reflect build ${BUILD_NUMBER} after publish" >&2; exit 1
 
       - name: Clean up secrets
         if: always()

@@ -30,10 +30,21 @@ APPCAST_PATH="${APPCAST_PATH:-appcast.xml}"
 
 FEED_URL="https://hacker-cb.github.io/claude-manager/appcast.xml"
 
-# Preserve existing items and enforce monotonic build numbers.
+# Preserve existing items and enforce monotonic versions.
 EXISTING_ITEMS=""
 if [ -f "$APPCAST_PATH" ]; then
   EXISTING_ITEMS="$(awk '/<!-- ITEMS:START -->/{f=1;next} /<!-- ITEMS:END -->/{f=0} f' "$APPCAST_PATH")"
+
+  # Defend the cumulative-history invariant: if the feed has items but our markers were
+  # lost (hand-edit, foreign generator), extraction yields nothing and we'd silently drop
+  # every past <item>. Refuse rather than erase the upgrade path for old builds.
+  if [ -z "$EXISTING_ITEMS" ] && grep -q "<item>" "$APPCAST_PATH"; then
+    echo "✗ $APPCAST_PATH has <item> entries but no ITEMS markers — refusing to drop history." >&2
+    echo "  Restore the <!-- ITEMS:START --> / <!-- ITEMS:END --> markers around the items." >&2
+    exit 1
+  fi
+
+  # Sparkle compares updates on sparkle:version (= BUILD_NUMBER); it must strictly increase.
   MAX_EXISTING="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' "$APPCAST_PATH" \
     | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
   if [ -n "${MAX_EXISTING:-}" ] && [ "$BUILD_NUMBER" -le "$MAX_EXISTING" ]; then
@@ -41,10 +52,25 @@ if [ -f "$APPCAST_PATH" ]; then
     echo "  Sparkle compares on this and would offer no update. Refusing to publish a regression." >&2
     exit 1
   fi
+
+  # The build number always increases (CI run number), so it alone can't catch a *marketing*
+  # downgrade: re-dispatching an old tag gets a higher build but a lower shortVersionString,
+  # which Sparkle would then offer as an "update" (a silent downgrade). Reject a marketing
+  # version strictly older than the newest published one (semver-aware via sort -V).
+  MAX_MARKETING="$(grep -oE '<sparkle:shortVersionString>[^<]+</sparkle:shortVersionString>' "$APPCAST_PATH" \
+    | sed -E 's#</?sparkle:shortVersionString>##g' | sort -V | tail -1 || true)"
+  if [ -n "${MAX_MARKETING:-}" ] && [ "$VERSION" != "$MAX_MARKETING" ] \
+    && [ "$(printf '%s\n%s\n' "$VERSION" "$MAX_MARKETING" | sort -V | head -1)" = "$VERSION" ]; then
+    echo "✗ marketing version $VERSION is older than the latest published $MAX_MARKETING —" >&2
+    echo "  publishing it would offer users a downgrade as an update. Refusing." >&2
+    exit 1
+  fi
 fi
 
-# RFC 822 pubDate (BSD date on the macOS runner).
-PUB_DATE="$(date "+%a, %d %b %Y %H:%M:%S %z")"
+# RFC 822 pubDate. LC_ALL=C forces English weekday/month abbreviations regardless of the
+# runner locale — Sparkle parses pubDate with a fixed en_US_POSIX formatter and drops a
+# localized date.
+PUB_DATE="$(LC_ALL=C date "+%a, %d %b %Y %H:%M:%S %z")"
 
 NOTES_LINE=""
 if [ -n "$RELEASE_NOTES_URL" ]; then

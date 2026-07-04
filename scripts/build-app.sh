@@ -131,9 +131,14 @@ FW="$APP/Contents/Frameworks/Sparkle.framework"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 # Each nested component must carry OUR team id (not the Sparkle project's) AND the
-# runtime flag. Resolve the versioned dir (Sparkle 2 uses Versions/B) rather than
-# hard-coding it. A component the framework version doesn't ship is skipped, not failed.
-FW_VERSION_DIR="$(cd "$FW/Versions/Current" 2>/dev/null && pwd -P || echo "$FW/Versions/B")"
+# runtime flag. Resolve the versioned dir via the Current symlink (Sparkle 2 uses
+# Versions/B, but don't hard-code a letter that a future release could bump) and fail
+# loudly if it can't be resolved. A component the framework version doesn't ship is
+# skipped, not failed.
+FW_VERSION_DIR="$(cd "$FW/Versions/Current" && pwd -P)" || {
+  echo "✗ cannot resolve $FW/Versions/Current — unexpected Sparkle.framework layout" >&2
+  exit 1
+}
 for rel in "Sparkle" "Autoupdate" "Updater.app" "XPCServices/Installer.xpc" "XPCServices/Downloader.xpc"; do
   COMP="$FW_VERSION_DIR/$rel"
   [ -e "$COMP" ] || continue
