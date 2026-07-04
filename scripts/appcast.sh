@@ -56,11 +56,12 @@ if [ -f "$APPCAST_PATH" ]; then
   # The build number always increases (CI run number), so it alone can't catch a *marketing*
   # downgrade: re-dispatching an old tag gets a higher build but a lower shortVersionString,
   # which Sparkle would then offer as an "update" (a silent downgrade). Reject a marketing
-  # version strictly older than the newest published one (semver-aware via sort -V).
+  # version strictly older than the newest published one. Numeric field sort
+  # (portable — BSD sort has no `-V`) is exact for the strict X.Y.Z tags we allow.
   MAX_MARKETING="$(grep -oE '<sparkle:shortVersionString>[^<]+</sparkle:shortVersionString>' "$APPCAST_PATH" \
-    | sed -E 's#</?sparkle:shortVersionString>##g' | sort -V | tail -1 || true)"
+    | sed -E 's#</?sparkle:shortVersionString>##g' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)"
   if [ -n "${MAX_MARKETING:-}" ] && [ "$VERSION" != "$MAX_MARKETING" ] \
-    && [ "$(printf '%s\n%s\n' "$VERSION" "$MAX_MARKETING" | sort -V | head -1)" = "$VERSION" ]; then
+    && [ "$(printf '%s\n%s\n' "$VERSION" "$MAX_MARKETING" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$VERSION" ]; then
     echo "✗ marketing version $VERSION is older than the latest published $MAX_MARKETING —" >&2
     echo "  publishing it would offer users a downgrade as an update. Refusing." >&2
     exit 1
