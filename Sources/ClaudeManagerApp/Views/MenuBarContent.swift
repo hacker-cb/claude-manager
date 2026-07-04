@@ -1,10 +1,14 @@
 import AppKit
 import ClaudeManagerCore
+import Sparkle
 import SwiftUI
 
 struct MenuBarContent: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
+
+    /// The app-scoped Sparkle updater (see ClaudeManagerApp) — shared, never re-created.
+    let updater: SPUUpdater
 
     var body: some View {
         if model.realClaude == nil {
@@ -53,6 +57,7 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("Refresh") { Task { await model.refresh() } }
+        CheckForUpdatesView(updater: updater)
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")

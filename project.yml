@@ -9,6 +9,15 @@ options:
 packages:
   ClaudeManagerCore:
     path: .
+  # Auto-update. Sparkle 2 is the standard for Developer ID + notarized, non-App-Store
+  # apps. Declared here (not in Package.swift) because the app target is built by
+  # xcodebuild from this generated project, not by SwiftPM — Package.swift stays
+  # core-only. XcodeGen embeds Sparkle.framework with a Sign-on-Copy phase, so the
+  # release archive signs its nested helpers (Autoupdate, Updater.app, *.xpc) with the
+  # same Developer ID identity + `--options runtime` (see scripts/build-app.sh).
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.0"
 
 settings:
   base:
@@ -34,6 +43,8 @@ targets:
     dependencies:
       - package: ClaudeManagerCore
         product: ClaudeManagerCore
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.hacker-cb.claude-manager
@@ -58,6 +69,16 @@ targets:
         # We activate/quit other Claude processes; the launcher scripts use System
         # Events. Declare the usage string so the one-time TCC prompt is legible.
         NSAppleEventsUsageDescription: "Claude Manager brings profile windows to the front and quits running profiles."
+        # Sparkle auto-update. The appcast is served from a fixed gh-pages URL so
+        # SUFeedURL never changes across releases (it is baked into every notarized
+        # binary and unfixable post-ship). SUPublicEDKey is the base64 Ed25519 PUBLIC
+        # key; Sparkle verifies every downloaded update against it. Generate the keypair
+        # once with Sparkle's `bin/generate_keys` (private key → login Keychain, backed
+        # up offline), paste the printed public key below, and store the exported private
+        # key as the SPARKLE_ED_PRIVATE_KEY CI secret. scripts/build-app.sh fails the
+        # release if this still holds the placeholder, so a build can never ship unsigned.
+        SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
+        SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
     entitlements:
       path: Sources/ClaudeManagerApp/Resources/ClaudeManager.entitlements
       properties:
@@ -65,5 +86,10 @@ targets:
         # real Claude.app, runs lsregister/iconutil, and restarts the Dock —
         # none of which is possible inside the App Sandbox. Distribution is
         # Developer ID + notarization (never the App Store).
+        #
+        # Sparkle requires NO additional com.apple.security.cs.* exceptions here: those
+        # (and SUEnableInstallerLauncherService / SUEnableDownloaderService) are for
+        # SANDBOXED apps only. Do not add them — they are a known misconfiguration for a
+        # non-sandboxed app. Sparkle's own nested binaries carry what they need.
         com.apple.security.app-sandbox: false
         com.apple.security.automation.apple-events: true

@@ -29,6 +29,21 @@ public enum CoreConstants {
         version < currentWrapperVersion
     }
 
+    /// The `MARKETING_VERSION` placeholder a local/dev build carries (see project.yml).
+    /// A real release injects a semver from the git tag, so this value distinguishes a
+    /// shipped build from a local one.
+    public static let devMarketingVersion = "0.0.0"
+
+    /// Whether a build carrying `marketingVersion` is a distributed release rather than a
+    /// local/dev build still on the placeholder. Used to keep Sparkle's updater dormant in
+    /// dev builds, where it would otherwise see every published release as an upgrade and
+    /// nag the developer to overwrite their own build. Keyed on the marketing version, NOT
+    /// `CFBundleVersion`: the build number is the CI run number, which is legitimately `1`
+    /// on a repo's first release run and would collide with the dev placeholder.
+    public static func isDistributionBuild(marketingVersion: String) -> Bool {
+        marketingVersion != devMarketingVersion
+    }
+
     /// `~/Library/Application Support/<name>` folder for GUI metadata and the
     /// default location of new profile data directories.
     public static let appSupportDirectoryName = "Claude Manager"
