@@ -19,8 +19,8 @@ auto-updates all keep working.
   dirs, and duplicate running instances.
 - **Regenerate icons** — rebuild badges after a Claude update.
 - **Menu bar extra** for quick open/stop, plus a full management window.
-- **Auto-update** — the app updates itself via Sparkle (signed EdDSA appcast),
-  separate from Claude Desktop's own updates.
+- **Auto-update** — the app updates itself via Sparkle (each update download is
+  EdDSA-signed), separate from Claude Desktop's own updates.
 
 ## Why thin launchers?
 
