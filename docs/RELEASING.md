@@ -33,6 +33,7 @@ Secrets and variables → Actions**). All are required for `release.yml`.
 | `AC_API_KEY_ID` | App Store Connect API **Key ID** | App Store Connect → Users and Access → Integrations → App Store Connect API |
 | `AC_API_ISSUER_ID` | App Store Connect **Issuer ID** | Same page |
 | `AC_API_KEY_P8_BASE64` | The `.p8` API private key, base64-encoded | Download once on key creation, then `base64 -i AuthKey_XXXX.p8 \| pbcopy` |
+| `SPARKLE_ED_PRIVATE_KEY` | The Sparkle EdDSA **private** key (auto-update signing) | `./bin/generate_keys -x sparkle_private_key` then `gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle_private_key` — see § Auto-update |
 
 ### Preparing the certificate `.p12`
 
@@ -49,6 +50,51 @@ Secrets and variables → Actions**). All are required for `release.yml`.
    → generate a key with the **Developer** role (sufficient for notarization).
 2. Note the **Key ID** and **Issuer ID**; download the `.p8` (one-time).
 3. `base64 -i AuthKey_XXXX.p8 | pbcopy` → paste into `AC_API_KEY_P8_BASE64`.
+
+## Auto-update (Sparkle)
+
+The app self-updates with [Sparkle 2](https://sparkle-project.org). The release job
+signs a `.zip` of the notarized app with an EdDSA key and appends an entry to a
+cumulative `appcast.xml` served from the `gh-pages` branch at a **fixed** URL
+(`https://hacker-cb.github.io/claude-manager/appcast.xml`, baked into every build as
+`SUFeedURL`). The DMG stays the human download; Sparkle installs from the `.zip`.
+
+**One-time setup (before the first Sparkle-enabled release):**
+
+1. **Generate the EdDSA keypair** with Sparkle's `bin/generate_keys` (from the
+   `Sparkle-X.Y.Z.tar.xz` release or the resolved SPM checkout's `artifacts/…/bin`):
+
+   ```bash
+   ./bin/generate_keys          # prints the base64 PUBLIC key; PRIVATE key → login Keychain
+   ./bin/generate_keys -x sparkle_private_key   # export a copy for CI
+   ```
+
+2. **Paste the public key** into `project.yml` → `SUPublicEDKey` (replacing the
+   `REPLACE_WITH_SUPUBLICEDKEY` placeholder). `scripts/build-app.sh` fails the build
+   while the placeholder is present, so a signed build can never ship unable to update.
+3. **Store the private key** as the `SPARKLE_ED_PRIVATE_KEY` secret
+   (`gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle_private_key`), then **back it up
+   offline** (password manager) and delete the file. The key is **un-rotatable** once
+   `SUPublicEDKey` ships — losing it breaks auto-update for every installed user (only a
+   manual reinstall recovers). There is no recovery path other than that.
+4. **Create the `gh-pages` branch and enable Pages** (Settings → Pages → source =
+   `gh-pages` / root). The feed 404s until this exists and serves at least one appcast.
+
+   ```bash
+   git switch --orphan gh-pages && git rm -rf . && git commit --allow-empty -m "init pages"
+   git push origin gh-pages && git switch -
+   ```
+
+**Version mapping (nothing to bump manually):** `sparkle:shortVersionString` reuses the
+injected `MARKETING_VERSION` (the tag) and `sparkle:version` reuses `CFBundleVersion`
+(the run number). The appcast step **refuses to publish** a build number that isn't
+greater than the latest published one, so a re-dispatch of an old tag can't ship a
+silent no-op update.
+
+**Before the first real release**, rehearse the full loop with two throwaway tags
+(`vN` → `vN+1`): install `vN`, publish its appcast, then tag `vN+1` and confirm the
+installed app downloads, verifies, and relaunches into `vN+1`. This is where any
+nested-Sparkle signing or enclosure-format issue surfaces.
 
 ## Cutting a release
 

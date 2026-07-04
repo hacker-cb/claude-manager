@@ -1,10 +1,14 @@
 import AppKit
 import ClaudeManagerCore
+import Sparkle
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showApply = false
+
+    /// The app-scoped Sparkle updater (see ClaudeManagerApp) — shared, never re-created.
+    let updater: SPUUpdater
 
     var body: some View {
         Form {
@@ -51,6 +55,10 @@ struct SettingsView: View {
             }
 
             badgeSection
+
+            Section("Updates") {
+                UpdaterSettingsView(updater: updater)
+            }
 
             Section {
                 Toggle("Measure profile disk sizes (slower)", isOn: $model.measureSizes)
