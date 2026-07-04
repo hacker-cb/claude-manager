@@ -78,7 +78,7 @@ targets:
         # key as the SPARKLE_ED_PRIVATE_KEY CI secret. scripts/build-app.sh fails the
         # release if this still holds the placeholder, so a build can never ship unsigned.
         SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
-        SUPublicEDKey: "REPLACE_WITH_SUPUBLICEDKEY"
+        SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
     entitlements:
       path: Sources/ClaudeManagerApp/Resources/ClaudeManager.entitlements
       properties:
