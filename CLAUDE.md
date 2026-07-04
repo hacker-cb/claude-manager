@@ -105,8 +105,9 @@ never the App Store. Hardened Runtime is on; entitlements are minimal
   to release — push a tag (validated strict `X.Y.Z`). See [docs/RELEASING.md](docs/RELEASING.md).
 - **The app self-updates via Sparkle** (distinct from Claude Desktop's own updates). The
   updater lives in the SwiftUI shell (`CheckForUpdatesView`, a shared
-  `SPUStandardUpdaterController`); it stays dormant in local builds (`CFBundleVersion == 1`)
-  so a dev isn't nagged to overwrite their own build. The release job signs a `.zip` of the
+  `SPUStandardUpdaterController`); it stays dormant in local builds (marketing version
+  `0.0.0`, the placeholder — `CoreConstants.isDistributionBuild`) so a dev isn't nagged to
+  overwrite their own build. The release job signs a `.zip` of the
   notarized app with an EdDSA key and appends to a cumulative `appcast.xml` on `gh-pages`.
   `build-app.sh` verifies Sparkle's nested helpers are signed by our team + hardened (a
   mis-signed framework fails CI, not notarization). See [docs/RELEASING.md](docs/RELEASING.md) § Auto-update.
