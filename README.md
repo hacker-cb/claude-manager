@@ -19,6 +19,8 @@ auto-updates all keep working.
   dirs, and duplicate running instances.
 - **Regenerate icons** — rebuild badges after a Claude update.
 - **Menu bar extra** for quick open/stop, plus a full management window.
+- **Auto-update** — the app updates itself via Sparkle (signed EdDSA appcast),
+  separate from Claude Desktop's own updates.
 
 ## Why thin launchers?
 
@@ -30,7 +32,7 @@ Claude self-updates. See [CLAUDE.md](CLAUDE.md) for the hard-won macOS details.
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later, Apple Silicon.
+- macOS 14 (Sonoma) or later, on Apple Silicon or Intel (universal binary).
 - `/Applications/Claude.app` (the real, untouched app).
 
 ## Build & develop
@@ -72,7 +74,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 ├─ Launcher    bundle build/scan/remove; bash launcher script (duplicate guard)
 ├─ Icons       CoreGraphics badge renderer → iconutil .icns packer
 ├─ Process     pgrep/ps main-process detection (ppid==1 filter)
-├─ ProfileStore  the façade: add/remove/open/stop/update/regenerate/doctor
+├─ ProfileStore  the façade: add/remove/open/stop/update/rebuild/doctor
 └─ CommandRunner injected process runner (mocked in tests)
 
 ClaudeManagerApp (SwiftUI — thin)
@@ -88,7 +90,9 @@ Application Support for GUI-only metadata.
 Claude Manager is **not** sandboxed (it must write launcher bundles next to
 Claude.app, run `lsregister`, and refresh the Dock), so it ships via **Developer
 ID + notarization**, never the App Store. CI builds a signed, notarized, stapled
-DMG on every `v*` tag — see [docs/RELEASING.md](docs/RELEASING.md) for the exact
+DMG on every `v*` tag — plus an EdDSA-signed Sparkle `.zip` and a cumulative
+`appcast.xml` on `gh-pages` that drives in-app auto-update (the DMG stays the
+human download) — see [docs/RELEASING.md](docs/RELEASING.md) for the exact
 secrets to configure.
 
 ## License
