@@ -47,8 +47,9 @@ parsing, launcher bundle building, marker round-trips, badge/`.icns` rendering
 through the real `iconutil`, and the `ProfileStore` / `Doctor` orchestration against
 temp directories with a mocked command runner.
 
-An **opt-in live test** exercises the real app end to end. It installs into a temp
-directory and never launches Claude:
+An **opt-in live test** runs against the real Claude.app on disk — LaunchServices
+lookup, version read, and the icon/badge pipeline — installing into a temp directory
+and never launching Claude:
 
 ```bash
 CLAUDE_MANAGER_LIVE=1 swift test --filter LiveIntegrationTests

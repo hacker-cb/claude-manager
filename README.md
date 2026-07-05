@@ -44,9 +44,9 @@ The app self-updates from then on (see [Updates](#updates)).
 
 1. **Open Claude Manager.** It locates your installed Claude automatically — you
    can confirm the path in **Settings → Real Claude**.
-2. **Add a profile.** Give it a display name, a short **badge label** (1–3 chars),
-   and a **color** (palette or custom hex). This creates a launcher app next to
-   Claude.app.
+2. **Add a profile.** Give it a display name, a short **badge label** (a few
+   characters — 3 by default), and a **color** (palette or custom hex). This creates
+   a launcher app next to Claude.app.
 3. **Open it.** A dedicated Claude window launches with its own isolated login and
    settings. Sign in to that account.
 4. **Repeat** for each account, and use the **menu bar icon** for quick open/stop.
@@ -82,8 +82,8 @@ The first time you re-activate an *already-running* profile, macOS asks for
 
 Claude Manager **never reads your credentials or session tokens** — those live
 inside each profile's user-data-dir and are managed by Claude itself. It keeps no
-account data of its own; its only network activity is the Sparkle **update check**
-(see [Updates](#updates)).
+account data of its own; its only network activity is Sparkle **checking for and
+downloading app updates** (see [Updates](#updates)).
 
 ## Permissions
 
