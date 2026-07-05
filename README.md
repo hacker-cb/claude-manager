@@ -8,13 +8,8 @@ instead of full copies of Claude.app.
 > independent, unofficial tool — not affiliated with, sponsored by, or endorsed by
 > Anthropic._
 
-<!--
-TODO(screenshots): add real captures under docs/images/ and enable these.
-![Claude Manager — main window](docs/images/main-window.png)
-![Menu bar extra](docs/images/menu-bar.png)
--->
-
-> 📸 _Screenshots coming soon — see [docs/images/](docs/images/)._
+![Claude Manager — the management window with two profiles, showing a running
+profile's badge, status, and paths](docs/images/main-window.png)
 
 Each profile is a ~1 MB launcher `.app` with its own badge icon and name. Opening
 it starts the *real* `/Applications/Claude.app` with a dedicated `--user-data-dir`,
