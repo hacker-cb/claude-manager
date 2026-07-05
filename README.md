@@ -1,99 +1,146 @@
 # Claude Manager
 
-A native macOS app for running **multiple Claude Desktop accounts** side by side —
-via thin launcher apps, not full copies of Claude.app.
+Run **multiple Claude Desktop accounts side by side** on macOS — each in its own
+window, with its own login, settings, and extensions — using tiny launcher apps
+instead of full copies of Claude.app.
 
-Each profile is a ~1 MB launcher `.app` with its own badge icon and name. The
-launcher starts the *real* `/Applications/Claude.app` with a dedicated
-`--user-data-dir`, so every profile has an isolated login, settings, and
-extensions, while the real app keeps its Apple-notarized signature and
-entitlements — notifications, virtualization features, Keychain access, and
-auto-updates all keep working.
+> _Claude and Claude Desktop are products of Anthropic. Claude Manager is an
+> independent, unofficial tool — not affiliated with, sponsored by, or endorsed by
+> Anthropic._
 
-## Features (MVP)
+<!--
+TODO(screenshots): add real captures under docs/images/ and enable these.
+![Claude Manager — main window](docs/images/main-window.png)
+![Menu bar extra](docs/images/menu-bar.png)
+-->
+
+> 📸 _Screenshots coming soon — see [docs/images/](docs/images/)._
+
+Each profile is a ~1 MB launcher `.app` with its own badge icon and name. Opening
+it starts the *real* `/Applications/Claude.app` with a dedicated `--user-data-dir`,
+so every profile is a fully isolated account. Because the real, Apple-notarized app
+runs untouched, notifications, Keychain access, virtualization features, and
+Claude's own auto-updates all keep working.
+
+## Requirements
+
+- **macOS 14 (Sonoma) or later**, on Apple Silicon or Intel.
+- **Claude Desktop** installed. Claude Manager finds it automatically via
+  LaunchServices, wherever it lives (`/Applications/Claude.app` is the fallback). If
+  it isn't detected, click **Re-detect** in **Settings → Real Claude**.
+
+## Install
+
+1. Download the latest **`ClaudeManager-X.Y.Z.dmg`** from the
+   [**Releases**](https://github.com/hacker-cb/claude-manager/releases) page.
+2. Open the DMG and drag **Claude Manager** into **Applications**.
+3. Launch it. The app is **Developer ID–signed and notarized**, so a normal
+   double-click opens it. If macOS ever shows a warning, right-click the app →
+   **Open** once.
+
+The app self-updates from then on (see [Updates](#updates)).
+
+## Getting started
+
+1. **Open Claude Manager.** It locates your installed Claude automatically — you
+   can confirm the path in **Settings → Real Claude**.
+2. **Add a profile.** Give it a display name, a short **badge label** (1–3 chars),
+   and a **color** (palette or custom hex). This creates a launcher app next to
+   Claude.app.
+3. **Open it.** A dedicated Claude window launches with its own isolated login and
+   settings. Sign in to that account.
+4. **Repeat** for each account, and use the **menu bar icon** for quick open/stop.
+
+The first time you re-activate an *already-running* profile, macOS asks for
+**Automation** permission (to bring its window to the front) — allow it once. See
+[Permissions](#permissions).
+
+## Features
 
 - **Add / list / open / stop / remove** launcher profiles.
 - Per-profile **badge label**, **color** (palette or custom hex), **display name**,
   and **bundle id**.
-- **Doctor** — health checks for the real app, each launcher, orphaned profile
-  dirs, and duplicate running instances.
-- **Regenerate icons** — rebuild badges after a Claude update.
 - **Menu bar extra** for quick open/stop, plus a full management window.
-- **Auto-update** — the app updates itself via Sparkle (each update download is
-  EdDSA-signed), separate from Claude Desktop's own updates.
+- **Doctor** — health checks for the real app, each launcher, orphaned profile
+  dirs, version skew, and duplicate running instances.
+- **Rebuild launchers** — regenerate a launcher (script + Info.plist + badge icon)
+  after a Claude update or a launcher-format change; **Apply to all launchers** (in
+  Settings → Badge style) rebuilds every profile at once.
+- **Auto-update** — the app updates itself via Sparkle (each update EdDSA-signed),
+  separate from Claude Desktop's own updates.
 
-## Why thin launchers?
+## Where things live &amp; privacy
 
-Copying Claude.app and re-signing it ad-hoc strips Anthropic's entitlements, which
-observably breaks notifications and virtualization-based features (Cowork
-sandboxes report the installation as "corrupted"). A thin launcher execs the
-untouched, signed binary, so nothing breaks and there is nothing to rebuild after
-Claude self-updates. See [CLAUDE.md](CLAUDE.md) for the hard-won macOS details.
+- **Launcher apps** — one `<Name>.app` next to Claude.app (default `/Applications`).
+  Configurable in **Settings → Launcher install location**.
+- **Profile data** — each account's isolated `--user-data-dir`, default
+  `~/Library/Application Support/Claude Manager/Profiles/<name>`. Configurable in
+  **Settings → New profile data**.
+- **App metadata** — a small JSON file of GUI-only state (ordering, notes) in
+  `~/Library/Application Support/Claude Manager`. It is always optional: the launcher
+  apps themselves are the source of truth.
 
-## Requirements
+Claude Manager **never reads your credentials or session tokens** — those live
+inside each profile's user-data-dir and are managed by Claude itself. It keeps no
+account data of its own; its only network activity is the Sparkle **update check**
+(see [Updates](#updates)).
 
-- macOS 14 (Sonoma) or later, on Apple Silicon or Intel (universal binary).
-- `/Applications/Claude.app` (the real, untouched app).
+## Permissions
 
-## Build & develop
+- **Automation (System Events)** — asked **once**, only to bring an already-running
+  profile's window to the front. It is not needed to launch a profile.
+- **Notifications, Keychain, virtualization** keep working normally, because the
+  untouched, signed Claude binary is what actually runs.
 
-The core logic lives in a Swift package (`ClaudeManagerCore`) that builds and
-tests headlessly; the SwiftUI app is an Xcode target generated from
-[`project.yml`](project.yml) by [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+## Updates
+
+Claude Manager updates itself via [Sparkle](https://sparkle-project.org) — each
+update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
+separate from Claude Desktop's own update mechanism.
+
+## Troubleshooting
+
+Open the **Doctor** tab for a health report. Common findings:
+
+| Doctor says | What to do |
+|---|---|
+| _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
+| _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
+| _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
+| _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
+| _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |
+| Profile shows as **Intel** in Activity Monitor | An old launcher — **Rebuild** it to run native (arm64). |
+
+## Uninstall
+
+1. In Claude Manager, **remove each profile** (this deletes its launcher app).
+2. Quit and drag **Claude Manager** to the Trash.
+3. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
+   and app metadata).
+
+Removing Claude Manager never touches your real `/Applications/Claude.app` or its
+data.
+
+## Contributing &amp; development
+
+The core logic is a headless Swift package (`ClaudeManagerCore`); the SwiftUI shell
+is an Xcode target generated by [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Quick start:
 
 ```bash
-make setup        # git hooks + brew bundle (xcodegen, swiftformat, swiftlint)
-make test         # swift test — headless core suite
-make gen          # regenerate ClaudeManager.xcodeproj from project.yml
-make build-app    # compile the app (unsigned) to verify it builds
-make lint format  # swiftformat + swiftlint
-open ClaudeManager.xcodeproj   # develop in Xcode
+make setup   # git hooks + brew bundle (xcodegen, swiftformat, swiftlint)
+make test    # headless core suite
+make run     # build (unsigned) and launch the app
 ```
 
-`ClaudeManager.xcodeproj` is generated and git-ignored — run `make gen` (or open
-via `xcodegen generate`) after cloning.
-
-## Testing
-
-`swift test` runs the full core suite headlessly (no window server) — process
-parsing, launcher bundle building, marker round-trips, badge/icns rendering
-through the real `iconutil`, and the `ProfileStore`/`Doctor` orchestration against
-temp directories with a mocked command runner. An opt-in live test exercises the
-real app end-to-end:
-
-```bash
-CLAUDE_MANAGER_LIVE=1 swift test --filter LiveIntegrationTests
-```
-
-## Architecture
-
-```
-ClaudeManagerCore (Swift package — headless, fully tested)
-├─ Models      Profile, BadgeColor, LauncherMarker, ManagedProfile, Diagnostic
-├─ RealClaude  locate the real app (LaunchServices + fallbacks), version, icon
-├─ Launcher    bundle build/scan/remove; bash launcher script (duplicate guard)
-├─ Icons       CoreGraphics badge renderer → iconutil .icns packer
-├─ Process     pgrep/ps main-process detection (ppid==1 filter)
-├─ ProfileStore  the façade: add/remove/open/stop/update/rebuild/doctor
-└─ CommandRunner injected process runner (mocked in tests)
-
-ClaudeManagerApp (SwiftUI — thin)
-└─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
-```
-
-The launcher's Info.plist **marker** is the source of truth: launchers are
-discovered by scanning the install directory, with a small JSON store in
-Application Support for GUI-only metadata.
-
-## Signing & release
-
-Claude Manager is **not** sandboxed (it must write launcher bundles next to
-Claude.app, run `lsregister`, and refresh the Dock), so it ships via **Developer
-ID + notarization**, never the App Store. CI builds a signed, notarized, stapled
-DMG on every `v*` tag — plus an EdDSA-signed Sparkle `.zip` and a cumulative
-`appcast.xml` on `gh-pages` that drives in-app auto-update (the DMG stays the
-human download) — see [docs/RELEASING.md](docs/RELEASING.md) for the exact
-secrets to configure.
+- [**docs/DEVELOPMENT.md**](docs/DEVELOPMENT.md) — build, test, and tooling.
+- [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) — how it works and the hard-won
+  macOS facts behind the thin-launcher design.
+- [**docs/RELEASING.md**](docs/RELEASING.md) — signing, notarization, Sparkle, and
+  cutting a release.
+- [**CONTRIBUTING.md**](CONTRIBUTING.md) — branch and PR flow.
+- [**SECURITY.md**](SECURITY.md) — reporting vulnerabilities and the update trust
+  model.
 
 ## License
 
