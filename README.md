@@ -106,6 +106,27 @@ Open the **Doctor** tab for a health report. Common findings:
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |
 | Profile shows as **Intel** in Activity Monitor | An old launcher — **Rebuild** it to run native (arm64). |
 
+## Known limitations
+
+- **The real `Claude.app` Dock/Finder icon can focus a clone instead of launching
+  your primary account.** If a launcher profile is already running and you then click
+  the untouched `Claude.app` (Dock, Finder, Spotlight, or Launchpad), macOS may just
+  bring the running *clone* to the front rather than starting your default account.
+
+  Why: a launcher runs the untouched, signed Claude binary in place, so every
+  instance — clones and the original alike — shares Anthropic's one bundle id
+  (`com.anthropic.claudefordesktop`). LaunchServices can't tell them apart, so a plain
+  launch of the real app finds it "already running" and activates whichever instance
+  it finds. This is inherent to the thin-launcher design (giving a clone a distinct
+  identity would require re-signing, which strips the entitlements Claude needs — see
+  [docs/DECISIONS.md](docs/DECISIONS.md)).
+
+  **Workaround:** launch your primary account from Claude Manager instead — **Open
+  Claude** in the menu-bar extra (or the window toolbar). It activates the running
+  default instance if there is one, otherwise starts a fresh one, regardless of what
+  clones are running. Removing the raw `Claude.app` from your Dock avoids the trap
+  entirely.
+
 ## Uninstall
 
 1. In Claude Manager, **remove each profile** (this deletes its launcher app).
