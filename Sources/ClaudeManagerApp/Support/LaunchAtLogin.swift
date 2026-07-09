@@ -17,7 +17,7 @@ final class LaunchAtLogin: ObservableObject {
     @Published private(set) var requiresApproval: Bool
     /// Last register/unregister failure for the view to show; `nil` when the last call
     /// succeeded or none has run.
-    @Published var lastError: String?
+    @Published private(set) var lastError: String?
 
     private let service: SMAppService
 

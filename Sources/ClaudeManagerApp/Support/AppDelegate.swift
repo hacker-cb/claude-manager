@@ -7,8 +7,8 @@ import AppKit
 ///   A SwiftUI app with a `Window` scene defaults
 ///   `applicationShouldTerminateAfterLastWindowClosed` to `true`, and the `MenuBarExtra`
 ///   status item doesn't count as a window — so closing the window would take the tray
-///   presence down with it. Explicit quit (⌘Q / "Quit Claude Manager", which call
-///   `NSApp.terminate`) still terminates: `terminate` bypasses this delegate hook.
+///   presence down with it. Explicit quit (⌘Q, or "Quit Claude Manager") still
+///   terminates: both call `NSApp.terminate`, which bypasses this delegate hook.
 /// - **Reopen the main window** on a Dock-icon click while no window is visible. The
 ///   actual reopen is a SwiftUI `openWindow`, injected from the scene into
 ///   `reopenMainWindow`, because AppKit can't invoke SwiftUI's window actions directly.
