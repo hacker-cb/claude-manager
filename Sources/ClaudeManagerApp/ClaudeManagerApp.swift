@@ -1,10 +1,17 @@
+import AppKit
 import ClaudeManagerCore
 import Sparkle
 import SwiftUI
 
 @main
 struct ClaudeManagerApp: App {
+    /// Keeps the app resident in the menu bar after the window closes and reopens it on
+    /// a Dock-icon click — see `AppDelegate`.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+
+    /// "Launch at login" state, backed by the system login-item database.
+    @StateObject private var launchAtLogin = LaunchAtLogin()
 
     /// One updater for the whole app, shared by the menu command, the MenuBarExtra item,
     /// and the Settings toggles — a second `SPUStandardUpdaterController` would race the
@@ -24,6 +31,7 @@ struct ClaudeManagerApp: App {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 760, minHeight: 480)
+                .modifier(MainWindowReopenBinder(delegate: appDelegate))
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -44,6 +52,7 @@ struct ClaudeManagerApp: App {
         Settings {
             SettingsView(updater: updaterController.updater)
                 .environmentObject(model)
+                .environmentObject(launchAtLogin)
         }
     }
 
@@ -61,4 +70,23 @@ struct ClaudeManagerApp: App {
 
 enum WindowID {
     static let main = "main"
+}
+
+/// Injects a SwiftUI `openWindow` closure into the AppKit delegate so a Dock-icon reopen
+/// (handled by `AppDelegate.applicationShouldHandleReopen`) can bring the main window
+/// back. `openWindow` can only be read inside a view, so we capture it once the window's
+/// content appears; the captured action stays valid for the process, so it still reopens
+/// the window after it has been closed.
+private struct MainWindowReopenBinder: ViewModifier {
+    let delegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            delegate.reopenMainWindow = {
+                openWindow(id: WindowID.main)
+                NSApp.activate()
+            }
+        }
+    }
 }
