@@ -5,6 +5,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var launchAtLogin: LaunchAtLogin
     @State private var showApply = false
 
     /// The app-scoped Sparkle updater (see ClaudeManagerApp) — shared, never re-created.
@@ -56,6 +57,8 @@ struct SettingsView: View {
 
             badgeSection
 
+            startupSection
+
             Section("Updates") {
                 UpdaterSettingsView(updater: updater)
             }
@@ -66,6 +69,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 540, height: 620)
+        .onAppear { launchAtLogin.refresh() }
         .confirmationDialog(
             "Rebuild all launchers?",
             isPresented: $showApply,
@@ -122,6 +126,34 @@ struct SettingsView: View {
             Text("Editing updates newly created launchers. “Apply” rebuilds every existing launcher.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private var startupSection: some View {
+        Section("Startup") {
+            Toggle("Launch at login", isOn: launchAtLoginBinding)
+            if launchAtLogin.requiresApproval {
+                Text(
+                    "Approve Claude Manager in System Settings › General › Login Items "
+                        + "for this to take effect."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = launchAtLogin.lastError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            Text(
+                "Closing the window keeps Claude Manager in the menu bar. "
+                    + "Reopen it from the menu bar icon or the Dock; quit with ⌘Q."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin.isEnabled },
+            set: { launchAtLogin.setEnabled($0) }
+        )
     }
 
     private var installSelection: Binding<Bool> {

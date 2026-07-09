@@ -98,6 +98,15 @@ so a re-dispatch of an old tag is rejected rather than shipped.
 installed app downloads, verifies, and relaunches into `vN+1`. This is where any
 nested-Sparkle signing or enclosure-format issue surfaces.
 
+## Launch at login
+
+The **Launch at login** toggle (Settings → Startup) registers the app itself as a login
+item via `SMAppService.mainApp` — no helper bundle, since the app is non-sandboxed. It
+needs no extra entitlement, but macOS only honours the registration for a **Developer ID
+signed + notarized** build, which is exactly what the release pipeline produces. In an
+unsigned local/dev build `register()` can fail or land in `requiresApproval` — expected,
+not a release blocker; the toggle surfaces the error and reconciles with the real status.
+
 ## Cutting a release
 
 ```bash
