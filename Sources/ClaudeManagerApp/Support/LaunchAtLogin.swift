@@ -42,12 +42,22 @@ final class LaunchAtLogin: ObservableObject {
         } catch {
             lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        refresh()
+        syncStatus()
     }
 
     /// Re-read the system status — e.g. when Settings appears, in case the user toggled
-    /// the login item from System Settings while the app was running.
+    /// the login item from System Settings while the app was running. Also drops any
+    /// stale `lastError`: a fresh status read supersedes a failure from an earlier
+    /// attempt the user may have since resolved out-of-band. `setEnabled` reconciles via
+    /// `syncStatus` instead, so the error it just set for a failed toggle survives.
     func refresh() {
+        syncStatus()
+        lastError = nil
+    }
+
+    /// Reconcile the published `isEnabled` / `requiresApproval` with the service's real
+    /// status, without touching `lastError`.
+    private func syncStatus() {
         isEnabled = service.status == .enabled
         requiresApproval = service.status == .requiresApproval
     }

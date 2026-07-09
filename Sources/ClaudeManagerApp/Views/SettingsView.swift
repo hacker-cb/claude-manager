@@ -151,7 +151,11 @@ struct SettingsView: View {
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
-            get: { launchAtLogin.isEnabled },
+            // "Registered" — enabled *or* pending user approval — reads as ON, so a
+            // freshly-registered item that macOS routed to `requiresApproval` doesn't
+            // snap the toggle back to OFF, and flipping it OFF actually unregisters the
+            // pending item (the only path to `setEnabled(false)`).
+            get: { launchAtLogin.isEnabled || launchAtLogin.requiresApproval },
             set: { launchAtLogin.setEnabled($0) }
         )
     }
