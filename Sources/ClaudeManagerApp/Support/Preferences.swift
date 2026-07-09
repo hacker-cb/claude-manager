@@ -8,4 +8,6 @@ enum PreferenceKeys {
     static let measureSizes = "measureSizes"
     /// JSON-encoded global `BadgeStyle` applied to every launcher icon.
     static let badgeStyle = "badgeStyle"
+    /// Whether to run as a menu-bar-only (`.accessory`) app with no Dock icon.
+    static let menuBarOnly = "menuBarOnly"
 }

@@ -12,6 +12,10 @@ import AppKit
 /// - **Reopen the main window** on a Dock-icon click while no window is visible. The
 ///   actual reopen is a SwiftUI `openWindow`, injected from the scene into
 ///   `reopenMainWindow`, because AppKit can't invoke SwiftUI's window actions directly.
+/// - **Apply the "menu bar only" activation policy at launch** — the sanctioned point to
+///   set the Dock-icon (activation) policy; see `applicationDidFinishLaunching`. Quieting
+///   the initial window in that mode is done in the scene's `onAppear`
+///   (`MainWindowLaunchBinder`), which fires deterministically when the window appears.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reopens the main window. Set by the `Window` scene once its content appears and
@@ -27,5 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { reopenMainWindow?() }
         return true
+    }
+
+    /// Reconcile the activation policy (Dock icon) with the stored "menu bar only"
+    /// preference — the sanctioned point to set it. The initial window is quieted
+    /// separately, in the scene's `onAppear`, so it can't miss a late-materialized window.
+    func applicationDidFinishLaunching(_: Notification) {
+        MenuBarChrome.apply(menuBarOnly: UserDefaults.standard.bool(forKey: PreferenceKeys.menuBarOnly))
     }
 }
