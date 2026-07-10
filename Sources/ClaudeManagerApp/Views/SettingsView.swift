@@ -142,8 +142,8 @@ struct SettingsView: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
             Text(
-                "Closing the window keeps Claude Manager in the menu bar. "
-                    + "Reopen it from the menu bar icon or the Dock; quit with ⌘Q."
+                "Closing the window keeps Claude Manager in the menu bar; its Dock icon shows "
+                    + "only while a window is open. Reopen and quit from the menu bar icon."
             )
             .font(.caption).foregroundStyle(.secondary)
         }

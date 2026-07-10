@@ -31,7 +31,7 @@ struct ClaudeManagerApp: App {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 760, minHeight: 480)
-                .modifier(MainWindowReopenBinder(delegate: appDelegate))
+                .modifier(MainWindowLaunchBinder(delegate: appDelegate))
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -72,21 +72,38 @@ enum WindowID {
     static let main = "main"
 }
 
-/// Injects a SwiftUI `openWindow` closure into the AppKit delegate so a Dock-icon reopen
-/// (handled by `AppDelegate.applicationShouldHandleReopen`) can bring the main window
-/// back. `openWindow` can only be read inside a view, so we capture it once the window's
-/// content appears; the captured action stays valid for the process, so it still reopens
-/// the window after it has been closed.
-private struct MainWindowReopenBinder: ViewModifier {
+/// Wires the main `Window` scene into the app's AppKit-level lifecycle — hooks that need a
+/// live view, since SwiftUI window actions (`openWindow`, `dismissWindow`) can only be read
+/// inside one:
+///
+/// - Injects an `openWindow` closure into the delegate so a Dock-icon reopen
+///   (`AppDelegate.applicationShouldHandleReopen`) can bring the window back.
+/// - Drives the **Dock icon from the window**: `onAppear` → the window is open, so show the
+///   Dock icon (`windowDidOpen`); `onDisappear` → the window closed, so hide it
+///   (`windowDidClose`) and stay in the menu bar.
+/// - Quiets a **login launch**: on the very first appearance the delegate says whether to
+///   dismiss the auto-opened window (`shouldDismissInitialWindow`), keeping a login start
+///   menu-bar-only. Done in `onAppear` (not a guessed runloop tick) so it can't miss a late
+///   window; one-shot, so a window the user opens later is untouched. A brief launch flash
+///   is the residual macOS-14 limitation (no declarative initial-window suppression).
+private struct MainWindowLaunchBinder: ViewModifier {
     let delegate: AppDelegate
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     func body(content: Content) -> some View {
-        content.onAppear {
-            delegate.reopenMainWindow = {
-                openWindow(id: WindowID.main)
-                NSApp.activate()
+        content
+            .onAppear {
+                delegate.reopenMainWindow = {
+                    openWindow(id: WindowID.main)
+                    NSApp.activate()
+                }
+                if delegate.shouldDismissInitialWindow() {
+                    dismissWindow(id: WindowID.main)
+                } else {
+                    delegate.windowDidOpen()
+                }
             }
-        }
+            .onDisappear { delegate.windowDidClose() }
     }
 }

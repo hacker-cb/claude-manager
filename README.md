@@ -56,9 +56,10 @@ The first time you re-activate an *already-running* profile, macOS asks for
 - Per-profile **badge label**, **color** (palette or custom hex), **display name**,
   and **bundle id**.
 - **Menu bar extra** for quick open/stop, plus a full management window.
-- **Stays in the menu bar** — closing the window leaves Claude Manager running in the
-  menu bar; reopen it from the menu bar icon or the Dock, and quit with ⌘Q. Optional
-  **Launch at login** in **Settings → Startup** (off by default).
+- **Menu-bar-first** — the Dock icon appears only while the management window is open;
+  closing the window keeps Claude Manager in the menu bar (reopen and quit from the menu
+  bar icon). Launched at login, it starts quietly in the menu bar. Optional **Launch at
+  login** in **Settings → Startup** (off by default).
 - **Doctor** — health checks for the real app, each launcher, orphaned profile
   dirs, version skew, and duplicate running instances.
 - **Rebuild launchers** — regenerate a launcher (script + Info.plist + badge icon)
