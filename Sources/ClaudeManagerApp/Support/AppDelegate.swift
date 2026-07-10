@@ -75,10 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A tracked window disappeared → re-sync the Dock icon with what's actually on screen:
     /// stay `.regular` while any standard window remains (another tracked scene, or an
     /// untracked AppKit window like a Sparkle update dialog), else drop to `.accessory` and
-    /// stay in the menu bar. Deferred a tick so the just-closed window has left `NSApp.windows`.
+    /// stay in the menu bar.
+    ///
+    /// Deferred with `DispatchQueue.main.async` so the scan runs on the **next** runloop
+    /// cycle — after AppKit has finished closing the window and dropped it from
+    /// `NSApp.windows` — rather than as an eager task continuation that could still see the
+    /// closing window. We're on the main thread there, so `assumeIsolated` reaches the
+    /// main-actor state safely.
     func windowDidDisappear() {
-        Task { @MainActor in
-            self.setDockIconVisible(self.hasVisibleStandardWindow())
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                self.setDockIconVisible(self.hasVisibleStandardWindow())
+            }
         }
     }
 
