@@ -13,9 +13,6 @@ struct ClaudeManagerApp: App {
     /// "Launch at login" state, backed by the system login-item database.
     @StateObject private var launchAtLogin = LaunchAtLogin()
 
-    /// "Menu bar only" (Dock-icon) state and activation-policy control.
-    @StateObject private var menuBarChrome = MenuBarChrome()
-
     /// One updater for the whole app, shared by the menu command, the MenuBarExtra item,
     /// and the Settings toggles — a second `SPUStandardUpdaterController` would race the
     /// same schedule and defaults. Started only for distributed (released) builds: a
@@ -34,7 +31,7 @@ struct ClaudeManagerApp: App {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 760, minHeight: 480)
-                .modifier(MainWindowLaunchBinder(delegate: appDelegate, chrome: menuBarChrome))
+                .modifier(MainWindowLaunchBinder(delegate: appDelegate))
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -56,7 +53,6 @@ struct ClaudeManagerApp: App {
             SettingsView(updater: updaterController.updater)
                 .environmentObject(model)
                 .environmentObject(launchAtLogin)
-                .environmentObject(menuBarChrome)
         }
     }
 
@@ -76,32 +72,38 @@ enum WindowID {
     static let main = "main"
 }
 
-/// Wires the main `Window` scene into the app's AppKit-level lifecycle, both hooks that
-/// need a live view (SwiftUI window actions can only be read inside one):
+/// Wires the main `Window` scene into the app's AppKit-level lifecycle — hooks that need a
+/// live view, since SwiftUI window actions (`openWindow`, `dismissWindow`) can only be read
+/// inside one:
 ///
-/// - Injects a SwiftUI `openWindow` closure into the AppKit delegate so a Dock-icon
-///   reopen (`AppDelegate.applicationShouldHandleReopen`) can bring the window back. The
-///   captured action stays valid for the process, so it still reopens after a close.
-/// - Quiets a **menu-bar-only launch** by dismissing the window SwiftUI auto-opened.
-///   Doing this in `onAppear` (rather than guessing a runloop tick in the delegate) fires
-///   deterministically when the window appears, so it can't miss a late-materialized
-///   window; `shouldDismissLaunchWindow` makes it one-shot, so a window the user opens
-///   later is never auto-closed. A brief launch flash is the residual macOS-14 limitation.
+/// - Injects an `openWindow` closure into the delegate so a Dock-icon reopen
+///   (`AppDelegate.applicationShouldHandleReopen`) can bring the window back.
+/// - Drives the **Dock icon from the window**: `onAppear` → the window is open, so show the
+///   Dock icon (`windowDidOpen`); `onDisappear` → the window closed, so hide it
+///   (`windowDidClose`) and stay in the menu bar.
+/// - Quiets a **login launch**: on the very first appearance the delegate says whether to
+///   dismiss the auto-opened window (`shouldDismissInitialWindow`), keeping a login start
+///   menu-bar-only. Done in `onAppear` (not a guessed runloop tick) so it can't miss a late
+///   window; one-shot, so a window the user opens later is untouched. A brief launch flash
+///   is the residual macOS-14 limitation (no declarative initial-window suppression).
 private struct MainWindowLaunchBinder: ViewModifier {
     let delegate: AppDelegate
-    let chrome: MenuBarChrome
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
     func body(content: Content) -> some View {
-        content.onAppear {
-            delegate.reopenMainWindow = {
-                openWindow(id: WindowID.main)
-                NSApp.activate()
+        content
+            .onAppear {
+                delegate.reopenMainWindow = {
+                    openWindow(id: WindowID.main)
+                    NSApp.activate()
+                }
+                if delegate.shouldDismissInitialWindow() {
+                    dismissWindow(id: WindowID.main)
+                } else {
+                    delegate.windowDidOpen()
+                }
             }
-            if chrome.shouldDismissLaunchWindow() {
-                dismissWindow(id: WindowID.main)
-            }
-        }
+            .onDisappear { delegate.windowDidClose() }
     }
 }

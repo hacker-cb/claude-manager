@@ -6,7 +6,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
-    @EnvironmentObject private var menuBarChrome: MenuBarChrome
     @State private var showApply = false
 
     /// The app-scoped Sparkle updater (see ClaudeManagerApp) — shared, never re-created.
@@ -142,11 +141,9 @@ struct SettingsView: View {
             if let error = launchAtLogin.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-
-            Toggle("Menu bar only (hide Dock icon)", isOn: $menuBarChrome.menuBarOnly)
             Text(
-                "Closing the window keeps Claude Manager in the menu bar. "
-                    + "Reopen it from the menu bar icon (or the Dock, unless hidden); quit with ⌘Q."
+                "Closing the window keeps Claude Manager in the menu bar; its Dock icon shows "
+                    + "only while the window is open. Reopen from the menu bar icon; quit with ⌘Q."
             )
             .font(.caption).foregroundStyle(.secondary)
         }
