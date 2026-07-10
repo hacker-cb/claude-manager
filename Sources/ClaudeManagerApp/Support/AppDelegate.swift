@@ -10,12 +10,13 @@ import AppKit
 ///   app menu bar — is present); both call `NSApp.terminate`.
 /// - **Reopen the main window** on a Dock-icon click while no window is visible, via the
 ///   injected `reopenMainWindow` (AppKit can't invoke SwiftUI's window actions directly).
-/// - **The Dock icon follows the window.** The app is `.regular` (Dock icon) while a
-///   standard window is open and `.accessory` (menu-bar-only) when none is — driven by the
-///   main window's appear/disappear (`MainWindowLaunchBinder` → `windowDidOpen` /
-///   `windowDidClose`). A launch triggered at login starts menu-bar-only and dismisses its
-///   auto-opened window; a manual launch keeps the window (see `applicationDidFinishLaunching`
-///   and `shouldDismissInitialWindow`).
+/// - **The Dock icon follows the windows.** The app is `.regular` (Dock icon) while any
+///   standard window is on screen and `.accessory` (menu-bar-only) when none is. Opening a
+///   tracked scene (`windowDidAppear`) shows it immediately; closing one (`windowDidDisappear`)
+///   re-checks `NSApp.windows` and hides it only when nothing standard remains — so a still-open
+///   Settings window or Sparkle dialog keeps the Dock icon. A launch triggered at login starts
+///   menu-bar-only and dismisses its auto-opened window; a manual launch keeps the window
+///   (see `applicationDidFinishLaunching` / `shouldDismissInitialWindow`).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reopens the main window. Set by the `Window` scene once its content appears and
@@ -47,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool
         launchWasNonDefault = isDefaultLaunch == false
         // Tentative: a non-default launch starts menu-bar-only. The window lifecycle
-        // (windowDidOpen/Close) reconciles this once the window appears — a restoring
+        // (windowDidAppear/Disappear) reconciles this once the window appears — a restoring
         // manual relaunch is non-default too, but keeps its window and flips back to
         // `.regular`.
         setDockIconVisible(!launchWasNonDefault)
@@ -64,24 +65,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return launchWasNonDefault && !NSApp.isActive
     }
 
-    /// The main window is open → show the Dock icon and bring the app forward.
-    func windowDidOpen() {
+    /// A tracked window (main or Settings) appeared → show the Dock icon and bring the app
+    /// forward. A window being on screen is enough to warrant `.regular`.
+    func windowDidAppear() {
         setDockIconVisible(true)
         NSApp.activate()
     }
 
-    /// The main window closed → hide the Dock icon and stay in the menu bar, but only if no
-    /// other standard window (Settings, a Sparkle dialog) is still on screen — otherwise
-    /// `.accessory` would strip the Dock icon and app menu bar from a visible window.
-    /// Deferred a tick so the just-closed window has already left `NSApp.windows`.
-    func windowDidClose() {
+    /// A tracked window disappeared → re-sync the Dock icon with what's actually on screen:
+    /// stay `.regular` while any standard window remains (another tracked scene, or an
+    /// untracked AppKit window like a Sparkle update dialog), else drop to `.accessory` and
+    /// stay in the menu bar. Deferred a tick so the just-closed window has left `NSApp.windows`.
+    func windowDidDisappear() {
         Task { @MainActor in
-            if !self.hasVisibleStandardWindow() { self.setDockIconVisible(false) }
+            self.setDockIconVisible(self.hasVisibleStandardWindow())
         }
     }
 
-    /// Whether any standard, on-screen window remains (excludes panels and the menu-bar
-    /// status item, which can't become main).
+    /// Whether any standard, on-screen window remains (excludes panels — e.g. Sparkle's
+    /// "you're up to date" alert — and the menu-bar status item, which can't become main).
     private func hasVisibleStandardWindow() -> Bool {
         NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
     }

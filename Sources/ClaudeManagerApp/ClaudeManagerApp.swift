@@ -53,6 +53,7 @@ struct ClaudeManagerApp: App {
             SettingsView(updater: updaterController.updater)
                 .environmentObject(model)
                 .environmentObject(launchAtLogin)
+                .modifier(DockFollowsWindow(delegate: appDelegate))
         }
     }
 
@@ -78,9 +79,8 @@ enum WindowID {
 ///
 /// - Injects an `openWindow` closure into the delegate so a Dock-icon reopen
 ///   (`AppDelegate.applicationShouldHandleReopen`) can bring the window back.
-/// - Drives the **Dock icon from the window**: `onAppear` → the window is open, so show the
-///   Dock icon (`windowDidOpen`); `onDisappear` → the window closed, so hide it
-///   (`windowDidClose`) and stay in the menu bar.
+/// - Drives the **Dock icon from the window**: `onAppear` marks the window open
+///   (`windowDidAppear`) and `onDisappear` re-syncs the policy (`windowDidDisappear`).
 /// - Quiets a **login launch**: on the very first appearance the delegate says whether to
 ///   dismiss the auto-opened window (`shouldDismissInitialWindow`), keeping a login start
 ///   menu-bar-only. Done in `onAppear` (not a guessed runloop tick) so it can't miss a late
@@ -101,9 +101,23 @@ private struct MainWindowLaunchBinder: ViewModifier {
                 if delegate.shouldDismissInitialWindow() {
                     dismissWindow(id: WindowID.main)
                 } else {
-                    delegate.windowDidOpen()
+                    delegate.windowDidAppear()
                 }
             }
-            .onDisappear { delegate.windowDidClose() }
+            .onDisappear { delegate.windowDidDisappear() }
+    }
+}
+
+/// Feeds a secondary scene (Settings) into the delegate's Dock-icon logic so the icon stays
+/// shown while it is open and the app re-syncs when it closes. The main window uses
+/// `MainWindowLaunchBinder` (which also handles reopen + the login dismissal); this is the
+/// plain appear/disappear version for scenes that need nothing else.
+private struct DockFollowsWindow: ViewModifier {
+    let delegate: AppDelegate
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { delegate.windowDidAppear() }
+            .onDisappear { delegate.windowDidDisappear() }
     }
 }
