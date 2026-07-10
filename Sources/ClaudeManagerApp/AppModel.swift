@@ -57,7 +57,8 @@ final class AppModel: ObservableObject {
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
     /// overlapping runs can't both `open -n` a duplicate default. See `openReal`.
-    private var isOpeningReal = false
+    /// Non-private so the `AppModel+PrimaryAccount` extension (another file) can reach it.
+    var isOpeningReal = false
 
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
@@ -229,8 +230,42 @@ final class AppModel: ObservableObject {
     }
 
     func open(_ profile: Profile) async {
+        // A running profile only needs its window raised — activate it by pid instead of
+        // relaunching the launcher app, which would flash a transient Dock icon (it
+        // starts, self-activates via `activate_existing`, and exits at once). Fall back to
+        // a launch (shlock-guarded) when nothing owns the probed pid. Refresh either way,
+        // so a list that was stale-as-stopped reflects the profile we just proved running.
+        if let pid = await runningPID(for: profile), activateApp(pid: pid) {
+            await refresh()
+            return
+        }
         _ = await perform { store in try store.open(profile) }
         await refresh()
+    }
+
+    /// Running pid for a managed profile, or `nil`. `nil` means "not running" — and a
+    /// `perform` probe failure flattens to the same `nil`, so the two are indistinguishable
+    /// here; the caller treats `nil` as "launch it", the safe reading either way.
+    private func runningPID(for profile: Profile) async -> Int32? {
+        await perform { store in store.runningPID(for: profile) }.flatMap(\.self)
+    }
+
+    /// Bring the app that owns `pid` to the front, returning whether it was activated.
+    /// `false` means no running app owns `pid` (just quit / not yet registered) or the
+    /// activation request was refused — either way the caller falls back to a launch.
+    /// Non-private and shared by the managed-profile and primary-account focus paths.
+    ///
+    /// `.activateAllWindows` raises every window of the target, not just main/key — the
+    /// robust choice when focusing another app from our own menu-bar extra. macOS 14
+    /// retired forceful cross-app activation (`.activateIgnoringOtherApps` is a deprecated
+    /// no-op), so activation is cooperative and best-effort: the user's click supplies the
+    /// context the system needs to honor it.
+    func activateApp(pid: Int32) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
+        // Propagate the result: `activate` returns false if the app quit between the lookup
+        // and here (or can't be activated), so the caller relaunches instead of assuming a
+        // window it never raised.
+        return app.activate(options: [.activateAllWindows])
     }
 
     func stop(_ profile: Profile, force: Bool) async {
@@ -416,7 +451,9 @@ final class AppModel: ObservableObject {
 
     /// Run a store operation off the main actor — it may block or suspend (e.g. the
     /// async `stop`) — surfacing errors as an alert. Returns `nil` on failure.
-    private func perform<T: Sendable>(
+    /// Non-private so type extensions in other files (e.g. `AppModel+PrimaryAccount`)
+    /// share the one dispatch path.
+    func perform<T: Sendable>(
         _ body: @Sendable @escaping (ProfileStore) async throws -> T
     ) async -> T? {
         guard let real = realClaude, let config = currentConfiguration() else {
@@ -456,44 +493,5 @@ final class AppModel: ObservableObject {
 
     private nonisolated static func describe(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-    }
-}
-
-// MARK: - Primary (default-account) Claude
-
-extension AppModel {
-    /// Launch or focus the primary (default-account) Claude — the untouched app, apart
-    /// from any managed launcher. A running default is focused by exact pid (a plain
-    /// relaunch de-dupes onto a *clone*, since all instances share Claude's bundle id);
-    /// otherwise `open -n` forces a fresh one — the only reliable way to reach it while
-    /// clones run. Duplicate-avoidance is best-effort (the untouched app has no `shlock`
-    /// like a clone's launcher): `isOpeningReal` blocks concurrent runs and we `open -n`
-    /// only when a probe says nothing runs. A `ps`-lag re-click residual can't be closed.
-    func openReal() async {
-        guard realClaude != nil else {
-            currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
-            return
-        }
-        guard !isOpeningReal else { return }
-        isOpeningReal = true
-        defer { isOpeningReal = false }
-
-        if let pid = await runningDefaultPID() {
-            if let app = NSRunningApplication(processIdentifier: pid) {
-                app.activate()
-                return
-            }
-            // Found a pid but it won't resolve (just quit, or not yet registered) —
-            // re-probe and only launch when nothing is running, never racing a duplicate.
-            if await runningDefaultPID() != nil { return }
-        }
-        _ = await perform { store in try store.openReal() }
-        await refresh()
-    }
-
-    /// Running primary-account pid, or `nil`. Flattens `perform`'s failure optional into
-    /// the store's `Int32?`, so a probe failure reads as "unknown" (nil) — as "none".
-    private func runningDefaultPID() async -> Int32? {
-        await perform { store in store.runningDefaultPID() }.flatMap(\.self)
     }
 }
