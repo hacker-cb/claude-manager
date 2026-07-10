@@ -5,16 +5,17 @@ import AppKit
 /// declaratively:
 ///
 /// - **Stay resident in the menu bar** after the last window closes, instead of quitting
-///   (`applicationShouldTerminateAfterLastWindowClosed` → false). Explicit quit
-///   (⌘Q / "Quit Claude Manager", which call `NSApp.terminate`) still terminates.
+///   (`applicationShouldTerminateAfterLastWindowClosed` → false). The reliable quit is
+///   "Quit Claude Manager" in the menu bar (⌘Q also works while a window — and thus the
+///   app menu bar — is present); both call `NSApp.terminate`.
 /// - **Reopen the main window** on a Dock-icon click while no window is visible, via the
 ///   injected `reopenMainWindow` (AppKit can't invoke SwiftUI's window actions directly).
-/// - **The Dock icon follows the window.** The app is `.regular` (Dock icon) only while its
-///   window is open and `.accessory` (menu-bar-only) when closed — driven by the scene's
-///   appear/disappear (`MainWindowLaunchBinder` calls `windowDidOpen` / `windowDidClose`).
-///   A launch triggered at login starts menu-bar-only and dismisses its auto-opened
-///   window; a manual launch keeps the window (see `applicationDidFinishLaunching` and
-///   `shouldDismissInitialWindow`).
+/// - **The Dock icon follows the window.** The app is `.regular` (Dock icon) while a
+///   standard window is open and `.accessory` (menu-bar-only) when none is — driven by the
+///   main window's appear/disappear (`MainWindowLaunchBinder` → `windowDidOpen` /
+///   `windowDidClose`). A launch triggered at login starts menu-bar-only and dismisses its
+///   auto-opened window; a manual launch keeps the window (see `applicationDidFinishLaunching`
+///   and `shouldDismissInitialWindow`).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reopens the main window. Set by the `Window` scene once its content appears and
@@ -22,12 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window is closed). `nil` only before that first appearance, a harmless no-op.
     var reopenMainWindow: (() -> Void)?
 
-    /// Whether this process was launched automatically at login (rather than opened by the
-    /// user). macOS exposes no documented SMAppService signal for this, so we fall back to
-    /// the legacy `NSApplication.launchIsDefaultUserInfoKey` (`false` ⇒ not a user launch).
-    /// Best-effort: if some macOS build doesn't set it for the login-item launch, the
-    /// launch is treated as manual and the window shows.
-    private var launchedAtLogin = false
+    /// Whether this process's launch was *not* a plain user launch. macOS exposes no
+    /// documented SMAppService signal for "launched at login", so we start from the legacy
+    /// `NSApplication.launchIsDefaultUserInfoKey` (`false` ⇒ not a default user launch).
+    /// This also covers open/print/Services and **saved-state restoration**, so it is not
+    /// login on its own — the dismiss decision additionally requires the app to be
+    /// inactive (`shouldDismissInitialWindow`), which a login/background launch is and a
+    /// manual (even state-restoring) launch is not.
+    private var launchWasNonDefault = false
     /// Guards the one-shot handling of the auto-opened launch window.
     private var initialWindowHandled = false
 
@@ -41,19 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        launchedAtLogin = (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool) == false
-        // Start menu-bar-only for a login launch; a manual launch shows its window (and so
-        // the Dock icon). The window-driven policy keeps this in sync from there on.
-        setDockIconVisible(!launchedAtLogin)
+        let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool
+        launchWasNonDefault = isDefaultLaunch == false
+        // Tentative: a non-default launch starts menu-bar-only. The window lifecycle
+        // (windowDidOpen/Close) reconciles this once the window appears — a restoring
+        // manual relaunch is non-default too, but keeps its window and flips back to
+        // `.regular`.
+        setDockIconVisible(!launchWasNonDefault)
     }
 
     /// Whether the initial (auto-opened) launch window should be dismissed to keep a login
-    /// launch quiet. One-shot: returns `true` only for the very first window, and only at
-    /// login. Every later window (including one the user opens) returns `false`.
+    /// launch quiet. One-shot, and only when the launch was non-default **and** the app is
+    /// inactive — i.e. a background login/auto start, not a foreground manual launch (which
+    /// is active even when macOS restores its saved window). Every later window returns
+    /// `false`.
     func shouldDismissInitialWindow() -> Bool {
         guard !initialWindowHandled else { return false }
         initialWindowHandled = true
-        return launchedAtLogin
+        return launchWasNonDefault && !NSApp.isActive
     }
 
     /// The main window is open → show the Dock icon and bring the app forward.
@@ -62,9 +70,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
-    /// The main window closed → hide the Dock icon; the app stays in the menu bar.
+    /// The main window closed → hide the Dock icon and stay in the menu bar, but only if no
+    /// other standard window (Settings, a Sparkle dialog) is still on screen — otherwise
+    /// `.accessory` would strip the Dock icon and app menu bar from a visible window.
+    /// Deferred a tick so the just-closed window has already left `NSApp.windows`.
     func windowDidClose() {
-        setDockIconVisible(false)
+        Task { @MainActor in
+            if !self.hasVisibleStandardWindow() { self.setDockIconVisible(false) }
+        }
+    }
+
+    /// Whether any standard, on-screen window remains (excludes panels and the menu-bar
+    /// status item, which can't become main).
+    private func hasVisibleStandardWindow() -> Bool {
+        NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
     }
 
     private func setDockIconVisible(_ visible: Bool) {
