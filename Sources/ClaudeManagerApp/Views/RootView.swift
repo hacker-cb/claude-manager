@@ -64,6 +64,16 @@ struct RootView: View {
                 .help("Create a new launcher profile")
         }
         ToolbarItem {
+            Button { Task { await model.openReal() } } label: {
+                Label("Open Claude", systemImage: "person.crop.circle")
+            }
+            .help(
+                "Launch or focus your primary Claude account (the default profile). "
+                    + "Use this instead of the Dock icon while clones are running."
+            )
+            .disabled(model.realClaude == nil)
+        }
+        ToolbarItem {
             Button { Task { await model.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }

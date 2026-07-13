@@ -456,11 +456,10 @@ public struct ProfileStore {
         }
     }
 
-    func runningPID(for profile: Profile) -> Int32? {
-        processProbe.mainPID(
-            forProfilePath: profile.profilePath,
-            realBinaryPath: realClaude.binaryURL.path
-        )
+    /// PID of this profile's running instance, or `nil`. Public so a caller can activate
+    /// a running profile by pid instead of relaunching its launcher just to self-exit.
+    public func runningPID(for profile: Profile) -> Int32? {
+        processProbe.mainPID(forProfilePath: profile.profilePath, realBinaryPath: realClaude.binaryURL.path)
     }
 
     func directoryHasContents(_ path: String) -> Bool {

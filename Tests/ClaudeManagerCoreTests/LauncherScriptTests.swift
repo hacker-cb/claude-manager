@@ -2,6 +2,10 @@ import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
+// `.serialized`: the two behaviour tests each spawn `bash`/`shlock`/`sleep`; running them
+// serially keeps this suite from contending with itself for the process table under the
+// otherwise-parallel test run.
+@Suite(.serialized)
 struct LauncherScriptTests {
     let realBinary = "/Applications/Claude.app/Contents/MacOS/Claude"
 
@@ -70,7 +74,7 @@ struct LauncherScriptTests {
         defer { harness.cleanup() }
 
         let holder = try harness.holdLock()
-        defer { holder.terminate(); holder.waitUntilExit() }
+        defer { ScriptHarness.terminateAndReap(holder) }
 
         let status = try harness.runLauncher()
 
@@ -115,7 +119,7 @@ private struct ScriptHarness {
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [launcher.path]
         try process.run()
-        process.waitUntilExit()
+        try Self.waitOrTerminate(process, seconds: 30, what: "launcher")
         return process.terminationStatus
     }
 
@@ -136,13 +140,13 @@ private struct ScriptHarness {
         shlock.arguments = ["-f", lock, "-p", String(sleeper.processIdentifier)]
         do {
             try shlock.run()
+            try Self.waitOrTerminate(shlock, seconds: 10, what: "shlock")
         } catch {
-            sleeper.terminate(); sleeper.waitUntilExit()
+            Self.terminateAndReap(sleeper)
             throw error
         }
-        shlock.waitUntilExit()
         guard shlock.terminationStatus == 0 else {
-            sleeper.terminate(); sleeper.waitUntilExit()
+            Self.terminateAndReap(sleeper)
             throw Fixture
                 .FixtureError(
                     message: "shlock failed to acquire the lock (status \(shlock.terminationStatus))"
@@ -163,5 +167,54 @@ private struct ScriptHarness {
     private static func writeExecutable(_ contents: String, to url: URL) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    /// Wait for `process` to exit, but never longer than `seconds`. A wedged spawn — seen
+    /// as multi-minute stalls under parallel test load, which once ran out the CI job's
+    /// time budget — is terminated and surfaced as a failure here instead of hanging the
+    /// whole run.
+    ///
+    /// Polls `isRunning` on the calling thread rather than blocking in `waitUntilExit()`:
+    /// `Process.waitUntilExit()` services the *current* thread's run loop, so off a
+    /// run-loop-bearing thread (a GCD worker) it never observes termination and stalls
+    /// until the deadline. `isRunning` is a plain state read that needs no run loop, and a
+    /// terminated process is reaped by `Process`'s own internal source, so `terminationStatus`
+    /// is valid once the loop ends.
+    private static func waitOrTerminate(_ process: Process, seconds: TimeInterval, what: String) throws {
+        let deadline = monotonicNow + seconds
+        while process.isRunning {
+            if monotonicNow >= deadline {
+                let pid = process.processIdentifier
+                process.terminate()
+                // SIGTERM is async; give it a brief grace so a wedged spawn doesn't trail
+                // into later tests (bash/shlock/sleep all honor it and exit promptly).
+                let graceEnd = monotonicNow + 2
+                while process.isRunning, monotonicNow < graceEnd {
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+                throw Fixture.FixtureError(
+                    message: "\(what) (pid \(pid)) did not exit within \(Int(seconds))s (terminated)"
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
+    /// Terminate `process` and wait (bounded) for it to actually exit — a non-throwing
+    /// teardown counterpart to `waitOrTerminate`, so cleanup never blocks in
+    /// `waitUntilExit()` either. SIGTERM'd `sleep`/`shlock` exit promptly; the 2s cap only
+    /// bounds a pathological holdout.
+    fileprivate static func terminateAndReap(_ process: Process) {
+        process.terminate()
+        let end = monotonicNow + 2
+        while process.isRunning, monotonicNow < end {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
+    /// Monotonic seconds for interval deadlines — unaffected by the wall-clock (NTP)
+    /// jumps that `Date()` is subject to.
+    private static var monotonicNow: TimeInterval {
+        ProcessInfo.processInfo.systemUptime
     }
 }

@@ -23,9 +23,10 @@ struct CheckForUpdatesView: View {
 
     var body: some View {
         Button("Check for Updates…") {
-            // Bring the app forward so Sparkle's modal update dialog can't open behind
-            // other windows — the check is often triggered from the menu-bar extra with
-            // no window focused.
+            // Bring the app forward so Sparkle's modal update dialog can't open behind other
+            // windows — the check often fires from the menu-bar extra while another app is
+            // frontmost, where cooperative `NSApp.activate()` isn't guaranteed to foreground us.
+            // Forceful is intentional and warning-free (Apple softened the deprecation) — see #31.
             NSApp.activate(ignoringOtherApps: true)
             updater.checkForUpdates()
         }
