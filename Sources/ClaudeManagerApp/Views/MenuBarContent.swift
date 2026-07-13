@@ -67,6 +67,10 @@ struct MenuBarContent: View {
         Divider()
         Button("Open Claude Manager") {
             openWindow(id: WindowID.main)
+            // Forceful on purpose: this fires from the menu-bar extra while another app is
+            // frontmost, where cooperative `NSApp.activate()` may leave the window behind it.
+            // Warning-free on current SDKs (Apple softened the deprecation to a future
+            // placeholder) — see #31 for why this isn't migrated to `activate()`.
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("Refresh") { Task { await model.refresh() } }
