@@ -11,6 +11,7 @@ extension AppModel {
     /// like a clone's launcher): `isOpeningReal` blocks concurrent runs and we `open -n`
     /// only when a probe says nothing runs. A `ps`-lag re-click residual can't be closed.
     func openReal() async {
+        guard !launchBlockedByStagedApply() else { return }
         guard realClaude != nil else {
             currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
             return

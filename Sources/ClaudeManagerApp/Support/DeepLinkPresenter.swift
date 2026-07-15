@@ -13,11 +13,22 @@ import SwiftUI
 final class DeepLinkPresenter: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var onDismiss: (() -> Void)?
+    /// Set the instant a present is scheduled — before the window exists. The model
+    /// presents from an async context that first `await`s a refresh, and `window` (the
+    /// other truth) isn't set until `present`. Reserving synchronously closes that gap so
+    /// a second link arriving mid-`await` can't pass the idle check and double-present.
+    private var reserved = false
 
-    /// Whether a picker is currently on screen — the model shows queued links one at a
-    /// time, presenting the next only once this returns `false`.
+    /// Whether a picker is on screen *or* reserved for one — the model shows queued links
+    /// one at a time, presenting the next only once this returns `false`.
     var isPresenting: Bool {
-        window != nil
+        window != nil || reserved
+    }
+
+    /// Reserve the presenter synchronously, so the model's idle check is race-free across
+    /// the pre-`present` `await`. `present` clears it once `window` becomes the truth.
+    func reserve() {
+        reserved = true
     }
 
     /// Present the picker. `onDismiss` fires once after the window closes for *any* reason
@@ -45,6 +56,7 @@ final class DeepLinkPresenter: NSObject, NSWindowDelegate {
         window.delegate = self
         window.center()
         self.window = window
+        reserved = false // the window is now the source of truth
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
