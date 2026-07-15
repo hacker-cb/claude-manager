@@ -19,6 +19,11 @@ struct RootView: View {
             // Idempotent — `init` also kicks this off window-independently (a login /
             // menu-bar-only launch shows no window, so this `.task` may not run).
             await model.performLaunchTasks()
+            // Refresh on *every* appearance too: reopening the window after an external
+            // change — while the app stayed active, so `didBecomeActive` never fired —
+            // must show fresh state, not wait out the 60s poll. (Launch work above is
+            // once-only; this refresh is not.)
+            await model.refresh()
         }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)

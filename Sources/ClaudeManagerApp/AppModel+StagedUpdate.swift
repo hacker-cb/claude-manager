@@ -20,6 +20,20 @@ extension AppModel {
         setApplyingStagedUpdate(false)
     }
 
+    /// True — and surfaces a notice — when a launch must be refused because a staged-update
+    /// apply is mid-swap. A new Claude process (default *or* clone; both run the on-disk
+    /// binary) launched now would trip ShipIt's zero-instance swap gate or race the
+    /// relaunch snapshot. Every launch entry point (`open`, `restart`, `openReal`, deep-link
+    /// forwarding) checks this, since the views' launch buttons don't know about the swap.
+    func launchBlockedByStagedApply() -> Bool {
+        guard isApplyingStagedUpdate else { return false }
+        currentError = AppError(
+            message: "A Claude update is being applied to all accounts. "
+                + "Wait for it to finish, then try again."
+        )
+        return true
+    }
+
     /// Post a local notification once per staged version, so a downloaded-but-blocked
     /// update nags a single time. The record is keyed by version and intentionally never
     /// cleared: a later staged version is a different key, so it notifies afresh, while a

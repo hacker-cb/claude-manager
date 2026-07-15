@@ -33,9 +33,15 @@ extension AppModel {
         let claudeURLs = urls.filter { DeepLink.isClaudeURL($0.absoluteString) }
         guard !claudeURLs.isEmpty else { return }
         guard deepLinkBrokerEnabled else {
+            // Broker off, but we still declare the scheme, so a link can reach us — hand it
+            // to the default account. Forward only the *first* of a batch: macOS can't
+            // deliver to the instance we're about to launch, and a second `open -n` would
+            // spawn a duplicate default on one user-data-dir (LevelDB corruption). The
+            // per-call running-PID probe lags process startup, so it can't catch the second.
             Task {
-                for url in claudeURLs {
-                    await forwardToDefaultAccount(url: url)
+                await forwardToDefaultAccount(url: claudeURLs[0])
+                if claudeURLs.count > 1 {
+                    currentError = AppError(message: Self.batchDeliveryLimitMessage(claudeURLs.count))
                 }
                 await refresh()
             }
@@ -101,9 +107,13 @@ extension AppModel {
 
     // MARK: - Picker + forwarding
 
-    /// Present the next queued link's picker when nothing is already on screen.
+    /// Present the next queued link's picker when nothing is already on screen. Reserve the
+    /// presenter *before* spawning the task: `presentPicker` `await`s a refresh before the
+    /// window (the other idle signal) exists, so without the reservation two links arriving
+    /// close together would both pass the guard and present overlapping pickers.
     private func presentNextDeepLinkIfIdle() {
         guard !deepLinkPresenter.isPresenting, !pendingDeepLinkQueue.isEmpty else { return }
+        deepLinkPresenter.reserve()
         let url = pendingDeepLinkQueue.removeFirst()
         Task { await presentPicker(for: url) }
     }
@@ -130,6 +140,7 @@ extension AppModel {
     }
 
     private func forwardToProfile(_ profile: Profile, url: URL) async {
+        guard !launchBlockedByStagedApply() else { return }
         // A running target can't receive the link: the launcher's duplicate guard exits
         // without forwarding. Tell the user rather than silently dropping it.
         if let pid = await pid(for: profile) {
@@ -140,6 +151,7 @@ extension AppModel {
     }
 
     private func forwardToDefaultAccount(url: URL) async {
+        guard !launchBlockedByStagedApply() else { return }
         // Same running-instance limitation, plus: a second `open -n` on a live default
         // would corrupt its user-data-dir. Share `openReal`'s serialization guard so a
         // concurrent openReal or a second forward can't both pass the probe and launch a
@@ -161,5 +173,10 @@ extension AppModel {
     private func deliveryToRunningMessage(_ name: String, pid: Int32) -> String {
         "\(name) is already running (pid \(pid)). macOS can't deliver a deep link to a "
             + "running Claude instance — quit it first, then reopen the link."
+    }
+
+    private static func batchDeliveryLimitMessage(_ count: Int) -> String {
+        "Opened the first of \(count) links in the default account. macOS can deliver only "
+            + "one link per launch — reopen the rest once it's running."
     }
 }
