@@ -134,14 +134,14 @@ struct SettingsView: View {
         Section("Deep links") {
             Toggle("Route claude:// links to a chosen account", isOn: $model.deepLinkBrokerEnabled)
             Text(
-                "When on, Claude Manager becomes the default handler for claude:// links "
+                "On by default: Claude Manager is the default handler for claude:// links "
                     + "and shows a picker so a login or SSO callback opens in the account you "
                     + "choose — not always the default one."
             )
             .font(.caption).foregroundStyle(.secondary)
             Text(
-                "This suppresses deep-link registration in every account (including the "
-                    + "default). Turning it off restores the default account's handling. "
+                "Your default account is never modified — Claude Manager just holds the "
+                    + "handler while it runs, and hands it back when you turn this off or quit. "
                     + "Links to an already-running account can't be delivered — quit it first."
             )
             .font(.caption).foregroundStyle(.secondary)

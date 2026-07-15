@@ -277,12 +277,16 @@ struct DoctorTests {
     }
 
     @Test
-    func warnsWhenBrokerOffButDefaultAccountStillSuppressed() throws {
+    func warnsWhenDefaultAccountIsSuppressed() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        // A failed restore: the default account still carries the deep-link suppression.
+        // The default account should never carry disableDeepLinkRegistration (guard-based).
+        // A leftover key (e.g. from an earlier build) must be flagged.
         try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
-            .reconcile(.defaultAccount(deepLinkBrokerEnabled: true), userDataPath: scene.defaultAccountPath)
+            .reconcile(
+                ProfileManagedConfig(disableDeepLinkRegistration: true),
+                userDataPath: scene.defaultAccountPath
+            )
 
         let diags = Doctor(
             realClaude: scene.real,
@@ -291,14 +295,13 @@ struct DoctorTests {
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: scene.noMDM,
                 defaultAccountUserDataPath: scene.defaultAccountPath,
-                deepLinkBrokerEnabled: false,
                 shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
         ).run()
         #expect(diags.contains {
-            $0.severity == .warning && $0.title.contains("deep-link handling not restored")
+            $0.severity == .warning && $0.title.contains("deep-link registration is suppressed")
         })
     }
 
@@ -323,10 +326,12 @@ struct DoctorTests {
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
         try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
+        // Seed the full broker-on clone overlay (runDoctor's config has the broker on by
+        // default, matching production), so the clone check is satisfied.
         try ManagedConfigWriter(
             fileManager: fm,
             managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
-        ).reconcile(.clone(), userDataPath: profileDir.path)
+        ).reconcile(.clone(deepLinkBrokerEnabled: true), userDataPath: profileDir.path)
 
         let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains { $0.title.contains("managed config not applied") })

@@ -123,7 +123,8 @@ final class AppModel: ObservableObject {
         installOverridePath = defaults.string(forKey: PreferenceKeys.installDirectoryOverride) ?? ""
         profilesOverridePath = defaults.string(forKey: PreferenceKeys.profilesDirectoryOverride) ?? ""
         badgeStyle = Self.loadBadgeStyle(from: defaults)
-        deepLinkBrokerEnabled = defaults.bool(forKey: PreferenceKeys.deepLinkBrokerEnabled)
+        // On by default: `object` distinguishes "never set" (→ true) from an explicit off.
+        deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
         // Wire the AppKit deep-link sink once the delegate is installed (next runloop):

@@ -30,11 +30,9 @@ struct ProfileManagedConfigTests {
     }
 
     @Test
-    func defaultAccountKeepsUpdaterDeepLinkFollowsBroker() {
-        // The default account stays the update leader; with the broker off it is the
-        // empty overlay (so the default account is left untouched).
-        #expect(ProfileManagedConfig.defaultAccount(deepLinkBrokerEnabled: false).flatEntries.isEmpty)
-        #expect(ProfileManagedConfig.defaultAccount(deepLinkBrokerEnabled: true).flatEntries
-            == ["disableDeepLinkRegistration": true])
+    func defaultAccountOverlayIsAlwaysEmpty() {
+        // The default account is never written to — its handler is held by the guard, so
+        // its overlay is always empty (nothing to orphan if Claude Manager is removed).
+        #expect(ProfileManagedConfig.defaultAccount.flatEntries.isEmpty)
     }
 }

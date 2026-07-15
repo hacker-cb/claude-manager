@@ -124,51 +124,44 @@ struct ProfileStoreManagedConfigTests {
     }
 
     @Test
-    func brokerOnWritesDeepLinkToCloneAndDefault() throws {
+    func brokerOnWritesDeepLinkToClonesButNeverTheDefault() throws {
         let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         _ = env.store.reconcileAllManagedConfigs()
 
-        // The clone gets both keys; the default gets only the deep-link key (stays the
-        // update leader).
+        // The clone gets the deep-link key (it's CM-managed)...
         #expect(probe(env).isSatisfied(
             .clone(deepLinkBrokerEnabled: true), userDataPath: profile.profilePath
         ))
-        #expect(probe(env).isSatisfied(
-            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
-        ))
+        // ...but the default account is never written — the guard holds its handler, so
+        // removing CM can't leave it broken.
+        #expect(!probe(env).overlayExists(userDataPath: env.defaultAccountUserDataPath))
         #expect(!probe(env).isSatisfied(
-            ProfileManagedConfig(disableAutoUpdates: true), userDataPath: env.defaultAccountUserDataPath
+            ProfileManagedConfig(disableDeepLinkRegistration: true),
+            userDataPath: env.defaultAccountUserDataPath
         ))
     }
 
     @Test
-    func togglingBrokerOffRestoresDeepLinks() throws {
-        // Enable the broker and write the default-account overlay...
+    func leftoverDefaultAccountSuppressionIsCleanedUp() throws {
+        // An earlier build (or a manual edit) left disableDeepLinkRegistration in the
+        // default account; reconcile must remove it (never leave the default suppressed).
         let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
         defer { try? fm.removeItem(at: env.root) }
-        _ = try env.store.reconcileDefaultAccountConfig()
+        try probe(env).reconcile(
+            ProfileManagedConfig(disableDeepLinkRegistration: true),
+            userDataPath: env.defaultAccountUserDataPath
+        )
         #expect(probe(env).isSatisfied(
-            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
+            ProfileManagedConfig(disableDeepLinkRegistration: true),
+            userDataPath: env.defaultAccountUserDataPath
         ))
 
-        // ...then a broker-off store over the same paths must remove the key (restore).
-        let off = ProfileStore(
-            realClaude: env.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: env.installDir,
-                defaultProfilesDirectory: env.profilesDir,
-                managedPreferencesURLs: env.managedPreferencesURLs,
-                defaultAccountUserDataPath: env.defaultAccountUserDataPath,
-                deepLinkBrokerEnabled: false
-            ),
-            runner: env.runner,
-            signalSender: { _, _ in 0 }
-        )
-        _ = try off.reconcileDefaultAccountConfig()
+        _ = try env.store.reconcileDefaultAccountConfig()
         #expect(!probe(env).isSatisfied(
-            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
+            ProfileManagedConfig(disableDeepLinkRegistration: true),
+            userDataPath: env.defaultAccountUserDataPath
         ))
     }
 }

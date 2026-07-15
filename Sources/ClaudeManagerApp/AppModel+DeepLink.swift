@@ -76,16 +76,14 @@ extension AppModel {
         }
     }
 
-    /// Reconcile (or restore) the default account's overlay independently of `realClaude`,
-    /// via a plain `ManagedConfigWriter` over the real default user-data path. Used only as
-    /// the fallback when the store is unavailable, so it never races the store's own
-    /// default-account write. Off-main (file IO); best-effort like the store path.
+    /// Clean any CM-written overlay off the default account (its handler is held by the
+    /// guard, never a written key), independently of `realClaude` via a plain
+    /// `ManagedConfigWriter`. Used only as the fallback when the store is unavailable, so
+    /// it never races the store's own default-account cleanup. Off-main (file IO).
     private func reconcileDefaultAccountOverlayDirectly() async {
-        let brokerEnabled = deepLinkBrokerEnabled
         await Task.detached {
-            let overlay = ProfileManagedConfig.defaultAccount(deepLinkBrokerEnabled: brokerEnabled)
             try? ManagedConfigWriter().reconcilePreservingUntouched(
-                overlay, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
+                .defaultAccount, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
             )
         }.value
     }

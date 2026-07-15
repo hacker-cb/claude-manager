@@ -169,11 +169,12 @@ public struct Doctor {
     /// the updater — a best-effort write that silently failed, or a profile predating
     /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
     private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        // Nothing to manage: no clones and the broker never touched the default account.
+        // Nothing on disk to manage: no clones and no default-account overlay to check.
+        // Keyed on actual state, not the broker flag — the default account is never
+        // written, so an on-by-default broker alone is not something to report.
         let defaultPath = configuration.defaultAccountUserDataPath
-        let brokerRelevant = configuration.deepLinkBrokerEnabled
-            || managedConfigWriter.overlayExists(userDataPath: defaultPath)
-        guard !discovered.isEmpty || brokerRelevant else { return [] }
+        guard !discovered.isEmpty
+            || managedConfigWriter.overlayExists(userDataPath: defaultPath) else { return [] }
 
         if managedConfigWriter.mdmPresent {
             let path = managedConfigWriter.presentManagedPreferencesURL?.path
@@ -208,29 +209,18 @@ public struct Doctor {
         }
     }
 
-    /// The default account's deep-link-broker overlay state — the only visibility into the
-    /// safety-critical write, since its reconcile is best-effort. Broker on → the default
-    /// must suppress deep-link registration; broker off → that suppression must have been
-    /// *restored* (key removed). A silent failure of either leaves the default account's
-    /// link handling wrong.
+    /// The default account should **never** carry a CM-written `disableDeepLinkRegistration`
+    /// — its `claude://` handler is held by the event-driven guard, not a written key.
+    /// Warn if the key is present anyway (left by an earlier build, or a manual edit),
+    /// since that silently drops the default account's non-auth deep links; a reconcile
+    /// (reopening Claude Manager) removes it.
     private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
-        if configuration.deepLinkBrokerEnabled {
-            guard !managedConfigWriter.isSatisfied(
-                .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: defaultPath
-            ) else { return [] }
-            return [Diagnostic(
-                severity: .warning,
-                title: "Default account: claude:// broker not applied — reopen Claude Manager",
-                detail: PathUtils.abbreviatingHome(defaultPath)
-            )]
-        }
-        // Broker off: warn only if the suppression key is still present (restore incomplete).
         guard managedConfigWriter.isSatisfied(
             ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
         ) else { return [] }
         return [Diagnostic(
             severity: .warning,
-            title: "Default account: deep-link handling not restored — toggle the broker off again",
+            title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
             detail: PathUtils.abbreviatingHome(defaultPath)
         )]
     }
