@@ -45,6 +45,17 @@ extension AppModel {
         presentNextDeepLinkIfIdle()
     }
 
+    /// Idempotent launch work: start monitoring, paint the list, and apply the deep-link
+    /// broker (grab the `claude://` handler). Runs once — from `init` on every launch
+    /// (window or not) and, as a fallback, from `RootView.task`.
+    func performLaunchTasks() async {
+        guard !didPerformLaunch else { return }
+        didPerformLaunch = true
+        startMonitoring()
+        await refresh()
+        await applyDeepLinkBroker()
+    }
+
     /// Serialize broker applies so a rapid toggle can't race two read-modify-write passes
     /// over the same default-account overlay files — each apply awaits the previous. Called
     /// from the `deepLinkBrokerEnabled` didSet.

@@ -57,8 +57,7 @@ final class AppModel: ObservableObject {
     /// Staged versions already surfaced as a notification, so it nags once per version.
     var notifiedStagedUpdate: Set<String> = []
 
-    /// Flip the apply-in-flight flag. A method because the property is `private(set)`; the
-    /// `AppModel+StagedUpdate` extension (another file) drives it around the apply.
+    /// Flip the apply-in-flight flag (`private(set)`, so the extension drives it via this).
     func setApplyingStagedUpdate(_ value: Bool) {
         isApplyingStagedUpdate = value
     }
@@ -127,14 +126,20 @@ final class AppModel: ObservableObject {
         deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
-        // Wire the AppKit deep-link sink once the delegate is installed (next runloop):
-        // a link can launch the app menu-bar-only, before any window/scene appears.
+        // On the next runloop (delegate installed), wire the AppKit deep-link sink and run
+        // the launch tasks — window-independently, since a login/menu-bar-only launch shows
+        // no window (so `RootView.task` may never run) yet must still grab the handler.
         DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             (NSApp.delegate as? AppDelegate)?.deepLinkHandler = { [weak self] urls in
                 self?.handleDeepLinks(urls)
             }
+            Task { @MainActor in await self.performLaunchTasks() }
         }
     }
+
+    /// One-shot guard for `performLaunchTasks` (owned by the `AppModel+DeepLink` extension).
+    var didPerformLaunch = false
 
     private static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
         guard let data = defaults.data(forKey: PreferenceKeys.badgeStyle),
