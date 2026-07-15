@@ -80,8 +80,9 @@ targets:
         SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
         SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
         # The deep-link broker: declaring the claude:// scheme makes Claude Manager an
-        # eligible default handler. It only *becomes* the default (and forwards links to
-        # a chosen account) when the user enables the broker in Settings — off by default.
+        # eligible default handler. The broker is ON by default, so CM becomes the default
+        # handler and forwards links to a chosen account; disabling it in Settings hands
+        # claude:// back to Claude.
         CFBundleURLTypes:
           - CFBundleURLName: io.github.hacker-cb.claude-manager.claude
             CFBundleURLSchemes: [claude]

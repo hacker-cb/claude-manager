@@ -13,6 +13,9 @@ struct DeepLinkURLTests {
         #expect(!DeepLink.isClaudeURL(""))
         // Bare opaque form (no authority) is not the deep-link shape → rejected.
         #expect(!DeepLink.isClaudeURL("claude:foo"))
+        // Hierarchical but authority-less forms are rejected too (documented contract).
+        #expect(!DeepLink.isClaudeURL("claude://"))
+        #expect(!DeepLink.isClaudeURL("claude:///path"))
     }
 }
 

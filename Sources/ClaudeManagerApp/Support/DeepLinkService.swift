@@ -48,12 +48,15 @@ final class DeepLinkService {
     /// Stop holding the handler and hand `claude://` back to the real Claude app, so the
     /// default account regains deep links. Call when the broker is disabled.
     ///
-    /// Only re-asserts Claude when we were actually holding — a broker-off launch that
-    /// never grabbed the handler must not touch system state. If Claude can't be located
-    /// right now, fall back to the well-known install path: restoring the handler is
-    /// safety-critical, so it must not silently no-op just because the locate failed.
+    /// Re-asserts Claude when we're actively holding *or* we currently own the handler: a
+    /// prior run may have left us as the `claude://` default (e.g. a crash before it
+    /// restored), and disabling the broker must still hand it back even if this launch
+    /// never started holding. When we neither hold nor own it, do nothing — a broker-off
+    /// launch must not touch system state it isn't responsible for. If Claude can't be
+    /// located, fall back to the well-known install path: restoring is safety-critical, so
+    /// it must not silently no-op just because the locate failed.
     func stopHoldingAndRestore(to realClaude: RealClaude?) {
-        guard handlerGuard != nil else { return }
+        guard handlerGuard != nil || currentClaudeHandlerBundleID() == ourBundleID else { return }
         handlerGuard?.stop()
         handlerGuard = nil
         // Resolve Claude as robustly as possible: the passed app, else a fresh

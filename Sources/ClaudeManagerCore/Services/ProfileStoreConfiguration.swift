@@ -13,8 +13,10 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     /// Injectable so tests stay hermetic (never read the host's real machine state).
     public var managedPreferencesURLs: [URL]
     /// The default account's Electron user-data dir (`~/Library/Application
-    /// Support/Claude`). Its `-3p` sibling is where the deep-link broker writes
-    /// `disableDeepLinkRegistration`. Injectable so tests never touch the real default.
+    /// Support/Claude`). Its `-3p` sibling is reconciled to stay overlay-free — the broker
+    /// holds `claude://` for the default via the guard, never a written key; the reconcile
+    /// only removes a `disableDeepLinkRegistration` an earlier build may have left.
+    /// Injectable so tests never touch the real default.
     public var defaultAccountUserDataPath: String
     /// Whether the `claude://` broker owns the handler (on by default). When on, Claude
     /// Manager becomes the default handler and clones suppress their own deep-link
