@@ -29,18 +29,15 @@ public extension ProfileStore {
         try managedConfigWriter.reconcile(cloneOverlay, userDataPath: profile.profilePath)
     }
 
-    /// Reconcile the **default account's** overlay: with the broker on, write
-    /// `disableDeepLinkRegistration` so it stops re-grabbing `claude://`; with the
-    /// broker off, remove that key (restore) — but never *materialize* an empty overlay
-    /// in the untouched default account, so a fresh install with the broker off leaves
-    /// it alone. Returns the outcome, or `nil` when nothing was written.
+    /// Keep the **default account** free of any CM-written overlay: its `claude://` handler
+    /// is held by the guard, never by a written key. This reconciles the *empty*
+    /// default-account overlay, which removes a `disableDeepLinkRegistration` left by an
+    /// earlier build without ever materializing a new file in the untouched account.
+    /// Returns the outcome, or `nil` when there was nothing to clean up.
     @discardableResult
     func reconcileDefaultAccountConfig() throws -> ManagedConfigWriter.Outcome? {
-        let overlay = ProfileManagedConfig.defaultAccount(
-            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
-        )
-        return try managedConfigWriter.reconcilePreservingUntouched(
-            overlay, userDataPath: configuration.defaultAccountUserDataPath
+        try managedConfigWriter.reconcilePreservingUntouched(
+            .defaultAccount, userDataPath: configuration.defaultAccountUserDataPath
         )
     }
 

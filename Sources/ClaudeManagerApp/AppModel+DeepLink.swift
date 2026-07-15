@@ -45,6 +45,17 @@ extension AppModel {
         presentNextDeepLinkIfIdle()
     }
 
+    /// Idempotent launch work: start monitoring, paint the list, and apply the deep-link
+    /// broker (grab the `claude://` handler). Runs once — from `init` on every launch
+    /// (window or not) and, as a fallback, from `RootView.task`.
+    func performLaunchTasks() async {
+        guard !didPerformLaunch else { return }
+        didPerformLaunch = true
+        startMonitoring()
+        await refresh()
+        await applyDeepLinkBroker()
+    }
+
     /// Serialize broker applies so a rapid toggle can't race two read-modify-write passes
     /// over the same default-account overlay files — each apply awaits the previous. Called
     /// from the `deepLinkBrokerEnabled` didSet.
@@ -76,16 +87,14 @@ extension AppModel {
         }
     }
 
-    /// Reconcile (or restore) the default account's overlay independently of `realClaude`,
-    /// via a plain `ManagedConfigWriter` over the real default user-data path. Used only as
-    /// the fallback when the store is unavailable, so it never races the store's own
-    /// default-account write. Off-main (file IO); best-effort like the store path.
+    /// Clean any CM-written overlay off the default account (its handler is held by the
+    /// guard, never a written key), independently of `realClaude` via a plain
+    /// `ManagedConfigWriter`. Used only as the fallback when the store is unavailable, so
+    /// it never races the store's own default-account cleanup. Off-main (file IO).
     private func reconcileDefaultAccountOverlayDirectly() async {
-        let brokerEnabled = deepLinkBrokerEnabled
         await Task.detached {
-            let overlay = ProfileManagedConfig.defaultAccount(deepLinkBrokerEnabled: brokerEnabled)
             try? ManagedConfigWriter().reconcilePreservingUntouched(
-                overlay, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
+                .defaultAccount, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
             )
         }.value
     }

@@ -41,13 +41,14 @@ public struct ProfileManagedConfig: Equatable, Sendable {
         ProfileManagedConfig(disableAutoUpdates: true, disableDeepLinkRegistration: deepLinkBrokerEnabled)
     }
 
-    /// The overlay the **default account** gets: it stays the update leader (auto-update
-    /// left on), and only suppresses deep-link registration when the broker owns the
-    /// handler — so with the broker off this is the *empty* overlay and the default
-    /// account is left untouched.
-    public static func defaultAccount(deepLinkBrokerEnabled: Bool) -> ProfileManagedConfig {
-        ProfileManagedConfig(disableAutoUpdates: false, disableDeepLinkRegistration: deepLinkBrokerEnabled)
-    }
+    /// The overlay the **default account** gets: **always empty**. The default is the
+    /// update leader (auto-update stays on), and Claude Manager holds `claude://` for it
+    /// via the event-driven handler guard — never by writing `disableDeepLinkRegistration`
+    /// into the default account. Writing that key would silently break the default's deep
+    /// links if Claude Manager were removed without disabling the broker first; the guard
+    /// instead simply stops holding the handler when CM isn't running. This empty overlay
+    /// still drives a reconcile that *removes* any such key left by an earlier build.
+    public static let defaultAccount = ProfileManagedConfig()
 
     /// Flat enterprise-policy keys this overlay currently wants *present* → their
     /// JSON values. A disabled/`false` flag is omitted, so the reconcile deletes a

@@ -16,9 +16,12 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     /// Support/Claude`). Its `-3p` sibling is where the deep-link broker writes
     /// `disableDeepLinkRegistration`. Injectable so tests never touch the real default.
     public var defaultAccountUserDataPath: String
-    /// Whether the `claude://` broker owns the handler. When on, clones *and* the
-    /// default account suppress their own deep-link registration; when off (the safe
-    /// default) the default account is left untouched and a prior overlay is restored.
+    /// Whether the `claude://` broker owns the handler (on by default). When on, Claude
+    /// Manager becomes the default handler and clones suppress their own deep-link
+    /// registration (they're CM-managed, so nothing is orphaned). The **default account**
+    /// is never written to — the handler is held for it by the event-driven guard, so
+    /// removing CM can't leave it broken. When off, the guard stops and Claude reclaims
+    /// the handler.
     public var deepLinkBrokerEnabled: Bool
     /// ShipIt state file that names a staged Claude update (`ShipItState.plist`).
     /// Injectable so tests never read the host's real ShipIt cache.
@@ -31,7 +34,7 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         managedPreferencesURLs: [URL] = CoreConstants.claudeManagedPreferencesPaths
             .map { URL(fileURLWithPath: $0) },
         defaultAccountUserDataPath: String = ProfileStoreConfiguration.systemDefaultAccountUserDataPath,
-        deepLinkBrokerEnabled: Bool = false,
+        deepLinkBrokerEnabled: Bool = true,
         shipItStatePath: String = CoreConstants.shipItStatePath(
             forBundleID: CoreConstants.realClaudeBundleIDs[0]
         )

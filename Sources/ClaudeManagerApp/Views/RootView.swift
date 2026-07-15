@@ -16,12 +16,9 @@ struct RootView: View {
         }
         .toolbar { toolbar }
         .task {
-            model.startMonitoring()
-            // Paint the list first; the overlay reconcile + broker apply are background
-            // housekeeping the UI doesn't depend on (accounts read the overlay at their
-            // own next launch).
-            await model.refresh()
-            await model.applyDeepLinkBroker()
+            // Idempotent — `init` also kicks this off window-independently (a login /
+            // menu-bar-only launch shows no window, so this `.task` may not run).
+            await model.performLaunchTasks()
         }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)
