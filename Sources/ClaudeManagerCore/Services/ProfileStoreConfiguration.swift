@@ -20,6 +20,9 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     /// default account suppress their own deep-link registration; when off (the safe
     /// default) the default account is left untouched and a prior overlay is restored.
     public var deepLinkBrokerEnabled: Bool
+    /// ShipIt state file that names a staged Claude update (`ShipItState.plist`).
+    /// Injectable so tests never read the host's real ShipIt cache.
+    public var shipItStatePath: String
 
     public init(
         installDirectory: URL,
@@ -28,7 +31,10 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         managedPreferencesURLs: [URL] = CoreConstants.claudeManagedPreferencesPaths
             .map { URL(fileURLWithPath: $0) },
         defaultAccountUserDataPath: String = ProfileStoreConfiguration.systemDefaultAccountUserDataPath,
-        deepLinkBrokerEnabled: Bool = false
+        deepLinkBrokerEnabled: Bool = false,
+        shipItStatePath: String = CoreConstants.shipItStatePath(
+            forBundleID: CoreConstants.realClaudeBundleIDs[0]
+        )
     ) {
         self.installDirectory = installDirectory
         self.defaultProfilesDirectory = defaultProfilesDirectory
@@ -36,6 +42,7 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         self.managedPreferencesURLs = managedPreferencesURLs
         self.defaultAccountUserDataPath = defaultAccountUserDataPath
         self.deepLinkBrokerEnabled = deepLinkBrokerEnabled
+        self.shipItStatePath = shipItStatePath
     }
 
     /// `~/Library/Application Support/Claude` — the real default account's user-data dir.
@@ -50,10 +57,15 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         realClaude: RealClaude,
         fileManager: FileManager = .default
     ) -> ProfileStoreConfiguration {
-        ProfileStoreConfiguration(
+        // Derive the ShipIt state path from the real app's actual bundle id, so a
+        // legacy-id install (`com.anthropic.claudeapp`) is detected too.
+        let bundleID = realClaude.bundleIdentifier(fileManager: fileManager)
+            ?? CoreConstants.realClaudeBundleIDs[0]
+        return ProfileStoreConfiguration(
             installDirectory: realClaude.installDirectory,
             defaultProfilesDirectory: MetadataStore.defaultDirectory(fileManager: fileManager)
-                .appendingPathComponent("Profiles", isDirectory: true)
+                .appendingPathComponent("Profiles", isDirectory: true),
+            shipItStatePath: CoreConstants.shipItStatePath(forBundleID: bundleID)
         )
     }
 }

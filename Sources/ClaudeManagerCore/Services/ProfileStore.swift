@@ -130,6 +130,17 @@ public struct ProfileStore {
         }
     }
 
+    /// The staged-but-unapplied Claude update (if any) — a ShipIt job armed with a newer
+    /// bundle that open instances are blocking. Surfaced by the app apart from the launcher
+    /// list (a global banner / menu item), and re-probed at apply time.
+    public func stagedUpdate() -> StagedUpdate? {
+        StagedUpdateProbe(
+            realClaude: realClaude,
+            shipItStatePath: configuration.shipItStatePath,
+            fileManager: fileManager
+        ).probe()
+    }
+
     /// The full defaults a new profile named `name` would get — drives the editor
     /// preview before anything is written.
     public func draft(

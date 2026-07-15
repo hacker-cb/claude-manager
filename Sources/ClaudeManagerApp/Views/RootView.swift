@@ -41,10 +41,30 @@ struct RootView: View {
             Text(error.message)
         }
         .safeAreaInset(edge: .top) {
-            if model.realClaude == nil {
-                missingClaudeBanner
+            VStack(spacing: 0) {
+                if model.realClaude == nil {
+                    missingClaudeBanner
+                }
+                if let staged = model.stagedUpdate {
+                    stagedUpdateBanner(staged)
+                }
             }
         }
+    }
+
+    private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
+            Text("Claude \(staged.stagedVersion) is downloaded but not applied — open accounts block it.")
+                .font(.callout)
+            Spacer()
+            Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all accounts") {
+                Task { await model.applyStagedUpdate() }
+            }
+            .disabled(model.isApplyingStagedUpdate)
+        }
+        .padding(8)
+        .background(.blue.opacity(0.12))
     }
 
     @ViewBuilder private var detail: some View {

@@ -21,6 +21,21 @@ struct MenuBarContent: View {
             } label: {
                 Label("Open Claude (default account)", systemImage: "person.crop.circle")
             }
+            .disabled(model.isApplyingStagedUpdate)
+
+            if let staged = model.stagedUpdate {
+                Button {
+                    Task { await model.applyStagedUpdate() }
+                } label: {
+                    Label(
+                        model.isApplyingStagedUpdate
+                            ? "Applying Claude \(staged.stagedVersion)…"
+                            : "Apply Claude \(staged.stagedVersion) to all accounts",
+                        systemImage: "arrow.down.circle.fill"
+                    )
+                }
+                .disabled(model.isApplyingStagedUpdate)
+            }
 
             if model.profiles.isEmpty {
                 Text("No launchers yet")
@@ -35,6 +50,7 @@ struct MenuBarContent: View {
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
                     }
+                    .disabled(model.isApplyingStagedUpdate)
                 }
 
                 let running = model.profiles.filter(\.isRunning)
@@ -60,6 +76,7 @@ struct MenuBarContent: View {
                             }
                         }
                     }
+                    .disabled(model.isApplyingStagedUpdate)
                 }
             }
         }

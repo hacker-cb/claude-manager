@@ -48,6 +48,12 @@ public struct RealClaude: Equatable, Sendable {
         Self.plist(at: infoPlistURL, fileManager: fileManager)?["CFBundleShortVersionString"] as? String
     }
 
+    /// `CFBundleIdentifier` of the real app, if readable — e.g. `com.anthropic.claudefordesktop`
+    /// or the legacy `com.anthropic.claudeapp`. Drives the per-bundle ShipIt state path.
+    public func bundleIdentifier(fileManager: FileManager = .default) -> String? {
+        Self.plist(at: infoPlistURL, fileManager: fileManager)?["CFBundleIdentifier"] as? String
+    }
+
     static func plist(at url: URL, fileManager: FileManager = .default) -> [String: Any]? {
         guard let data = fileManager.contents(atPath: url.path),
               let object = try? PropertyListSerialization.propertyList(from: data, format: nil),

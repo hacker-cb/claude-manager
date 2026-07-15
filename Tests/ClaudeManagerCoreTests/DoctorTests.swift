@@ -19,6 +19,12 @@ struct DoctorScene {
     var noMDM: [URL] {
         [root.appendingPathComponent("no-mdm.plist")]
     }
+
+    /// A temp ShipIt state path (absent by default) so staged-update checks never read
+    /// the host's real ShipIt cache; a test arms one by writing this file + a bundle.
+    var shipItStatePath: String {
+        root.appendingPathComponent("ShipItState.plist").path
+    }
 }
 
 func makeDoctorScene(_ fm: FileManager = .default) throws -> DoctorScene {
@@ -60,7 +66,8 @@ func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .d
         configuration: ProfileStoreConfiguration(
             installDirectory: scene.installDir,
             defaultProfilesDirectory: scene.profilesDir,
-            defaultAccountUserDataPath: scene.defaultAccountPath
+            defaultAccountUserDataPath: scene.defaultAccountPath,
+            shipItStatePath: scene.shipItStatePath
         ),
         processProbe: ProcessProbe(runner: runner),
         // Hermetic MDM state: point at an absent path so tests never depend on the
@@ -94,7 +101,8 @@ struct DoctorTests {
             realClaude: nil,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath
+                defaultAccountUserDataPath: scene.defaultAccountPath,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
@@ -111,7 +119,8 @@ struct DoctorTests {
             realClaude: broken,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath
+                defaultAccountUserDataPath: scene.defaultAccountPath,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
@@ -184,7 +193,8 @@ struct DoctorTests {
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath
+                defaultAccountUserDataPath: scene.defaultAccountPath,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
@@ -207,7 +217,8 @@ struct DoctorTests {
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath
+                defaultAccountUserDataPath: scene.defaultAccountPath,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
@@ -254,7 +265,8 @@ struct DoctorTests {
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: noMDM,
                 defaultAccountUserDataPath: scene.defaultAccountPath,
-                deepLinkBrokerEnabled: true
+                deepLinkBrokerEnabled: true,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
@@ -279,7 +291,8 @@ struct DoctorTests {
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: scene.noMDM,
                 defaultAccountUserDataPath: scene.defaultAccountPath,
-                deepLinkBrokerEnabled: false
+                deepLinkBrokerEnabled: false,
+                shipItStatePath: scene.shipItStatePath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
@@ -390,5 +403,44 @@ struct DoctorTests {
         }
         let diags = runDoctor(scene, runner: runner)
         #expect(!diags.contains { $0.title.contains("restart to update") })
+    }
+}
+
+/// Staged-update diagnostics, kept in their own suite so `DoctorTests` stays within the
+/// type-body-length budget. Reuses the top-level `DoctorScene` helpers.
+struct DoctorStagedUpdateTests {
+    let fm = FileManager.default
+
+    /// Arm a staged newer bundle (`stagedVersion`) referenced by the scene's ShipItState.
+    private func armStagedUpdate(_ scene: DoctorScene, stagedVersion: String) throws {
+        let bundle = scene.root.appendingPathComponent("update.X/Claude.app")
+        let contents = bundle.appendingPathComponent("Contents")
+        try fm.createDirectory(at: contents, withIntermediateDirectories: true)
+        try PropertyListSerialization
+            .data(fromPropertyList: ["CFBundleShortVersionString": stagedVersion], format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"))
+        try JSONSerialization
+            .data(withJSONObject: ["updateBundleURL": bundle.absoluteString])
+            .write(to: URL(fileURLWithPath: scene.shipItStatePath))
+    }
+
+    @Test
+    func warnsWhenUpdateStagedButNotApplied() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        try armStagedUpdate(scene, stagedVersion: "9.9.10") // installed is 9.9.9
+
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(diags.contains {
+            $0.severity == .warning && $0.title.contains("staged but not applied")
+        })
+    }
+
+    @Test
+    func noStagedUpdateNoWarning() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(!diags.contains { $0.title.contains("staged but not applied") })
     }
 }

@@ -29,7 +29,9 @@ struct LiveIntegrationTests {
             realClaude: real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: installDir,
-                defaultProfilesDirectory: root.appendingPathComponent("profiles")
+                defaultProfilesDirectory: root.appendingPathComponent("profiles"),
+                // Keep `list()`'s staged-update probe off the host's real ShipIt cache.
+                shipItStatePath: root.appendingPathComponent("ShipItState.plist").path
             ),
             runner: runner,
             signalSender: { _, _ in 0 }

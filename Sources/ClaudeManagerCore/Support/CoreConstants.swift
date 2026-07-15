@@ -94,6 +94,17 @@ public enum CoreConstants {
     /// The custom URL scheme Claude Desktop owns and the broker takes over.
     public static let claudeURLScheme = "claude"
 
+    /// ShipIt (Squirrel.Mac) per-bundle state file — `ShipItState.plist` under Caches,
+    /// which is **JSON** despite the extension. When a job is armed it names the staged
+    /// `updateBundleURL`; reading it is how we detect a staged-but-unapplied update that
+    /// running clones are blocking. Keyed by the app's bundle id.
+    public static func shipItStatePath(
+        forBundleID bundleID: String,
+        home: String = NSHomeDirectory()
+    ) -> String {
+        "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
+    }
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =
