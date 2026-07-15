@@ -17,7 +17,10 @@ struct RootView: View {
         .toolbar { toolbar }
         .task {
             model.startMonitoring()
+            // Paint the list first; overlay reconcile is background housekeeping the UI
+            // doesn't depend on (clones read it at their own next launch).
             await model.refresh()
+            await model.reconcileManagedConfigs()
         }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)

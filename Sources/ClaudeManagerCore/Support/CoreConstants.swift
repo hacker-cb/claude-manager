@@ -67,6 +67,24 @@ public enum CoreConstants {
     /// Icon resource inside the real app bundle used as the badge base.
     public static let defaultRealIconFileName = "electron.icns"
 
+    // MARK: - Claude managed-config overlay
+
+    /// MDM-delivered managed-preferences plists for the real Claude app — one per
+    /// bundle id we may wrap (current + legacy). When any exists, Claude's *managed*
+    /// config tier overrides the per-userData *local* tier we write into, so our
+    /// overlay would be ignored — the writer skips it and `Doctor` surfaces a note.
+    /// Derived from `realClaudeBundleIDs` so a legacy-id install is covered too.
+    public static let claudeManagedPreferencesPaths = realClaudeBundleIDs.map {
+        "/Library/Managed Preferences/\($0).plist"
+    }
+
+    /// Claude Desktop version whose managed-config resolver and key schema this
+    /// overlay was reverse-engineered and verified against. The flat enterprise-policy
+    /// keys (e.g. `disableAutoUpdates`) and the `<userData>-3p/configLibrary`
+    /// local-tier path are pinned to this build; a newer Claude may reshape them, so
+    /// all overlay parsing is defensive (nil/skip on failure) rather than trusted.
+    public static let claudeManagedConfigValidatedVersion = "1.20186.1"
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =

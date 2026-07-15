@@ -154,6 +154,14 @@ final class AppModel: ObservableObject {
         diagnostics = result
     }
 
+    /// Pre-seed every clone's managed-config overlay (disable its Squirrel updater) so
+    /// existing installs pick it up without an explicit rebuild. Best-effort and off
+    /// the main actor; a per-profile write failure is surfaced later by `Doctor`, not
+    /// as an alert here.
+    func reconcileManagedConfigs() async {
+        _ = await perform { store in store.reconcileAllManagedConfigs() }
+    }
+
     func refreshRunningInstances() async {
         guard let result = await perform({ store in store.runningInstances() }) else { return }
         runningInstances = result

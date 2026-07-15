@@ -197,6 +197,10 @@ struct StoreEnv {
     /// Per-test token so trashed launchers never collide across the shared `~/.Trash`
     /// (Swift Testing runs tests in parallel).
     let token: String
+    /// Absent MDM plist paths the store is wired to, so overlay reconcile is hermetic
+    /// (never reads the host's real managed-preferences). A probe asserting on the
+    /// store's on-disk overlay must use these same paths.
+    let managedPreferencesURLs: [URL]
 
     func name(_ base: String) -> String {
         base + token
@@ -223,11 +227,13 @@ func makeStoreEnv(
     try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
     let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
     let runner = RecordingCommandRunner.delegating(stub: stub)
+    let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
     let store = ProfileStore(
         realClaude: real,
         configuration: ProfileStoreConfiguration(
             installDirectory: installDir,
-            defaultProfilesDirectory: profilesDir
+            defaultProfilesDirectory: profilesDir,
+            managedPreferencesURLs: managedPreferencesURLs
         ),
         runner: runner,
         signalSender: { _, _ in 0 }
@@ -235,6 +241,7 @@ func makeStoreEnv(
     let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
     return StoreEnv(
         root: root, installDir: installDir, profilesDir: profilesDir,
-        real: real, runner: runner, store: store, token: token
+        real: real, runner: runner, store: store, token: token,
+        managedPreferencesURLs: managedPreferencesURLs
     )
 }

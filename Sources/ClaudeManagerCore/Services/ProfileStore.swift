@@ -1,38 +1,6 @@
 import Darwin
 import Foundation
 
-/// Where launchers are installed and where new profile data dirs default to.
-public struct ProfileStoreConfiguration: Sendable, Equatable {
-    /// Directory the launcher `.app` bundles live in (defaults to the real app's
-    /// own directory, so launchers sit next to Claude.app).
-    public var installDirectory: URL
-    /// Parent directory for auto-created `--user-data-dir`s.
-    public var defaultProfilesDirectory: URL
-    /// Global badge look applied to every launcher icon this store builds.
-    public var badgeStyle: BadgeStyle
-
-    public init(
-        installDirectory: URL,
-        defaultProfilesDirectory: URL,
-        badgeStyle: BadgeStyle = .default
-    ) {
-        self.installDirectory = installDirectory
-        self.defaultProfilesDirectory = defaultProfilesDirectory
-        self.badgeStyle = badgeStyle
-    }
-
-    public static func makeDefault(
-        realClaude: RealClaude,
-        fileManager: FileManager = .default
-    ) -> ProfileStoreConfiguration {
-        ProfileStoreConfiguration(
-            installDirectory: realClaude.installDirectory,
-            defaultProfilesDirectory: MetadataStore.defaultDirectory(fileManager: fileManager)
-                .appendingPathComponent("Profiles", isDirectory: true)
-        )
-    }
-}
-
 /// Parameters for creating a launcher; `nil` fields fall back to sensible defaults.
 public struct AddProfileRequest: Sendable {
     public var name: String
@@ -251,6 +219,10 @@ public struct ProfileStore {
         let restartDock = request.force || bundle.hasTrashedTwin(appURL: profile.appURL)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
 
+        // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
+        // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
+        try? reconcileManagedConfig(for: profile)
+
         return AddResult(profile: profile, reusedProfileData: reused)
     }
 
@@ -301,6 +273,8 @@ public struct ProfileStore {
         // path only needs a restart if a same-named twin is in the Trash.
         let restartDock = !renaming || bundle.hasTrashedTwin(appURL: updated.appURL)
         iconCache.refresh(appURL: updated.appURL, restartDock: restartDock)
+        // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
+        try? reconcileManagedConfig(for: updated)
         return updated
     }
 
@@ -316,15 +290,21 @@ public struct ProfileStore {
         }
         let trashed = try bundle.moveToTrash(appURL: profile.appURL)
         var purged = false
-        if purgeProfile, fileManager.fileExists(atPath: profile.profilePath) {
+        if purgeProfile {
             // Never delete data another launcher still points at (the launcher we
             // just trashed is already gone from the scan).
             let sharedByAnother = bundle
                 .scan(installDirectory: configuration.installDirectory)
                 .contains { $0.marker.profile == profile.profilePath }
             if !sharedByAnother {
-                try fileManager.removeItem(at: profile.profileURL)
-                purged = true
+                if fileManager.fileExists(atPath: profile.profilePath) {
+                    try fileManager.removeItem(at: profile.profileURL)
+                    purged = true
+                }
+                // Purge the `<profilePath>-3p` overlay sibling too — it is created
+                // independently of the data dir, so remove it even if the data dir is
+                // already gone (removeOverlay no-ops when absent).
+                try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
             }
         }
         return RemovalResult(
@@ -395,6 +375,9 @@ public struct ProfileStore {
         )
         try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+        // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
+        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
+        try? reconcileManagedConfig(for: profile)
     }
 
     /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
@@ -424,23 +407,12 @@ public struct ProfileStore {
             }
         }
         if !rebuilt.isEmpty { iconCache.restartDock() }
+        // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
+        // (harmless while live — read at next launch). No extra scan: reuse the sets.
+        for profile in skippedRunning {
+            try? reconcileManagedConfig(for: profile)
+        }
         return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
-    }
-
-    /// All running Claude instances across every bundle (for the status view).
-    public func runningInstances() -> [ClaudeInstance] {
-        processProbe.allClaudeMains()
-    }
-
-    /// Health check.
-    public func doctor() -> [Diagnostic] {
-        Doctor(
-            realClaude: realClaude,
-            configuration: configuration,
-            bundle: bundle,
-            processProbe: processProbe,
-            fileManager: fileManager
-        ).run()
     }
 
     // MARK: - Helpers
