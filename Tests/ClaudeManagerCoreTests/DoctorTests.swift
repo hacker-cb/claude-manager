@@ -179,7 +179,7 @@ struct DoctorTests {
         // An informational (.ok) note — not a standing warning — replaces the per-clone
         // warnings (the managed tier owns the policy).
         #expect(diags.contains { $0.severity == .ok && $0.title.contains("MDM-managed") })
-        #expect(!diags.contains { $0.title.contains("auto-update not disabled") })
+        #expect(!diags.contains { $0.title.contains("managed config not applied") })
         #expect(diags.allHealthy)
     }
 
@@ -221,6 +221,35 @@ struct DoctorTests {
     }
 
     @Test
+    func warnsWhenBrokerOnButCloneMissesDeepLinkKey() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        let noMDM = [scene.root.appendingPathComponent("no-mdm.plist")]
+        // Seed only the broker-OFF overlay (disableAutoUpdates), missing the deep-link key.
+        try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
+            .reconcile(.clone(deepLinkBrokerEnabled: false), userDataPath: profileDir.path)
+
+        // Doctor with the broker ON expects disableDeepLinkRegistration too → warns.
+        let diags = Doctor(
+            realClaude: scene.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir,
+                defaultProfilesDirectory: scene.profilesDir,
+                managedPreferencesURLs: noMDM,
+                deepLinkBrokerEnabled: true
+            ),
+            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
+            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
+        ).run()
+        #expect(diags.contains {
+            $0.severity == .warning && $0.title.contains("managed config not applied")
+        })
+    }
+
+    @Test
     func warnsWhenCloneOverlayMissing() throws {
         let scene = try makeScene()
         defer { try? fm.removeItem(at: scene.root) }
@@ -230,7 +259,7 @@ struct DoctorTests {
 
         let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(diags.contains {
-            $0.severity == .warning && $0.title.contains("auto-update not disabled")
+            $0.severity == .warning && $0.title.contains("managed config not applied")
         })
     }
 
@@ -247,7 +276,7 @@ struct DoctorTests {
         ).reconcile(.clone(), userDataPath: profileDir.path)
 
         let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
-        #expect(!diags.contains { $0.title.contains("auto-update not disabled") })
+        #expect(!diags.contains { $0.title.contains("managed config not applied") })
     }
 
     @Test

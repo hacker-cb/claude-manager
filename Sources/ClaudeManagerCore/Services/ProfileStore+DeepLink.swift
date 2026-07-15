@@ -13,7 +13,15 @@ public extension ProfileStore {
     ///
     /// Only a genuine `claude://` URL is forwarded — never an arbitrary argument — so a
     /// malformed or foreign-scheme string is rejected instead of being handed to the
-    /// launcher verbatim.
+    /// launcher verbatim. The run is a direct `execve` (no shell), and the URL is a single
+    /// argv element after `--args`, so it can't be re-split or reinterpreted as a flag.
+    ///
+    /// Residual exposure (accepted): a cold-start deep link reaches Claude via `argv`, so a
+    /// login callback's OAuth `code` is briefly on the command line of `open`, the launcher,
+    /// and Claude — readable by another *same-user* process. That is inherent to delivering
+    /// a URL to an argv-scanning Electron app at launch (the native Apple-event path can't
+    /// address a specific not-running launcher instance); it needs a pre-existing same-user
+    /// foothold to exploit.
     func openForwarding(_ profile: Profile, url: String) throws {
         guard DeepLink.isClaudeURL(url) else {
             throw ClaudeManagerError.invalidDeepLink(url)

@@ -83,7 +83,7 @@ final class AppModel: ObservableObject {
         didSet {
             defaults.set(deepLinkBrokerEnabled, forKey: PreferenceKeys.deepLinkBrokerEnabled)
             guard didFinishInit else { return }
-            Task { await applyDeepLinkBroker() }
+            scheduleBrokerApply()
         }
     }
 
@@ -91,6 +91,11 @@ final class AppModel: ObservableObject {
     /// so the `AppModel+DeepLink` extension can reach it.
     let deepLinkService = DeepLinkService()
     let deepLinkPresenter = DeepLinkPresenter()
+    /// Inbound `claude://` links awaiting a picker, shown one at a time.
+    var pendingDeepLinkQueue: [URL] = []
+    /// The in-flight broker apply, so a rapid toggle chains rather than races (see
+    /// `scheduleBrokerApply`). Non-private for the `AppModel+DeepLink` extension.
+    var brokerApplyTask: Task<Void, Never>?
     private var didFinishInit = false
 
     private let defaults: UserDefaults

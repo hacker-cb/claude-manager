@@ -25,26 +25,50 @@ enum DeepLinkTarget: Identifiable, Hashable {
 /// restoring the handler when the feature is toggled. The URL carries no account
 /// identity, so routing is a user choice — hence the picker.
 extension AppModel {
-    /// Handle inbound deep links from `AppDelegate`. Only `claude://` URLs are routed;
-    /// anything else is ignored. One link at a time gets a picker.
+    /// Handle inbound deep links from `AppDelegate`. Only `claude://` URLs are routed.
+    /// Every URL in the batch is queued (not just the first) and shown a picker one at a
+    /// time. If the broker is off but a link still reached us (we declare the scheme),
+    /// hand each straight to the default account rather than brokering a disabled feature.
     func handleDeepLinks(_ urls: [URL]) {
         let claudeURLs = urls.filter { DeepLink.isClaudeURL($0.absoluteString) }
-        guard let url = claudeURLs.first else { return }
-        Task { await presentPicker(for: url) }
+        guard !claudeURLs.isEmpty else { return }
+        guard deepLinkBrokerEnabled else {
+            Task {
+                for url in claudeURLs {
+                    await forwardToDefaultAccount(url: url)
+                }
+                await refresh()
+            }
+            return
+        }
+        pendingDeepLinkQueue.append(contentsOf: claudeURLs)
+        presentNextDeepLinkIfIdle()
     }
 
-    /// Pre-seed every clone's managed-config overlay (disable its Squirrel updater; with
-    /// the broker on, its deep-link registration too) so existing installs pick it up
-    /// without an explicit rebuild. Best-effort and off the main actor; a per-profile
-    /// write failure is surfaced later by `Doctor`, not as an alert here.
-    func reconcileManagedConfigs() async {
-        _ = await perform { store in store.reconcileAllManagedConfigs() }
+    /// Serialize broker applies so a rapid toggle can't race two read-modify-write passes
+    /// over the same default-account overlay files — each apply awaits the previous. Called
+    /// from the `deepLinkBrokerEnabled` didSet.
+    func scheduleBrokerApply() {
+        let previous = brokerApplyTask
+        brokerApplyTask = Task { @MainActor [weak self] in
+            await previous?.value
+            await self?.applyDeepLinkBroker()
+        }
     }
 
     /// Register / restore the handler and reconcile the overlays for the current broker
-    /// setting. Called from the Settings toggle and at startup.
+    /// setting. The single entry point, called from the Settings toggle and at startup.
+    ///
+    /// The store reconciles the clones *and* the default account when Claude is located.
+    /// When it isn't (`realClaude == nil`, so `perform` bails), the default account's
+    /// overlay — the safety-critical restore — is still reconciled directly, because it
+    /// needs only the default user-data path, not the real app. Exactly one path ever
+    /// writes the default account, so the two never race.
     func applyDeepLinkBroker() async {
-        _ = await perform { store in store.reconcileAllManagedConfigs() }
+        let storeReconciled = await perform { store in store.reconcileAllManagedConfigs() } != nil
+        if !storeReconciled {
+            await reconcileDefaultAccountOverlayDirectly()
+        }
         if deepLinkBrokerEnabled {
             deepLinkService.startHolding()
         } else {
@@ -52,20 +76,37 @@ extension AppModel {
         }
     }
 
-    /// Start holding the handler at launch if the broker is enabled (the overlays are
-    /// reconciled separately by `reconcileManagedConfigs`).
-    func startDeepLinkBrokerIfEnabled() {
-        guard deepLinkBrokerEnabled else { return }
-        deepLinkService.startHolding()
+    /// Reconcile (or restore) the default account's overlay independently of `realClaude`,
+    /// via a plain `ManagedConfigWriter` over the real default user-data path. Used only as
+    /// the fallback when the store is unavailable, so it never races the store's own
+    /// default-account write. Off-main (file IO); best-effort like the store path.
+    private func reconcileDefaultAccountOverlayDirectly() async {
+        let brokerEnabled = deepLinkBrokerEnabled
+        await Task.detached {
+            let overlay = ProfileManagedConfig.defaultAccount(deepLinkBrokerEnabled: brokerEnabled)
+            try? ManagedConfigWriter().reconcilePreservingUntouched(
+                overlay, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
+            )
+        }.value
     }
 
     // MARK: - Picker + forwarding
 
+    /// Present the next queued link's picker when nothing is already on screen.
+    private func presentNextDeepLinkIfIdle() {
+        guard !deepLinkPresenter.isPresenting, !pendingDeepLinkQueue.isEmpty else { return }
+        let url = pendingDeepLinkQueue.removeFirst()
+        Task { await presentPicker(for: url) }
+    }
+
     private func presentPicker(for url: URL) async {
-        if profiles.isEmpty { await refresh() }
+        // Always refresh so a since-deleted profile is never offered as a target.
+        await refresh()
         let targets: [DeepLinkTarget] = profiles.map { .profile($0.profile) } + [.defaultAccount]
         deepLinkPresenter.present(url: url, targets: targets) { [weak self] target in
             Task { await self?.forwardDeepLink(url, to: target) }
+        } onDismiss: { [weak self] in
+            self?.presentNextDeepLinkIfIdle()
         }
     }
 
@@ -91,7 +132,12 @@ extension AppModel {
 
     private func forwardToDefaultAccount(url: URL) async {
         // Same running-instance limitation, plus: a second `open -n` on a live default
-        // would corrupt its user-data-dir — so refuse when it's already running.
+        // would corrupt its user-data-dir. Share `openReal`'s serialization guard so a
+        // concurrent openReal or a second forward can't both pass the probe and launch a
+        // duplicate default (the probe → launch window is otherwise a TOCTOU race).
+        guard !isOpeningReal else { return }
+        isOpeningReal = true
+        defer { isOpeningReal = false }
         if let pid = await perform({ store in store.runningDefaultPID() }).flatMap(\.self) {
             currentError = AppError(message: deliveryToRunningMessage("the default account", pid: pid))
             return

@@ -207,6 +207,52 @@ struct ManagedConfigWriterTests {
         #expect(config["foreignKey"] as? String == "keep")
     }
 
+    // MARK: - Preserve-untouched (default account)
+
+    @Test
+    func reconcilePreservingUntouchedSkipsEmptyOverlayWhenAbsent() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let writer = ManagedConfigWriter(
+            fileManager: fm,
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
+        )
+        // Empty overlay + no existing tier → nothing written (account left untouched).
+        let outcome = try writer.reconcilePreservingUntouched(
+            ProfileManagedConfig(), userDataPath: scene.userDataPath
+        )
+        #expect(outcome == nil)
+        #expect(!fm.fileExists(atPath: scene.tier.path))
+    }
+
+    @Test
+    func reconcilePreservingUntouchedRestoresExistingOverlay() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let writer = ManagedConfigWriter(
+            fileManager: fm,
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
+        )
+        // A prior broker-on overlay exists...
+        _ = try writer.reconcile(
+            .defaultAccount(deepLinkBrokerEnabled: true),
+            userDataPath: scene.userDataPath
+        )
+        #expect(writer.isSatisfied(
+            .defaultAccount(deepLinkBrokerEnabled: true),
+            userDataPath: scene.userDataPath
+        ))
+        // ...an empty overlay still runs on it, dropping our keys (the restore).
+        let outcome = try writer.reconcilePreservingUntouched(
+            ProfileManagedConfig(), userDataPath: scene.userDataPath
+        )
+        #expect(outcome != nil)
+        #expect(!writer.isSatisfied(
+            .defaultAccount(deepLinkBrokerEnabled: true),
+            userDataPath: scene.userDataPath
+        ))
+    }
+
     // MARK: - MDM guard
 
     @Test

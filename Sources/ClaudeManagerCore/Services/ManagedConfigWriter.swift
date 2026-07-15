@@ -112,6 +112,22 @@ public struct ManagedConfigWriter {
         return .reconciled(configLibrary: configLibrary, appliedID: appliedID)
     }
 
+    /// Reconcile, but never *materialize* an overlay in an otherwise-untouched account:
+    /// when `config` sets nothing and no overlay exists yet, do nothing (return `nil`).
+    /// Used for the default account so a broker-off fresh install leaves it alone, while
+    /// a broker-off *restore* still runs on an existing overlay to drop our keys — and it
+    /// merges (never deletes the tier), preserving any keys Claude itself keeps there.
+    @discardableResult
+    public func reconcilePreservingUntouched(
+        _ config: ProfileManagedConfig,
+        userDataPath: String
+    ) throws -> Outcome? {
+        if config.flatEntries.isEmpty, !overlayExists(userDataPath: userDataPath) {
+            return nil
+        }
+        return try reconcile(config, userDataPath: userDataPath)
+    }
+
     /// Delete the entire `-3p` local tier for a user-data dir (used when the profile
     /// data is purged). Silent no-op when absent.
     public func removeOverlay(userDataPath: String) throws {

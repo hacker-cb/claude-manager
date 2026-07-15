@@ -36,15 +36,12 @@ public extension ProfileStore {
     /// it alone. Returns the outcome, or `nil` when nothing was written.
     @discardableResult
     func reconcileDefaultAccountConfig() throws -> ManagedConfigWriter.Outcome? {
-        let path = configuration.defaultAccountUserDataPath
         let overlay = ProfileManagedConfig.defaultAccount(
             deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
         )
-        // Broker off and no prior overlay → leave the default account entirely untouched.
-        if overlay.flatEntries.isEmpty, !managedConfigWriter.overlayExists(userDataPath: path) {
-            return nil
-        }
-        return try managedConfigWriter.reconcile(overlay, userDataPath: path)
+        return try managedConfigWriter.reconcilePreservingUntouched(
+            overlay, userDataPath: configuration.defaultAccountUserDataPath
+        )
     }
 
     /// Reconcile overlays for every managed profile *and* the default account. The

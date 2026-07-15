@@ -47,12 +47,18 @@ final class DeepLinkService {
 
     /// Stop holding the handler and hand `claude://` back to the real Claude app, so the
     /// default account regains deep links. Call when the broker is disabled.
+    ///
+    /// Only re-asserts Claude when we were actually holding — a broker-off launch that
+    /// never grabbed the handler must not touch system state. If Claude can't be located
+    /// right now, fall back to the well-known install path: restoring the handler is
+    /// safety-critical, so it must not silently no-op just because the locate failed.
     func stopHoldingAndRestore(to realClaude: RealClaude?) {
+        guard handlerGuard != nil else { return }
         handlerGuard?.stop()
         handlerGuard = nil
-        if let realClaude {
-            makeReassert(to: realClaude.appURL)()
-        }
+        let claudeURL = realClaude?.appURL ?? URL(fileURLWithPath: CoreConstants.defaultRealClaudePath)
+        guard FileManager.default.fileExists(atPath: claudeURL.path) else { return }
+        makeReassert(to: claudeURL)()
     }
 
     /// Re-assert now if we're meant to be holding the handler — e.g. from
@@ -121,12 +127,17 @@ private final class ObserverBox: @unchecked Sendable {
 private final class ObserverCancellation: @unchecked Sendable {
     private let context: UnsafeMutableRawPointer
     private let name: String
+    private var cancelled = false
     init(context: UnsafeMutableRawPointer, name: String) {
         self.context = context
         self.name = name
     }
 
+    /// Idempotent: the `release()` balances one `passRetained`, so a second call would
+    /// over-release (use-after-free). Guard it, even though the guard only calls once.
     func cancel() {
+        guard !cancelled else { return }
+        cancelled = true
         CFNotificationCenterRemoveObserver(
             CFNotificationCenterGetDarwinNotifyCenter(), context,
             CFNotificationName(name as CFString), nil

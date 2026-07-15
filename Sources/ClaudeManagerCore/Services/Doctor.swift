@@ -152,16 +152,21 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(path)
             )]
         }
+        // Validate against the overlay the current broker setting expects — with the
+        // broker on, a clone missing `disableDeepLinkRegistration` is a real miss too.
+        let expected = ProfileManagedConfig.clone(
+            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
+        )
         // Dedup by user-data-dir so two launchers sharing one profile warn once.
         var seen = Set<String>()
         return discovered.compactMap { launcher in
             let profilePath = launcher.marker.profile
             guard seen.insert(profilePath).inserted,
-                  !managedConfigWriter.isSatisfied(.clone(), userDataPath: profilePath)
+                  !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath)
             else { return nil }
             return Diagnostic(
                 severity: .warning,
-                title: "\(launcher.displayName): auto-update not disabled — reopen Claude Manager or rebuild",
+                title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
                 detail: PathUtils.abbreviatingHome(profilePath)
             )
         }
