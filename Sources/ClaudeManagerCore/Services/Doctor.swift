@@ -157,7 +157,7 @@ public struct Doctor {
         return discovered.compactMap { launcher in
             let profilePath = launcher.marker.profile
             guard seen.insert(profilePath).inserted,
-                  !managedConfigWriter.isSatisfied(.clone, userDataPath: profilePath)
+                  !managedConfigWriter.isSatisfied(.clone(), userDataPath: profilePath)
             else { return nil }
             return Diagnostic(
                 severity: .warning,

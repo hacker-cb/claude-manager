@@ -244,7 +244,7 @@ struct DoctorTests {
         try ManagedConfigWriter(
             fileManager: fm,
             managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
-        ).reconcile(.clone, userDataPath: profileDir.path)
+        ).reconcile(.clone(), userDataPath: profileDir.path)
 
         let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains { $0.title.contains("auto-update not disabled") })

@@ -69,6 +69,15 @@ public struct ManagedConfigWriter {
         managedPreferencesURLs.first { fileManager.fileExists(atPath: $0.path) }
     }
 
+    /// Whether a local tier already exists for this user-data dir (its `_meta.json` is
+    /// present). Lets a caller avoid *materializing* an empty overlay in an
+    /// otherwise-untouched account (e.g. the default account when the broker is off).
+    public func overlayExists(userDataPath: String) -> Bool {
+        let meta = Self.configLibraryURL(forUserDataPath: userDataPath)
+            .appendingPathComponent("_meta.json")
+        return fileManager.fileExists(atPath: meta.path)
+    }
+
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
     /// present with the wanted value. Used by `Doctor` to spot a clone whose overlay
     /// is missing (e.g. a best-effort write that silently failed). MDM presence counts

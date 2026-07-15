@@ -22,7 +22,7 @@ struct ProfileStoreManagedConfigTests {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
     }
 
     @Test
@@ -32,10 +32,10 @@ struct ProfileStoreManagedConfigTests {
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         // Simulate an install predating the overlay (or a wiped tier).
         try fm.removeItem(at: tier(profile))
-        #expect(!probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(!probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
 
         try env.store.rebuild(profile, restartDock: false)
-        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
     }
 
     @Test
@@ -49,8 +49,8 @@ struct ProfileStoreManagedConfigTests {
 
         let failed = env.store.reconcileAllManagedConfigs()
         #expect(failed.isEmpty)
-        #expect(probe(env).isSatisfied(.clone, userDataPath: work.profilePath))
-        #expect(probe(env).isSatisfied(.clone, userDataPath: home.profilePath))
+        #expect(probe(env).isSatisfied(.clone(), userDataPath: work.profilePath))
+        #expect(probe(env).isSatisfied(.clone(), userDataPath: home.profilePath))
     }
 
     @Test
@@ -64,7 +64,7 @@ struct ProfileStoreManagedConfigTests {
         try fm.removeItem(at: tier(profile))
 
         _ = try env.store.update(original: profile, to: profile)
-        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
     }
 
     @Test
@@ -109,5 +109,66 @@ struct ProfileStoreManagedConfigTests {
         _ = try env.store.remove(profile, purgeProfile: false)
         // Data kept → overlay kept (a re-add reuses both).
         #expect(fm.fileExists(atPath: tier(profile).path))
+    }
+
+    // MARK: - Deep-link broker
+
+    @Test
+    func brokerOffLeavesDefaultAccountUntouched() throws {
+        let env = try makeStoreEnv(deepLinkBrokerEnabled: false)
+        defer { try? fm.removeItem(at: env.root) }
+        _ = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        _ = env.store.reconcileAllManagedConfigs()
+        // With the broker off, the default account gets no overlay at all.
+        #expect(!probe(env).overlayExists(userDataPath: env.defaultAccountUserDataPath))
+    }
+
+    @Test
+    func brokerOnWritesDeepLinkToCloneAndDefault() throws {
+        let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
+        defer { try? fm.removeItem(at: env.root) }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        _ = env.store.reconcileAllManagedConfigs()
+
+        // The clone gets both keys; the default gets only the deep-link key (stays the
+        // update leader).
+        #expect(probe(env).isSatisfied(
+            .clone(deepLinkBrokerEnabled: true), userDataPath: profile.profilePath
+        ))
+        #expect(probe(env).isSatisfied(
+            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
+        ))
+        #expect(!probe(env).isSatisfied(
+            ProfileManagedConfig(disableAutoUpdates: true), userDataPath: env.defaultAccountUserDataPath
+        ))
+    }
+
+    @Test
+    func togglingBrokerOffRestoresDeepLinks() throws {
+        // Enable the broker and write the default-account overlay...
+        let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
+        defer { try? fm.removeItem(at: env.root) }
+        _ = try env.store.reconcileDefaultAccountConfig()
+        #expect(probe(env).isSatisfied(
+            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
+        ))
+
+        // ...then a broker-off store over the same paths must remove the key (restore).
+        let off = ProfileStore(
+            realClaude: env.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: env.installDir,
+                defaultProfilesDirectory: env.profilesDir,
+                managedPreferencesURLs: env.managedPreferencesURLs,
+                defaultAccountUserDataPath: env.defaultAccountUserDataPath,
+                deepLinkBrokerEnabled: false
+            ),
+            runner: env.runner,
+            signalSender: { _, _ in 0 }
+        )
+        _ = try off.reconcileDefaultAccountConfig()
+        #expect(!probe(env).isSatisfied(
+            .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: env.defaultAccountUserDataPath
+        ))
     }
 }

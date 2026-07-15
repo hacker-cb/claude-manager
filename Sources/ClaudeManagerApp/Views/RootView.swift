@@ -21,6 +21,7 @@ struct RootView: View {
             // doesn't depend on (clones read it at their own next launch).
             await model.refresh()
             await model.reconcileManagedConfigs()
+            model.startDeepLinkBrokerIfEnabled()
         }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)
