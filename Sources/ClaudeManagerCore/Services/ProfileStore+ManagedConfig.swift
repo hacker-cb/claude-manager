@@ -2,8 +2,9 @@ import Foundation
 
 /// Reconciling the Claude-Manager-owned managed-config overlay — the local config tier
 /// (`<userData>-3p/configLibrary`) that disables a clone's Squirrel updater and, when
-/// the `claude://` broker is on, suppresses deep-link registration on the clones *and*
-/// the default account. Split out of `ProfileStore` to keep that file within budget.
+/// the `claude://` broker is on, suppresses deep-link registration on the **clones**. The
+/// default account is kept overlay-free — its handler is held by the guard, never a
+/// written key. Split out of `ProfileStore` to keep that file within budget.
 public extension ProfileStore {
     /// Writer for the CM-owned per-profile overlay. A plain value over this store's
     /// `fileManager`; MDM detection uses the configuration's managed-preferences paths.

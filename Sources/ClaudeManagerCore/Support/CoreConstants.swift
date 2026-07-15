@@ -87,8 +87,8 @@ public enum CoreConstants {
 
     /// The default account's Electron user-data dir name under Application Support
     /// (`~/Library/Application Support/Claude`). Its managed-config local tier is the
-    /// `-3p` sibling — where the deep-link broker writes `disableDeepLinkRegistration`
-    /// so the default account stops re-grabbing the `claude://` handler.
+    /// `-3p` sibling; the broker keeps it overlay-free (the default's `claude://` handler
+    /// is held by the guard, not a written key) and only cleans up a stray key there.
     public static let defaultAccountUserDataDirName = "Claude"
 
     /// The custom URL scheme Claude Desktop owns and the broker takes over.
