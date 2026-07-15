@@ -6,9 +6,12 @@ import Foundation
 /// updates. Split out of `ProfileStore` to keep that file within its length budget.
 public extension ProfileStore {
     /// Writer for the CM-owned per-profile overlay. A plain value over this store's
-    /// `fileManager`; MDM detection uses the system managed-preferences path.
+    /// `fileManager`; MDM detection uses the configuration's managed-preferences paths.
     var managedConfigWriter: ManagedConfigWriter {
-        ManagedConfigWriter(fileManager: fileManager)
+        ManagedConfigWriter(
+            fileManager: fileManager,
+            managedPreferencesURLs: configuration.managedPreferencesURLs
+        )
     }
 
     /// Reconcile the overlay for one clone: pre-seed its local config tier so Claude's
@@ -24,7 +27,8 @@ public extension ProfileStore {
     /// Reconcile overlays for every managed profile, running or not — the overlay is
     /// read only at launch, so writing under a live clone is harmless and takes effect
     /// on its next start. A single profile's failure never aborts the batch; the
-    /// profiles whose overlay could not be written are returned for surfacing.
+    /// profiles whose overlay could not be written are returned (`Doctor` independently
+    /// surfaces a missing overlay, so callers may discard this).
     @discardableResult
     func reconcileAllManagedConfigs() -> [Profile] {
         var failed: [Profile] = []

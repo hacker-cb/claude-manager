@@ -7,12 +7,14 @@ import Testing
 struct ProfileStoreManagedConfigTests {
     let fm = FileManager.default
 
-    /// A writer over the same defaults `ProfileStore` uses (real-system MDM path,
-    /// absent on CI), for asserting the store's on-disk result.
-    let probe = ManagedConfigWriter()
-
     func tier(_ profile: Profile) -> URL {
         ManagedConfigWriter.localTierURL(forUserDataPath: profile.profilePath)
+    }
+
+    /// A probe wired to the same hermetic (absent) MDM paths the store uses, so it reads
+    /// the on-disk overlay rather than short-circuiting on the host's real MDM state.
+    func probe(_ env: StoreEnv) -> ManagedConfigWriter {
+        ManagedConfigWriter(managedPreferencesURLs: env.managedPreferencesURLs)
     }
 
     @Test
@@ -20,7 +22,7 @@ struct ProfileStoreManagedConfigTests {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        #expect(probe.isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
     }
 
     @Test
@@ -30,10 +32,10 @@ struct ProfileStoreManagedConfigTests {
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         // Simulate an install predating the overlay (or a wiped tier).
         try fm.removeItem(at: tier(profile))
-        #expect(!probe.isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(!probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
 
         try env.store.rebuild(profile, restartDock: false)
-        #expect(probe.isSatisfied(.clone, userDataPath: profile.profilePath))
+        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
     }
 
     @Test
@@ -47,8 +49,38 @@ struct ProfileStoreManagedConfigTests {
 
         let failed = env.store.reconcileAllManagedConfigs()
         #expect(failed.isEmpty)
-        #expect(probe.isSatisfied(.clone, userDataPath: work.profilePath))
-        #expect(probe.isSatisfied(.clone, userDataPath: home.profilePath))
+        #expect(probe(env).isSatisfied(.clone, userDataPath: work.profilePath))
+        #expect(probe(env).isSatisfied(.clone, userDataPath: home.profilePath))
+    }
+
+    @Test
+    func updateReSeedsOverlay() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        try fm.removeItem(at: tier(profile))
+
+        _ = try env.store.update(original: profile, to: profile)
+        #expect(probe(env).isSatisfied(.clone, userDataPath: profile.profilePath))
+    }
+
+    @Test
+    func removePurgeCleansOverlayWhenDataDirAlreadyGone() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        // Data dir deleted out of band, but the `-3p` overlay tier lingers.
+        try fm.removeItem(at: profile.profileURL)
+        #expect(fm.fileExists(atPath: tier(profile).path))
+
+        _ = try env.store.remove(profile, purgeProfile: true)
+        #expect(!fm.fileExists(atPath: tier(profile).path))
     }
 
     @Test

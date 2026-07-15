@@ -20,17 +20,18 @@ public struct ManagedConfigWriter {
     }
 
     let fileManager: FileManager
-    /// System MDM managed-preferences plist for Claude. When present the local tier is
-    /// overridden; injectable so tests can point it at a temp path (and so the check
-    /// never depends on the developer's real machine state in unit tests).
-    let managedPreferencesURL: URL
+    /// System MDM managed-preferences plists for Claude (one per wrapped bundle id).
+    /// When any exists the local tier is overridden; injectable so tests can point at
+    /// temp paths (and so the check never depends on the developer's real machine state).
+    let managedPreferencesURLs: [URL]
 
     public init(
         fileManager: FileManager = .default,
-        managedPreferencesURL: URL = URL(fileURLWithPath: CoreConstants.claudeManagedPreferencesPath)
+        managedPreferencesURLs: [URL] = CoreConstants.claudeManagedPreferencesPaths
+            .map { URL(fileURLWithPath: $0) }
     ) {
         self.fileManager = fileManager
-        self.managedPreferencesURL = managedPreferencesURL
+        self.managedPreferencesURLs = managedPreferencesURLs
     }
 
     // MARK: - Path derivation
@@ -57,9 +58,15 @@ public struct ManagedConfigWriter {
 
     // MARK: - Queries
 
-    /// True when Claude is MDM-managed, so a local overlay would be ignored.
+    /// True when Claude is MDM-managed (any known bundle-id plist present), so a local
+    /// overlay would be ignored.
     public var mdmPresent: Bool {
-        fileManager.fileExists(atPath: managedPreferencesURL.path)
+        presentManagedPreferencesURL != nil
+    }
+
+    /// The MDM plist that made `mdmPresent` true, for surfacing in a `Doctor` note.
+    public var presentManagedPreferencesURL: URL? {
+        managedPreferencesURLs.first { fileManager.fileExists(atPath: $0.path) }
     }
 
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
@@ -107,16 +114,18 @@ public struct ManagedConfigWriter {
 
     // MARK: - Internals
 
-    /// Reuse a valid existing `appliedId`, else mint a v4 UUID and persist it. A
-    /// malformed or absent `_meta.json` is (re)written — its only key meaningful to us
-    /// is `appliedId`.
+    /// Reuse a valid existing `appliedId`, else mint a v4 UUID and persist it. Merges
+    /// into `_meta.json` rather than clobbering it, so any sibling keys Claude may keep
+    /// there survive a re-mint (same merge-preserve discipline as the config file).
     private func resolveAppliedID(in configLibrary: URL) throws -> String {
         let metaURL = configLibrary.appendingPathComponent("_meta.json")
         if let existing = readAppliedID(at: metaURL) {
             return existing
         }
         let minted = UUID().uuidString.lowercased()
-        try writeJSONIfChanged(["appliedId": minted], to: metaURL)
+        var meta = readJSONObject(at: metaURL) ?? [:]
+        meta["appliedId"] = minted
+        try writeJSONIfChanged(meta, to: metaURL)
         return minted
     }
 

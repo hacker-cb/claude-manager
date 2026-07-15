@@ -9,14 +9,16 @@ public extension ProfileStore {
         processProbe.allClaudeMains()
     }
 
-    /// Health check.
+    /// Health check. Shares this store's `managedConfigWriter` so the overlay/MDM
+    /// checks honor the same (injectable) managed-preferences paths.
     func doctor() -> [Diagnostic] {
         Doctor(
             realClaude: realClaude,
             configuration: configuration,
             bundle: bundle,
             processProbe: processProbe,
-            fileManager: fileManager
+            fileManager: fileManager,
+            managedConfigWriter: managedConfigWriter
         ).run()
     }
 }

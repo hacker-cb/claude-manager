@@ -69,12 +69,14 @@ public enum CoreConstants {
 
     // MARK: - Claude managed-config overlay
 
-    /// MDM-delivered managed-preferences plist for the real Claude app. When this
-    /// file exists, Claude's *managed* config tier overrides the per-userData *local*
-    /// tier we write into, so our overlay would be ignored — the writer skips it and
-    /// `Doctor` surfaces a note. Keyed by Claude's current bundle id.
-    public static let claudeManagedPreferencesPath =
-        "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist"
+    /// MDM-delivered managed-preferences plists for the real Claude app — one per
+    /// bundle id we may wrap (current + legacy). When any exists, Claude's *managed*
+    /// config tier overrides the per-userData *local* tier we write into, so our
+    /// overlay would be ignored — the writer skips it and `Doctor` surfaces a note.
+    /// Derived from `realClaudeBundleIDs` so a legacy-id install is covered too.
+    public static let claudeManagedPreferencesPaths = realClaudeBundleIDs.map {
+        "/Library/Managed Preferences/\($0).plist"
+    }
 
     /// Claude Desktop version whose managed-config resolver and key schema this
     /// overlay was reverse-engineered and verified against. The flat enterprise-policy

@@ -51,7 +51,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
 
         let outcome = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
@@ -95,7 +95,7 @@ struct ManagedConfigWriterTests {
 
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
         let outcome = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
 
@@ -116,7 +116,7 @@ struct ManagedConfigWriterTests {
 
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
         let outcome = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
 
@@ -130,6 +130,28 @@ struct ManagedConfigWriterTests {
         #expect(meta["appliedId"] as? String == appliedID)
     }
 
+    @Test
+    func mintingPreservesMetaSiblingKeys() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        try fm.createDirectory(at: scene.configLibrary, withIntermediateDirectories: true)
+        // Invalid appliedId forces a re-mint; a sibling key must survive it.
+        try Data("{\"appliedId\":\"not-valid\",\"schemaVersion\":7}".utf8).write(to: scene.metaURL)
+
+        let writer = ManagedConfigWriter(
+            fileManager: fm,
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
+        )
+        guard case let .reconciled(_, appliedID) = try writer.reconcile(
+            .clone, userDataPath: scene.userDataPath
+        ) else { Issue.record("expected reconciled"); return }
+
+        let meta = try readJSON(scene.metaURL)
+        #expect(ManagedConfigWriter.isValidAppliedID(appliedID))
+        #expect(meta["appliedId"] as? String == appliedID)
+        #expect(meta["schemaVersion"] as? Int == 7)
+    }
+
     // MARK: - Idempotence
 
     @Test
@@ -138,7 +160,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
 
         let first = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
@@ -162,7 +184,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
 
         guard case let .reconciled(_, appliedID) = try writer.reconcile(
@@ -193,13 +215,26 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let mdm = scene.root.appendingPathComponent("managed.plist")
         try Data("<plist/>".utf8).write(to: mdm)
-        let writer = ManagedConfigWriter(fileManager: fm, managedPreferencesURL: mdm)
+        let writer = ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
 
         #expect(writer.mdmPresent)
         let outcome = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
         #expect(outcome == .skippedMDMPresent)
         // The local tier is never created.
         #expect(!fm.fileExists(atPath: scene.tier.path))
+    }
+
+    @Test
+    func mdmDetectedForAnyBundleIDPlist() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let absent = scene.root.appendingPathComponent("current.plist")
+        let legacy = scene.root.appendingPathComponent("legacy.plist")
+        try Data("<plist/>".utf8).write(to: legacy)
+        // Current-id plist absent, legacy-id plist present → still detected as MDM.
+        let writer = ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [absent, legacy])
+        #expect(writer.mdmPresent)
+        #expect(writer.presentManagedPreferencesURL == legacy)
     }
 
     // MARK: - Removal
@@ -210,7 +245,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
         _ = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
         #expect(fm.fileExists(atPath: scene.tier.path))
@@ -229,7 +264,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let writer = ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("absent.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
         #expect(!writer.isSatisfied(.clone, userDataPath: scene.userDataPath))
         _ = try writer.reconcile(.clone, userDataPath: scene.userDataPath)
@@ -242,7 +277,7 @@ struct ManagedConfigWriterTests {
         defer { try? fm.removeItem(at: scene.root) }
         let mdm = scene.root.appendingPathComponent("managed.plist")
         try Data("<plist/>".utf8).write(to: mdm)
-        let writer = ManagedConfigWriter(fileManager: fm, managedPreferencesURL: mdm)
+        let writer = ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         // MDM is expected to own the policy, so a missing local overlay still "satisfies".
         #expect(writer.isSatisfied(.clone, userDataPath: scene.userDataPath))
     }

@@ -57,7 +57,7 @@ struct DoctorTests {
             // host machine's real managed-preferences.
             managedConfigWriter: ManagedConfigWriter(
                 fileManager: fm,
-                managedPreferencesURL: scene.root.appendingPathComponent("no-mdm.plist")
+                managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
             )
         ).run()
     }
@@ -174,11 +174,50 @@ struct DoctorTests {
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
-            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURL: mdm)
+            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         ).run()
-        // The MDM note replaces the per-clone warnings (managed tier owns the policy).
-        #expect(diags.contains { $0.severity == .warning && $0.title.contains("MDM-managed") })
+        // An informational (.ok) note — not a standing warning — replaces the per-clone
+        // warnings (the managed tier owns the policy).
+        #expect(diags.contains { $0.severity == .ok && $0.title.contains("MDM-managed") })
         #expect(!diags.contains { $0.title.contains("auto-update not disabled") })
+        #expect(diags.allHealthy)
+    }
+
+    @Test
+    func noMDMNoteWhenNoLaunchers() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let mdm = scene.root.appendingPathComponent("com.anthropic.claudefordesktop.plist")
+        try Data("<plist/>".utf8).write(to: mdm)
+        // MDM present but zero clones → no note at all (nothing to override).
+        let diags = Doctor(
+            realClaude: scene.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+            ),
+            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
+            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
+        ).run()
+        #expect(!diags.contains { $0.title.contains("MDM-managed") })
+    }
+
+    @Test
+    func overlayTierNotFlaggedAsOrphanProfile() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        // The clone's `-3p` overlay tier lives in the profiles dir — not a user profile.
+        try fm.createDirectory(
+            at: scene.profilesDir.appendingPathComponent("work-3p"),
+            withIntermediateDirectories: true
+        )
+
+        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(!diags.contains {
+            $0.title == "Orphan profile (no launcher)" && ($0.detail?.contains("work-3p") ?? false)
+        })
     }
 
     @Test
@@ -204,7 +243,7 @@ struct DoctorTests {
         try buildLauncher(in: scene, name: "work", profileDir: profileDir)
         try ManagedConfigWriter(
             fileManager: fm,
-            managedPreferencesURL: scene.root.appendingPathComponent("no-mdm.plist")
+            managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
         ).reconcile(.clone, userDataPath: profileDir.path)
 
         let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))

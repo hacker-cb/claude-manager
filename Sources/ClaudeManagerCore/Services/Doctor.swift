@@ -134,27 +134,35 @@ public struct Doctor {
         }
     }
 
-    /// Managed-config overlay health for the cloned launchers. When Claude is
-    /// MDM-managed the local overlay is overridden, so we surface one informational
-    /// warning and skip the per-clone checks (the managed tier is expected to own the
-    /// policy). Otherwise, warn per clone whose overlay does not disable the updater —
-    /// a best-effort write that silently failed, or a profile predating this feature
-    /// that has not yet been reconciled (reopening Claude Manager fixes it).
+    /// Managed-config overlay health for the cloned launchers. With no launchers there
+    /// is nothing to report. When Claude is MDM-managed the local overlay is overridden,
+    /// so we surface one *informational* (`.ok`) note — not a standing warning the user
+    /// can't clear — and skip the per-clone checks (the managed tier owns the policy).
+    /// Otherwise, warn once per distinct user-data-dir whose overlay does not disable
+    /// the updater — a best-effort write that silently failed, or a profile predating
+    /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
     private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        guard !discovered.isEmpty else { return [] }
         if managedConfigWriter.mdmPresent {
+            let path = managedConfigWriter.presentManagedPreferencesURL?.path
+                ?? CoreConstants.claudeManagedPreferencesPaths.first ?? ""
             return [Diagnostic(
-                severity: .warning,
-                title: "Claude is MDM-managed — per-profile auto-update control is overridden",
-                detail: PathUtils.abbreviatingHome(CoreConstants.claudeManagedPreferencesPath)
+                severity: .ok,
+                title: "Claude is MDM-managed — per-profile auto-update control is handled by managed preferences",
+                detail: PathUtils.abbreviatingHome(path)
             )]
         }
+        // Dedup by user-data-dir so two launchers sharing one profile warn once.
+        var seen = Set<String>()
         return discovered.compactMap { launcher in
-            guard !managedConfigWriter.isSatisfied(.clone, userDataPath: launcher.marker.profile)
+            let profilePath = launcher.marker.profile
+            guard seen.insert(profilePath).inserted,
+                  !managedConfigWriter.isSatisfied(.clone, userDataPath: profilePath)
             else { return nil }
             return Diagnostic(
                 severity: .warning,
                 title: "\(launcher.displayName): auto-update not disabled — reopen Claude Manager or rebuild",
-                detail: PathUtils.abbreviatingHome(launcher.marker.profile)
+                detail: PathUtils.abbreviatingHome(profilePath)
             )
         }
     }
@@ -175,6 +183,8 @@ public struct Doctor {
                 return isDirectory.boolValue
                     && !known.contains(entry.path)
                     && !entry.lastPathComponent.hasPrefix("_")
+                    // `<name>-3p` is our managed-config tier, not a user profile dir.
+                    && !entry.lastPathComponent.hasSuffix("-3p")
             }
             .map {
                 Diagnostic(
