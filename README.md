@@ -14,8 +14,11 @@ profile's badge, status, and paths](docs/images/main-window.png)
 Each profile is a ~1 MB launcher `.app` with its own badge icon and name. Opening
 it starts the *real* `/Applications/Claude.app` with a dedicated `--user-data-dir`,
 so every profile is a fully isolated account. Because the real, Apple-notarized app
-runs untouched, notifications, Keychain access, virtualization features, and
-Claude's own auto-updates all keep working.
+runs untouched, notifications, Keychain access, and virtualization features all keep
+working. Claude's own updates keep working too — Claude Manager just **coordinates**
+them across accounts (so they don't each download the same build) and can **route
+`claude://` login links** to the account you choose. See [Deep links](#deep-links)
+and [Updates](#updates).
 
 ## Requirements
 
@@ -65,6 +68,14 @@ The first time you re-activate an *already-running* profile, macOS asks for
 - **Rebuild launchers** — regenerate a launcher (script + Info.plist + badge icon)
   after a Claude update or a launcher-format change; **Apply to all launchers** (in
   Settings → Badge style) rebuilds every profile at once.
+- **Route `claude://` links to a chosen account** — login / SSO / magic-link
+  callbacks would otherwise always land in whichever Claude the system opens. Claude
+  Manager intercepts them and shows a picker so you send each to the right profile.
+  On by default; toggle in **Settings → Deep links**. See [Deep links](#deep-links).
+- **Coordinated Claude updates** — clones don't each run Claude's own updater (only
+  your default account checks and downloads), and when a downloaded update is blocked
+  by open windows, **Apply to all accounts** quits them, lets it install, and reopens
+  the set. See [Updates](#updates).
 - **Auto-update** — the app updates itself via Sparkle (each update EdDSA-signed),
   separate from Claude Desktop's own updates.
 
@@ -82,7 +93,10 @@ The first time you re-activate an *already-running* profile, macOS asks for
 Claude Manager **never reads your credentials or session tokens** — those live
 inside each profile's user-data-dir and are managed by Claude itself. It keeps no
 account data of its own; its only network activity is Sparkle **checking for and
-downloading app updates** (see [Updates](#updates)).
+downloading app updates** (see [Updates](#updates)). Routing a `claude://` link
+registers Claude Manager as the local handler for that scheme (a LaunchServices
+setting — no network) and hands the link to the account you pick; it doesn't store or
+inspect the link's contents.
 
 ## Permissions
 
@@ -91,11 +105,41 @@ downloading app updates** (see [Updates](#updates)).
 - **Notifications, Keychain, virtualization** keep working normally, because the
   untouched, signed Claude binary is what actually runs.
 
+## Deep links
+
+Claude Desktop registers itself as the handler for `claude://` links — the URLs an
+in-browser **login, SSO, or "magic link"** sends back to the app. With several
+accounts that's a problem: the link lands in whichever Claude the system opens, not
+the account you're actually signing into.
+
+**Claude Manager becomes the `claude://` handler (on by default)**, and when a link
+arrives it shows a small picker so you choose which account receives it — any profile
+or your default account.
+
+- **Your default account is never modified.** Claude Manager only *holds* the handler
+  while it's running. Quitting it lets a link relaunch it to route; turning the broker
+  off — or removing Claude Manager — hands `claude://` straight back to Claude.
+- Toggle it under **Settings → Deep links** ("Route claude:// links to a chosen
+  account").
+- **Delivery needs the target account closed.** macOS only hands a deep link to Claude
+  at launch, so quit the target account first, then reopen the link. (A forwarded
+  *non-login* link to a clone may be dropped while the broker is on — login callbacks,
+  the case that matters, are delivered.)
+
 ## Updates
 
-Claude Manager updates itself via [Sparkle](https://sparkle-project.org) — each
+**Claude Manager** updates itself via [Sparkle](https://sparkle-project.org) — each
 update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
 separate from Claude Desktop's own update mechanism.
+
+**Claude Desktop** updates are coordinated so multiple accounts don't fight over them.
+Every profile runs the one on-disk `Claude.app`, so a clone updating itself would just
+re-download the build your default account already fetches. So Claude Manager **turns
+off the self-updater in clones** and lets your **default account** be the one that
+checks, downloads, and stages Claude updates. When an update is downloaded but can't
+install because accounts are open, a banner (and a notification) offer **Apply to all
+accounts** — it quits every account, lets the update install, and reopens the ones
+that were running.
 
 ## Troubleshooting
 
@@ -105,6 +149,7 @@ Open the **Doctor** tab for a health report. Common findings:
 |---|---|
 | _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
 | _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
+| _Claude vX staged but not applied — N running instances block the swap_ | Click **Apply to all accounts** (the window banner or the menu-bar item) to quit, install, and reopen everything at once. |
 | _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
 | _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |
@@ -131,6 +176,10 @@ Open the **Doctor** tab for a health report. Common findings:
   clones are running. Removing the raw `Claude.app` from your Dock avoids the trap
   entirely.
 
+- **A `claude://` link can't reach an account that's already open.** macOS delivers
+  deep links only at launch, so if the account you want is running, quit it first and
+  reopen the link. See [Deep links](#deep-links).
+
 ## Uninstall
 
 1. In Claude Manager, **remove each profile** (this deletes its launcher app).
@@ -139,7 +188,8 @@ Open the **Doctor** tab for a health report. Common findings:
    and app metadata).
 
 Removing Claude Manager never touches your real `/Applications/Claude.app` or its
-data.
+data. If it was handling `claude://` links, the scheme falls back to Claude on its own
+once Claude Manager is gone (no cleanup needed).
 
 ## Contributing &amp; development
 
