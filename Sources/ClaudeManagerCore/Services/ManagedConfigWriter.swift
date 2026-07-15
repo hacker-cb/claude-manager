@@ -137,7 +137,11 @@ public struct ManagedConfigWriter {
         return applied
     }
 
-    /// Claude's `appliedId` shape: 36 chars each in `[a-f0-9-]` (a lowercased UUID).
+    /// Matches Claude's own `appliedId` gate — its regex `/^[a-f0-9-]{36}$/` — rather
+    /// than a strict UUID: 36 chars each in `[a-f0-9-]` (the shape a lowercased v4 UUID
+    /// takes, but hyphen positions are deliberately *not* enforced, to mirror Claude
+    /// exactly and reuse whatever id it already applied). Its only use is as a safe path
+    /// component, and `[a-f0-9-]{36}` cannot contain `/`, `.`, or `..`.
     static func isValidAppliedID(_ id: String) -> Bool {
         id.count == 36 && id.unicodeScalars.allSatisfy { scalar in
             (scalar >= "a" && scalar <= "f") || (scalar >= "0" && scalar <= "9") || scalar == "-"
