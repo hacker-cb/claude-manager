@@ -21,6 +21,7 @@ struct MenuBarContent: View {
             } label: {
                 Label("Open Claude (default account)", systemImage: "person.crop.circle")
             }
+            .disabled(model.isApplyingStagedUpdate)
 
             if let staged = model.stagedUpdate {
                 Button {
@@ -49,6 +50,7 @@ struct MenuBarContent: View {
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
                     }
+                    .disabled(model.isApplyingStagedUpdate)
                 }
 
                 let running = model.profiles.filter(\.isRunning)
@@ -74,6 +76,7 @@ struct MenuBarContent: View {
                             }
                         }
                     }
+                    .disabled(model.isApplyingStagedUpdate)
                 }
             }
         }

@@ -115,7 +115,6 @@ public struct ProfileStore {
     public func list(measuringSizes: Bool = false) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
         let runningVersions = processProbe.runningVersionsByProfilePath()
-        let staged = stagedUpdate() // global; computed once, stamped on every row
         return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
             let profile = discovered.profile
             let pid = runningPID(for: profile)
@@ -126,15 +125,14 @@ public struct ProfileStore {
                 diskSize: size,
                 wrapperVersion: discovered.wrapperVersion,
                 runningClaudeVersion: pid != nil ? runningVersions[profile.profilePath] : nil,
-                availableClaudeVersion: availableVersion,
-                stagedUpdate: staged
+                availableClaudeVersion: availableVersion
             )
         }
     }
 
     /// The staged-but-unapplied Claude update (if any) — a ShipIt job armed with a newer
-    /// bundle that open instances are blocking. Public so the app can surface it apart
-    /// from the launcher list (e.g. a global banner) and re-probe at apply time.
+    /// bundle that open instances are blocking. Surfaced by the app apart from the launcher
+    /// list (a global banner / menu item), and re-probed at apply time.
     public func stagedUpdate() -> StagedUpdate? {
         StagedUpdateProbe(
             realClaude: realClaude,

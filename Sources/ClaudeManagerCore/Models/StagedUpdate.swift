@@ -23,9 +23,11 @@ public struct StagedUpdate: Equatable, Sendable {
     }
 
     /// Whether the staged bundle is a genuine upgrade over what's installed — so a
-    /// re-stage of the current version, or an older rollback bundle, is not offered.
+    /// re-stage of the current version, or an older rollback bundle, is not offered. When
+    /// the installed version can't be read we can't confirm an upgrade, so we don't offer
+    /// one (avoids a spurious apply against an unknown baseline).
     public var isUpgrade: Bool {
-        guard let installedVersion else { return true }
+        guard let installedVersion else { return false }
         return VersionOrder.isNewer(stagedVersion, than: installedVersion)
     }
 }

@@ -11,21 +11,23 @@ extension AppModel {
         guard !isApplyingStagedUpdate, stagedUpdate != nil else { return }
         setApplyingStagedUpdate(true)
         let result = await perform { store in await store.applyStagedUpdateToAll() }
-        setApplyingStagedUpdate(false)
         if let result, let notice = Self.notice(for: result) {
             currentError = AppError(message: notice)
         }
+        // Refresh (which recomputes `stagedUpdate`) *before* clearing the flag, so the
+        // Apply affordance isn't re-enabled for a frame with a now-stale staged update.
         await refresh()
+        setApplyingStagedUpdate(false)
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked
     /// update nags a single time. Clears the record when the staged update resolves, so a
     /// later staged version notifies afresh.
     func notifyStagedUpdateIfNeeded() async {
-        guard let staged = stagedUpdate else {
-            notifiedStagedUpdate.removeAll()
-            return
-        }
+        // Key on the version string, so each staged version nags once. Don't clear the
+        // record when the probe is nil: a transient nil (mid-swap, or a slow read) would
+        // otherwise re-arm a duplicate notification for the same version.
+        guard let staged = stagedUpdate else { return }
         guard !notifiedStagedUpdate.contains(staged.stagedVersion) else { return }
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus

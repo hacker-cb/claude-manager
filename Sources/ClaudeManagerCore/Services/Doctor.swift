@@ -57,7 +57,11 @@ public struct Doctor {
                   fileManager: fileManager
               ).probe()
         else { return [] }
-        let running = processProbe.allClaudeMains().count
+        // Count only real-Claude instances (default + clones exec the real binary) — not
+        // Claude Manager's own process, whose path also contains "Claude".
+        let running = processProbe.allClaudeMains()
+            .count(where: { $0.executablePath == realClaude.binaryURL.path })
+
         let blockers = running == 0
             ? ""
             : " — \(running) running instance\(running == 1 ? "" : "s") block the swap"

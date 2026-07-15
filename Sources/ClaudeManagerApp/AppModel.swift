@@ -375,10 +375,14 @@ final class AppModel: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                guard let self else { return }
                 // A cheap guaranteed re-check on top of the Darwin observer: if Claude
                 // grabbed the handler while we were away, take it back.
-                self?.deepLinkService.reassertIfNeeded()
-                await self?.reconcile()
+                self.deepLinkService.reassertIfNeeded()
+                // Skip the rescan while a staged-update apply is in flight (same reason as
+                // the poll loop: avoid a relaunch during ShipIt's swap window).
+                guard !self.isApplyingStagedUpdate else { return }
+                await self.reconcile()
             }
         }
         monitorTask = Task { @MainActor [weak self] in

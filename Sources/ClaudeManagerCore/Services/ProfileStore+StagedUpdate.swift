@@ -8,20 +8,21 @@ import Foundation
 public extension ProfileStore {
     struct ApplyStagedUpdateResult: Sendable, Equatable {
         public enum Outcome: Sendable, Equatable {
-            /// The on-disk version flipped to the staged version.
+            /// The on-disk version reached the staged version.
             case applied(from: String?, to: String)
             /// No armed staged update at apply time (re-read of `ShipItState`).
             case noStagedUpdate
             /// Some instance would not exit gracefully — aborted before the swap window so
             /// nothing is force-killed mid-conversation.
             case instancesStillRunning([String])
-            /// All instances quit, but the version never flipped in the timeout — likely no
-            /// armed ShipIt job (needs a "Restart to update" to arm), not a hang.
+            /// All instances quit, but the version never reached the staged one in the
+            /// timeout — likely no armed ShipIt job (needs a "Restart to update" to arm),
+            /// not a hang.
             case swapTimedOut(stagedVersion: String)
         }
 
         public let outcome: Outcome
-        /// Accounts reopened afterward (profile display names, plus "default").
+        /// Accounts reopened afterward (profile display names, plus "default account").
         public let relaunched: [String]
     }
 
@@ -29,7 +30,8 @@ public extension ProfileStore {
     /// bundle, then relaunch the previously-open set. Graceful stops only (never SIGKILL an
     /// active conversation); if an instance won't exit, aborts **before** the swap window
     /// and reports it rather than risking a Gate 2 failure or data loss. Relaunches the
-    /// snapshot even when the swap times out, so the user is never left with nothing open.
+    /// accounts that did stop even on abort or swap-timeout, so the user is never left with
+    /// fewer accounts than they had.
     func applyStagedUpdateToAll(
         stopPollInterval: TimeInterval = 0.5,
         stopMaxPolls: Int = 20,
@@ -53,15 +55,17 @@ public extension ProfileStore {
             _ = await stopDefault(pollInterval: stopPollInterval, maxPolls: stopMaxPolls)
         }
 
-        // ShipIt gates on *zero* instances — if any won't exit, abort before the swap and
-        // reopen nothing was closed for (the stops already returned; nothing to restore).
-        guard await pollUntilNoInstances(interval: stopPollInterval, maxPolls: stopMaxPolls) else {
-            let stillUp = runningInstances().map { $0.profilePath ?? "default account" }
-            return ApplyStagedUpdateResult(outcome: .instancesStillRunning(stillUp), relaunched: [])
+        // ShipIt gates on *zero* real-Claude instances — if any won't exit, abort before
+        // the swap but still reopen whatever *did* stop, so the working set isn't lost.
+        guard await pollUntilNoBlockingInstances(interval: stopPollInterval, maxPolls: stopMaxPolls) else {
+            let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
+            return ApplyStagedUpdateResult(
+                outcome: .instancesStillRunning(blockingInstanceNames()), relaunched: relaunched
+            )
         }
 
-        // ShipIt now swaps the app; wait for the on-disk version to flip.
-        let swapped = await pollUntilVersion(
+        // ShipIt now swaps the app; wait for the on-disk version to reach the staged one.
+        let swapped = await pollUntilVersionAtLeast(
             staged.stagedVersion, interval: swapPollInterval, maxPolls: swapMaxPolls
         )
 
@@ -76,24 +80,56 @@ public extension ProfileStore {
 
     // MARK: - Internals
 
+    /// Live instances of the **real Claude binary** — the default and clones both `exec` it,
+    /// so this is exactly the set ShipIt gates on. Excludes Claude Manager's own process,
+    /// whose path also contains "Claude" and would otherwise keep the gate from ever passing.
+    private func blockingInstances() -> [ClaudeInstance] {
+        runningInstances().filter { $0.executablePath == realClaude.binaryURL.path }
+    }
+
+    /// Friendly names for the still-running blockers — a clone's display name where the
+    /// user-data dir maps to a known launcher, else "default account".
+    private func blockingInstanceNames() -> [String] {
+        let displayByProfile = Dictionary(
+            list().map { ($0.profile.profilePath, $0.profile.displayName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return blockingInstances().map { instance in
+            guard let profile = instance.profilePath else { return "default account" }
+            return displayByProfile[profile] ?? profile
+        }
+    }
+
+    /// Relaunch each snapshotted account that is currently **down**. Skipping still-running
+    /// accounts matters most for the default: reopening a live default with `open -n` would
+    /// spawn a duplicate on its user-data-dir and corrupt LevelDB (ShipIt itself often
+    /// relaunches the default after a swap). A still-running clone is a launcher-dedup no-op
+    /// but is skipped for symmetry.
     private func relaunchSnapshot(clones: [Profile], defaultWasRunning: Bool) -> [String] {
         var relaunched: [String] = []
-        if defaultWasRunning, (try? openReal()) != nil {
+        if defaultWasRunning, runningDefaultPID() == nil, (try? openReal()) != nil {
             relaunched.append("default account")
         }
-        for clone in clones where (try? open(clone)) != nil {
+        for clone in clones where runningPID(for: clone) == nil && (try? open(clone)) != nil {
             relaunched.append(clone.displayName)
         }
         return relaunched
     }
 
-    private func pollUntilNoInstances(interval: TimeInterval, maxPolls: Int) async -> Bool {
-        await poll(interval: interval, maxPolls: maxPolls) { runningInstances().isEmpty }
+    private func pollUntilNoBlockingInstances(interval: TimeInterval, maxPolls: Int) async -> Bool {
+        await poll(interval: interval, maxPolls: maxPolls) { blockingInstances().isEmpty }
     }
 
-    private func pollUntilVersion(_ version: String, interval: TimeInterval, maxPolls: Int) async -> Bool {
+    /// True once the on-disk version is at least `version` — a `>=` order (not exact
+    /// equality), so a swap that lands `version` or anything newer counts as applied.
+    private func pollUntilVersionAtLeast(
+        _ version: String,
+        interval: TimeInterval,
+        maxPolls: Int
+    ) async -> Bool {
         await poll(interval: interval, maxPolls: maxPolls) {
-            realClaude.version(fileManager: fileManager) == version
+            guard let current = realClaude.version(fileManager: fileManager) else { return false }
+            return current == version || VersionOrder.isNewer(current, than: version)
         }
     }
 

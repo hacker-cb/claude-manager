@@ -72,8 +72,95 @@ struct ProfileStoreStagedUpdateTests {
             Issue.record("expected instancesStillRunning, got \(result.outcome)")
             return
         }
-        #expect(!names.isEmpty)
-        #expect(result.relaunched.isEmpty) // aborted before the swap → nothing relaunched
+        #expect(names == ["default account"])
+        // The still-running default can't be reopened (would duplicate it); nothing else
+        // was closed, so nothing is relaunched.
+        #expect(result.relaunched.isEmpty)
+    }
+
+    @Test
+    func claudeManagerOwnProcessDoesNotBlockTheGate() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+        // ps reports Claude Manager's OWN main (path contains "Claude" but isn't the real
+        // binary) — it must NOT count toward the swap gate, or the apply could never pass.
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                return CommandOutput(
+                    exitCode: 0,
+                    standardOutput: "  777     1 /Applications/Claude Manager.app/Contents/MacOS/Claude Manager\n",
+                    standardError: ""
+                )
+            }
+            return idleStub(executable, args)
+        }
+        let infoURL = env.real.infoPlistURL
+        let flip = Task.detached {
+            try? await Task.sleep(for: .milliseconds(20))
+            var info = RealClaude.plist(at: infoURL) ?? [:]
+            info["CFBundleShortVersionString"] = "9.9.10"
+            try? PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: infoURL)
+        }
+        let result = await env.store.applyStagedUpdateToAll(swapPollInterval: 0.02, swapMaxPolls: 300)
+        _ = await flip.value
+        #expect(result.outcome == .applied(from: "9.9.9", to: "9.9.10"))
+    }
+
+    @Test
+    func abortRelaunchesAccountsThatAlreadyStopped() async throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let clone = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        // The clone is running at snapshot then quits (pgrep: running once, gone after);
+        // a real-binary default keeps blocking the swap (ps always reports it).
+        let realBin = env.real.binaryURL.path
+        let counter = CallCounter()
+        env.runner.setHandler { executable, _ in
+            if executable == CoreConstants.pgrepPath {
+                let running = counter.next() == 1
+                return CommandOutput(
+                    exitCode: running ? 0 : 1, standardOutput: running ? "555\n" : "", standardError: ""
+                )
+            }
+            if executable == CoreConstants.psPath {
+                return CommandOutput(
+                    exitCode: 0,
+                    standardOutput: "  501     1 \(realBin)\n",
+                    standardError: ""
+                )
+            }
+            return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+        }
+
+        let result = await env.store.applyStagedUpdateToAll(stopPollInterval: 0.01, stopMaxPolls: 3)
+        guard case .instancesStillRunning = result.outcome else {
+            Issue.record("expected instancesStillRunning, got \(result.outcome)")
+            return
+        }
+        // The clone that quit is reopened; the still-running default is not.
+        #expect(result.relaunched == [clone.displayName])
+    }
+
+    @Test
+    func makeDefaultDerivesShipItPathFromBundleID() throws {
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let real = try Fixture.makeFakeRealApp(in: root, iconData: Data("x".utf8))
+        // A legacy-bundle-id install writes ShipIt state under the legacy id.
+        var info = RealClaude.plist(at: real.infoPlistURL) ?? [:]
+        info["CFBundleIdentifier"] = "com.anthropic.claudeapp"
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: real.infoPlistURL)
+
+        let config = ProfileStoreConfiguration.makeDefault(realClaude: real)
+        #expect(config.shipItStatePath.contains("com.anthropic.claudeapp.ShipIt"))
     }
 
     @Test

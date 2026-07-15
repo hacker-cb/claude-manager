@@ -57,10 +57,15 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         realClaude: RealClaude,
         fileManager: FileManager = .default
     ) -> ProfileStoreConfiguration {
-        ProfileStoreConfiguration(
+        // Derive the ShipIt state path from the real app's actual bundle id, so a
+        // legacy-id install (`com.anthropic.claudeapp`) is detected too.
+        let bundleID = realClaude.bundleIdentifier(fileManager: fileManager)
+            ?? CoreConstants.realClaudeBundleIDs[0]
+        return ProfileStoreConfiguration(
             installDirectory: realClaude.installDirectory,
             defaultProfilesDirectory: MetadataStore.defaultDirectory(fileManager: fileManager)
-                .appendingPathComponent("Profiles", isDirectory: true)
+                .appendingPathComponent("Profiles", isDirectory: true),
+            shipItStatePath: CoreConstants.shipItStatePath(forBundleID: bundleID)
         )
     }
 }
