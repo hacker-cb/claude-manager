@@ -22,6 +22,20 @@ struct MenuBarContent: View {
                 Label("Open Claude (default account)", systemImage: "person.crop.circle")
             }
 
+            if let staged = model.stagedUpdate {
+                Button {
+                    Task { await model.applyStagedUpdate() }
+                } label: {
+                    Label(
+                        model.isApplyingStagedUpdate
+                            ? "Applying Claude \(staged.stagedVersion)…"
+                            : "Apply Claude \(staged.stagedVersion) to all accounts",
+                        systemImage: "arrow.down.circle.fill"
+                    )
+                }
+                .disabled(model.isApplyingStagedUpdate)
+            }
+
             if model.profiles.isEmpty {
                 Text("No launchers yet")
             } else {

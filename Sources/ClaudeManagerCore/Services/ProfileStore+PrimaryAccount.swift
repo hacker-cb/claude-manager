@@ -32,4 +32,28 @@ public extension ProfileStore {
             .first { $0.profilePath == nil && $0.executablePath == realClaude.binaryURL.path }?
             .pid
     }
+
+    /// Gracefully stop the running default-account instance, polling until it exits or the
+    /// timeout elapses. Mirrors `stop(_:force:)` but keys on the default's pid, since the
+    /// untouched default account has no `Profile`. Graceful (SIGTERM) by default — never
+    /// SIGKILL a possibly-active conversation unless `force` is explicitly requested.
+    @discardableResult
+    func stopDefault(
+        force: Bool = false,
+        pollInterval: TimeInterval = 0.5,
+        maxPolls: Int = 20
+    ) async -> StopOutcome {
+        guard let pid = runningDefaultPID() else { return .notRunning }
+        _ = signalSender(pid, force ? SIGKILL : SIGTERM)
+        let interval = Duration.seconds(max(0, pollInterval))
+        for _ in 0 ..< maxPolls {
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                break // cancelled — stop waiting
+            }
+            if runningDefaultPID() == nil { return .stopped }
+        }
+        return .stillRunning(pid: pid)
+    }
 }

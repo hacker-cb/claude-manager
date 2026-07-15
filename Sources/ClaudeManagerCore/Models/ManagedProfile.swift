@@ -13,6 +13,10 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     public let runningClaudeVersion: String?
     /// Current on-disk version of the real Claude.app this launcher wraps.
     public let availableClaudeVersion: String?
+    /// A Claude update ShipIt has staged but not applied (any open instance blocks the
+    /// swap). Global — the same value is stamped on every profile — but carried here so
+    /// the list/menu/badge can surface it per row.
+    public let stagedUpdate: StagedUpdate?
 
     public init(
         profile: Profile,
@@ -20,7 +24,8 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         diskSize: String? = nil,
         wrapperVersion: Int = CoreConstants.currentWrapperVersion,
         runningClaudeVersion: String? = nil,
-        availableClaudeVersion: String? = nil
+        availableClaudeVersion: String? = nil,
+        stagedUpdate: StagedUpdate? = nil
     ) {
         self.profile = profile
         self.pid = pid
@@ -28,6 +33,7 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         self.wrapperVersion = wrapperVersion
         self.runningClaudeVersion = runningClaudeVersion
         self.availableClaudeVersion = availableClaudeVersion
+        self.stagedUpdate = stagedUpdate
     }
 
     public var id: String {
@@ -42,6 +48,13 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     /// the app surfaces this as "update available" and offers a rebuild.
     public var needsRebuild: Bool {
         CoreConstants.wrapperVersionIsStale(wrapperVersion)
+    }
+
+    /// True when a Claude update is staged but not yet applied (running instances block
+    /// ShipIt's swap). Distinct from `claudeUpdateAvailable`: the swap never happened, so
+    /// installed still equals running — the fix is "apply to all accounts", not a restart.
+    public var stagedUpdatePending: Bool {
+        stagedUpdate != nil
     }
 
     /// True when the live instance is running an older Claude than the one now on

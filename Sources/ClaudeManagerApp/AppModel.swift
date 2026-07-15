@@ -48,10 +48,27 @@ final class AppModel: ObservableObject {
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
+    /// A Claude update ShipIt has staged but not applied (any open account blocks the
+    /// swap) — drives the "Apply update to all accounts" affordance. `nil` when none.
+    @Published private(set) var stagedUpdate: StagedUpdate?
+    /// True while a coordinated apply is in flight, so the UI disables re-triggering and
+    /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
+    @Published private(set) var isApplyingStagedUpdate = false
+    /// Staged versions already surfaced as a notification, so it nags once per version.
+    var notifiedStagedUpdate: Set<String> = []
+
+    /// Flip the apply-in-flight flag. A method because the property is `private(set)`; the
+    /// `AppModel+StagedUpdate` extension (another file) drives it around the apply.
+    func setApplyingStagedUpdate(_ value: Bool) {
+        isApplyingStagedUpdate = value
+    }
+
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    private var notifiedClaudeUpdates: Set<String> = []
+    /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
+    /// notifications.
+    var notifiedClaudeUpdates: Set<String> = []
     private var monitorTask: Task<Void, Never>?
     private var activationObserver: (any NSObjectProtocol)?
 
@@ -177,7 +194,11 @@ final class AppModel: ObservableObject {
         let sizes = measureSizes
         guard let listed = await perform({ store in store.list(measuringSizes: sizes) }) else { return }
         profiles = listed
+        // Probe the staged update directly (not via `listed`, which is empty when there
+        // are no clones — the default account can still have one staged).
+        stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
+        await notifyStagedUpdateIfNeeded()
     }
 
     func runDoctor() async {
@@ -366,8 +387,10 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 // Poll only while frontmost — a backgrounded menu-bar app catches up
                 // via didBecomeActive instead of spawning `ps` every minute forever.
-                // @MainActor so NSApp.isActive is read on the main thread.
-                if NSApp.isActive { await reconcile() }
+                // @MainActor so NSApp.isActive is read on the main thread. Skip while a
+                // staged-update apply is in flight: re-probing is fine, but a relaunch it
+                // could trigger during the swap window would trip ShipIt's Gate 2.
+                if NSApp.isActive, !isApplyingStagedUpdate { await reconcile() }
             }
         }
     }
@@ -415,37 +438,6 @@ final class AppModel: ObservableObject {
         realClaude = located.real
         realClaudeVersion = located.version
         locateError = located.error
-    }
-
-    /// Post a local notification for each running launcher newly found to be behind the
-    /// on-disk Claude — once per pending version, and only once notifications are
-    /// actually authorized, so a permission prompt answered later still fires.
-    private func notifyClaudeUpdatesIfNeeded() async {
-        let behind = profiles.filter(\.claudeUpdateAvailable)
-        // Forget skews that resolved (the instance was restarted) so a later update
-        // re-notifies; a key is *added* only after its notification is actually posted.
-        notifiedClaudeUpdates.formIntersection(Set(behind.map(claudeUpdateKey)))
-        let fresh = behind.filter { !notifiedClaudeUpdates.contains(claudeUpdateKey($0)) }
-        guard !fresh.isEmpty else { return }
-        let center = UNUserNotificationCenter.current()
-        let status = await center.notificationSettings().authorizationStatus
-        // Not (yet) authorized — leave keys unmarked so a later refresh retries once
-        // the user has answered the permission prompt.
-        guard status == .authorized || status == .provisional else { return }
-        for managed in fresh {
-            let content = UNMutableNotificationContent()
-            content.title = "\(managed.profile.displayName): restart to update"
-            content.body = "Running \(managed.runningClaudeVersion ?? "an older build") — "
-                + "Claude \(managed.availableClaudeVersion ?? "") is installed."
-            try? await center.add(UNNotificationRequest(
-                identifier: "claude-update-\(managed.id)", content: content, trigger: nil
-            ))
-            notifiedClaudeUpdates.insert(claudeUpdateKey(managed))
-        }
-    }
-
-    private func claudeUpdateKey(_ managed: ManagedProfile) -> String {
-        "\(managed.id)@\(managed.availableClaudeVersion ?? "")"
     }
 
     // MARK: - Plumbing

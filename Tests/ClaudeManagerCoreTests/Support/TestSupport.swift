@@ -204,6 +204,9 @@ struct StoreEnv {
     /// A **temp** stand-in for the default account's user-data dir, so deep-link tests
     /// never touch the real `~/Library/Application Support/Claude`.
     let defaultAccountUserDataPath: String
+    /// A **temp** stand-in for ShipIt's state file, so staged-update tests never read the
+    /// host's real ShipIt cache. A test arms an update by writing this path + a bundle.
+    let shipItStatePath: String
 
     func name(_ base: String) -> String {
         base + token
@@ -233,6 +236,7 @@ func makeStoreEnv(
     let runner = RecordingCommandRunner.delegating(stub: stub)
     let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
     let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
+    let shipItStatePath = root.appendingPathComponent("ShipItState.plist").path
     let store = ProfileStore(
         realClaude: real,
         configuration: ProfileStoreConfiguration(
@@ -240,7 +244,8 @@ func makeStoreEnv(
             defaultProfilesDirectory: profilesDir,
             managedPreferencesURLs: managedPreferencesURLs,
             defaultAccountUserDataPath: defaultAccountUserDataPath,
-            deepLinkBrokerEnabled: deepLinkBrokerEnabled
+            deepLinkBrokerEnabled: deepLinkBrokerEnabled,
+            shipItStatePath: shipItStatePath
         ),
         runner: runner,
         signalSender: { _, _ in 0 }
@@ -250,6 +255,7 @@ func makeStoreEnv(
         root: root, installDir: installDir, profilesDir: profilesDir,
         real: real, runner: runner, store: store, token: token,
         managedPreferencesURLs: managedPreferencesURLs,
-        defaultAccountUserDataPath: defaultAccountUserDataPath
+        defaultAccountUserDataPath: defaultAccountUserDataPath,
+        shipItStatePath: shipItStatePath
     )
 }
