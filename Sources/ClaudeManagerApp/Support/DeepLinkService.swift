@@ -110,7 +110,9 @@ final class DeepLinkService {
 }
 
 /// Retains a `@Sendable` callback so it can ride through a `CFNotificationCenter`
-/// C-callback's opaque context pointer.
+/// C-callback's opaque context pointer. The Darwin notify center can invoke the callback
+/// on an arbitrary thread, so `fire()` hops to the main queue — the guard's state and its
+/// `MainActor.assumeIsolated` lookups are main-only, so running them off-main would be UB.
 private final class ObserverBox: @unchecked Sendable {
     private let onChange: @Sendable () -> Void
     init(_ onChange: @escaping @Sendable () -> Void) {
@@ -118,7 +120,8 @@ private final class ObserverBox: @unchecked Sendable {
     }
 
     func fire() {
-        onChange()
+        let onChange = onChange
+        DispatchQueue.main.async { onChange() }
     }
 }
 
