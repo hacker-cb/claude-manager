@@ -17,6 +17,7 @@ struct RootView: View {
         .toolbar { toolbar }
         .task {
             model.startMonitoring()
+            await model.reconcileManagedConfigs()
             await model.refresh()
         }
         .sheet(item: $editor) { route in

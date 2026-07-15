@@ -251,6 +251,10 @@ public struct ProfileStore {
         let restartDock = request.force || bundle.hasTrashedTwin(appURL: profile.appURL)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
 
+        // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
+        // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
+        try? reconcileManagedConfig(for: profile)
+
         return AddResult(profile: profile, reusedProfileData: reused)
     }
 
@@ -324,6 +328,8 @@ public struct ProfileStore {
                 .contains { $0.marker.profile == profile.profilePath }
             if !sharedByAnother {
                 try fileManager.removeItem(at: profile.profileURL)
+                // Purge the `<profilePath>-3p` overlay sibling in lockstep with the data.
+                try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
                 purged = true
             }
         }
@@ -395,6 +401,9 @@ public struct ProfileStore {
         )
         try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+        // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
+        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
+        try? reconcileManagedConfig(for: profile)
     }
 
     /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
@@ -424,23 +433,9 @@ public struct ProfileStore {
             }
         }
         if !rebuilt.isEmpty { iconCache.restartDock() }
+        // Refresh overlays for the skipped/failed clones too (rebuild seeded the rest).
+        _ = reconcileAllManagedConfigs()
         return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
-    }
-
-    /// All running Claude instances across every bundle (for the status view).
-    public func runningInstances() -> [ClaudeInstance] {
-        processProbe.allClaudeMains()
-    }
-
-    /// Health check.
-    public func doctor() -> [Diagnostic] {
-        Doctor(
-            realClaude: realClaude,
-            configuration: configuration,
-            bundle: bundle,
-            processProbe: processProbe,
-            fileManager: fileManager
-        ).run()
     }
 
     // MARK: - Helpers

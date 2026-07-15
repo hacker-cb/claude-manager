@@ -8,19 +8,22 @@ public struct Doctor {
     let bundle: LauncherBundle
     let processProbe: ProcessProbe
     let fileManager: FileManager
+    let managedConfigWriter: ManagedConfigWriter
 
     public init(
         realClaude: RealClaude?,
         configuration: ProfileStoreConfiguration,
         bundle: LauncherBundle = LauncherBundle(),
         processProbe: ProcessProbe,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        managedConfigWriter: ManagedConfigWriter? = nil
     ) {
         self.realClaude = realClaude
         self.configuration = configuration
         self.bundle = bundle
         self.processProbe = processProbe
         self.fileManager = fileManager
+        self.managedConfigWriter = managedConfigWriter ?? ManagedConfigWriter(fileManager: fileManager)
     }
 
     public func run() -> [Diagnostic] {
@@ -36,6 +39,7 @@ public struct Doctor {
 
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
+        diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
         diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
@@ -126,6 +130,31 @@ public struct Doctor {
                 severity: .warning,
                 title: "\(launcher.displayName): running v\(running) — Claude v\(available) available, restart to update",
                 detail: PathUtils.abbreviatingHome(profilePath)
+            )
+        }
+    }
+
+    /// Managed-config overlay health for the cloned launchers. When Claude is
+    /// MDM-managed the local overlay is overridden, so we surface one informational
+    /// warning and skip the per-clone checks (the managed tier is expected to own the
+    /// policy). Otherwise, warn per clone whose overlay does not disable the updater —
+    /// a best-effort write that silently failed, or a profile predating this feature
+    /// that has not yet been reconciled (reopening Claude Manager fixes it).
+    private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        if managedConfigWriter.mdmPresent {
+            return [Diagnostic(
+                severity: .warning,
+                title: "Claude is MDM-managed — per-profile auto-update control is overridden",
+                detail: PathUtils.abbreviatingHome(CoreConstants.claudeManagedPreferencesPath)
+            )]
+        }
+        return discovered.compactMap { launcher in
+            guard !managedConfigWriter.isSatisfied(.clone, userDataPath: launcher.marker.profile)
+            else { return nil }
+            return Diagnostic(
+                severity: .warning,
+                title: "\(launcher.displayName): auto-update not disabled — reopen Claude Manager or rebuild",
+                detail: PathUtils.abbreviatingHome(launcher.marker.profile)
             )
         }
     }
