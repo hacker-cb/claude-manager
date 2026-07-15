@@ -85,6 +85,15 @@ public enum CoreConstants {
     /// all overlay parsing is defensive (nil/skip on failure) rather than trusted.
     public static let claudeManagedConfigValidatedVersion = "1.20186.1"
 
+    /// The default account's Electron user-data dir name under Application Support
+    /// (`~/Library/Application Support/Claude`). Its managed-config local tier is the
+    /// `-3p` sibling — where the deep-link broker writes `disableDeepLinkRegistration`
+    /// so the default account stops re-grabbing the `claude://` handler.
+    public static let defaultAccountUserDataDirName = "Claude"
+
+    /// The custom URL scheme Claude Desktop owns and the broker takes over.
+    public static let claudeURLScheme = "claude"
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =

@@ -77,6 +77,27 @@ final class AppModel: ObservableObject {
         didSet { persistBadgeStyle() }
     }
 
+    /// Whether the `claude://` deep-link broker owns the handler (opt-in). Changing it
+    /// after launch reconciles the overlays and grabs / restores the handler.
+    @Published var deepLinkBrokerEnabled: Bool {
+        didSet {
+            defaults.set(deepLinkBrokerEnabled, forKey: PreferenceKeys.deepLinkBrokerEnabled)
+            guard didFinishInit else { return }
+            scheduleBrokerApply()
+        }
+    }
+
+    /// App-layer wiring for the broker (handler registration + hold/restore). Non-private
+    /// so the `AppModel+DeepLink` extension can reach it.
+    let deepLinkService = DeepLinkService()
+    let deepLinkPresenter = DeepLinkPresenter()
+    /// Inbound `claude://` links awaiting a picker, shown one at a time.
+    var pendingDeepLinkQueue: [URL] = []
+    /// The in-flight broker apply, so a rapid toggle chains rather than races (see
+    /// `scheduleBrokerApply`). Non-private for the `AppModel+DeepLink` extension.
+    var brokerApplyTask: Task<Void, Never>?
+    private var didFinishInit = false
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -85,7 +106,16 @@ final class AppModel: ObservableObject {
         installOverridePath = defaults.string(forKey: PreferenceKeys.installDirectoryOverride) ?? ""
         profilesOverridePath = defaults.string(forKey: PreferenceKeys.profilesDirectoryOverride) ?? ""
         badgeStyle = Self.loadBadgeStyle(from: defaults)
+        deepLinkBrokerEnabled = defaults.bool(forKey: PreferenceKeys.deepLinkBrokerEnabled)
         locate()
+        didFinishInit = true
+        // Wire the AppKit deep-link sink once the delegate is installed (next runloop):
+        // a link can launch the app menu-bar-only, before any window/scene appears.
+        DispatchQueue.main.async { [weak self] in
+            (NSApp.delegate as? AppDelegate)?.deepLinkHandler = { [weak self] urls in
+                self?.handleDeepLinks(urls)
+            }
+        }
     }
 
     private static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
@@ -131,6 +161,7 @@ final class AppModel: ObservableObject {
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
         config.defaultProfilesDirectory = effectiveProfilesDirectory
         config.badgeStyle = badgeStyle
+        config.deepLinkBrokerEnabled = deepLinkBrokerEnabled
         return config
     }
 
@@ -152,14 +183,6 @@ final class AppModel: ObservableObject {
     func runDoctor() async {
         guard let result = await perform({ store in store.doctor() }) else { return }
         diagnostics = result
-    }
-
-    /// Pre-seed every clone's managed-config overlay (disable its Squirrel updater) so
-    /// existing installs pick it up without an explicit rebuild. Best-effort and off
-    /// the main actor; a per-profile write failure is surfaced later by `Doctor`, not
-    /// as an alert here.
-    func reconcileManagedConfigs() async {
-        _ = await perform { store in store.reconcileAllManagedConfigs() }
     }
 
     func refreshRunningInstances() async {
@@ -330,7 +353,12 @@ final class AppModel: ObservableObject {
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.reconcile() }
+            Task { @MainActor in
+                // A cheap guaranteed re-check on top of the Darwin observer: if Claude
+                // grabbed the handler while we were away, take it back.
+                self?.deepLinkService.reassertIfNeeded()
+                await self?.reconcile()
+            }
         }
         monitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {

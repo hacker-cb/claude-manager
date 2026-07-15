@@ -35,8 +35,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Guards the one-shot handling of the auto-opened launch window.
     private var initialWindowHandled = false
 
+    /// Sink for inbound `claude://` deep links, wired by `AppModel` once it exists.
+    /// Setting it drains any URLs that arrived before wiring (a link can launch the app
+    /// menu-bar-only, before the model registers).
+    var deepLinkHandler: (([URL]) -> Void)? {
+        didSet { drainPendingDeepLinks() }
+    }
+
+    private var pendingDeepLinks: [URL] = []
+
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         false
+    }
+
+    /// macOS delivers `claude://` opens here (reliable for a menu-bar app, unlike a
+    /// scene `.onOpenURL` that needs a live window). Buffer until the model is wired.
+    func application(_: NSApplication, open urls: [URL]) {
+        guard let deepLinkHandler else {
+            pendingDeepLinks.append(contentsOf: urls)
+            return
+        }
+        deepLinkHandler(urls)
+    }
+
+    private func drainPendingDeepLinks() {
+        guard let deepLinkHandler, !pendingDeepLinks.isEmpty else { return }
+        let urls = pendingDeepLinks
+        pendingDeepLinks = []
+        deepLinkHandler(urls)
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

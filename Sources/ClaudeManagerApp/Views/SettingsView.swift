@@ -59,6 +59,8 @@ struct SettingsView: View {
 
             startupSection
 
+            deepLinkSection
+
             Section("Updates") {
                 UpdaterSettingsView(updater: updater)
             }
@@ -125,6 +127,24 @@ struct SettingsView: View {
             }
             Text("Editing updates newly created launchers. “Apply” rebuilds every existing launcher.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var deepLinkSection: some View {
+        Section("Deep links") {
+            Toggle("Route claude:// links to a chosen account", isOn: $model.deepLinkBrokerEnabled)
+            Text(
+                "When on, Claude Manager becomes the default handler for claude:// links "
+                    + "and shows a picker so a login or SSO callback opens in the account you "
+                    + "choose — not always the default one."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            Text(
+                "This suppresses deep-link registration in every account (including the "
+                    + "default). Turning it off restores the default account's handling. "
+                    + "Links to an already-running account can't be delivered — quit it first."
+            )
+            .font(.caption).foregroundStyle(.secondary)
         }
     }
 

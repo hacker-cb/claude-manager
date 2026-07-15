@@ -1,9 +1,9 @@
 import Foundation
 
-/// Reconciling the Claude-Manager-owned managed-config overlay for cloned profiles —
-/// the local config tier (`<userData>-3p/configLibrary`) that disables Claude's
-/// Squirrel updater in a clone so only the default account checks / downloads / stages
-/// updates. Split out of `ProfileStore` to keep that file within its length budget.
+/// Reconciling the Claude-Manager-owned managed-config overlay — the local config tier
+/// (`<userData>-3p/configLibrary`) that disables a clone's Squirrel updater and, when
+/// the `claude://` broker is on, suppresses deep-link registration on the clones *and*
+/// the default account. Split out of `ProfileStore` to keep that file within budget.
 public extension ProfileStore {
     /// Writer for the CM-owned per-profile overlay. A plain value over this store's
     /// `fileManager`; MDM detection uses the configuration's managed-preferences paths.
@@ -14,19 +14,39 @@ public extension ProfileStore {
         )
     }
 
-    /// Reconcile the overlay for one clone: pre-seed its local config tier so Claude's
-    /// updater is disabled on the clone's next launch. No-op when Claude is MDM-managed.
-    /// Best-effort at the create / rebuild call sites (never blocks the primary
-    /// operation); exposed as throwing so the startup reconcile and tests can observe
-    /// failures.
-    @discardableResult
-    func reconcileManagedConfig(for profile: Profile) throws -> ManagedConfigWriter.Outcome {
-        try managedConfigWriter.reconcile(.clone, userDataPath: profile.profilePath)
+    /// The overlay a cloned profile should hold, given the current broker setting.
+    var cloneOverlay: ProfileManagedConfig {
+        .clone(deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled)
     }
 
-    /// Reconcile overlays for every managed profile, running or not — the overlay is
-    /// read only at launch, so writing under a live clone is harmless and takes effect
-    /// on its next start. A single profile's failure never aborts the batch; the
+    /// Reconcile the overlay for one clone: pre-seed its local config tier so Claude's
+    /// updater is disabled (and, with the broker on, its deep-link registration) on the
+    /// clone's next launch. No-op when Claude is MDM-managed. Best-effort at the create /
+    /// rebuild call sites (never blocks the primary operation); exposed as throwing so
+    /// the startup reconcile and tests can observe failures.
+    @discardableResult
+    func reconcileManagedConfig(for profile: Profile) throws -> ManagedConfigWriter.Outcome {
+        try managedConfigWriter.reconcile(cloneOverlay, userDataPath: profile.profilePath)
+    }
+
+    /// Reconcile the **default account's** overlay: with the broker on, write
+    /// `disableDeepLinkRegistration` so it stops re-grabbing `claude://`; with the
+    /// broker off, remove that key (restore) — but never *materialize* an empty overlay
+    /// in the untouched default account, so a fresh install with the broker off leaves
+    /// it alone. Returns the outcome, or `nil` when nothing was written.
+    @discardableResult
+    func reconcileDefaultAccountConfig() throws -> ManagedConfigWriter.Outcome? {
+        let overlay = ProfileManagedConfig.defaultAccount(
+            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
+        )
+        return try managedConfigWriter.reconcilePreservingUntouched(
+            overlay, userDataPath: configuration.defaultAccountUserDataPath
+        )
+    }
+
+    /// Reconcile overlays for every managed profile *and* the default account. The
+    /// overlay is read only at launch, so writing under a live instance is harmless and
+    /// takes effect on its next start. A single failure never aborts the batch; the
     /// profiles whose overlay could not be written are returned (`Doctor` independently
     /// surfaces a missing overlay, so callers may discard this).
     @discardableResult
@@ -39,6 +59,7 @@ public extension ProfileStore {
                 failed.append(managed.profile)
             }
         }
+        try? reconcileDefaultAccountConfig()
         return failed
     }
 }

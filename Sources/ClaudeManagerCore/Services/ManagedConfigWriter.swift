@@ -69,6 +69,15 @@ public struct ManagedConfigWriter {
         managedPreferencesURLs.first { fileManager.fileExists(atPath: $0.path) }
     }
 
+    /// Whether a local tier already exists for this user-data dir (its `_meta.json` is
+    /// present). Lets a caller avoid *materializing* an empty overlay in an
+    /// otherwise-untouched account (e.g. the default account when the broker is off).
+    public func overlayExists(userDataPath: String) -> Bool {
+        let meta = Self.configLibraryURL(forUserDataPath: userDataPath)
+            .appendingPathComponent("_meta.json")
+        return fileManager.fileExists(atPath: meta.path)
+    }
+
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
     /// present with the wanted value. Used by `Doctor` to spot a clone whose overlay
     /// is missing (e.g. a best-effort write that silently failed). MDM presence counts
@@ -101,6 +110,22 @@ public struct ManagedConfigWriter {
         let configFile = configLibrary.appendingPathComponent("\(appliedID).json")
         try mergeAndWrite(config, into: configFile)
         return .reconciled(configLibrary: configLibrary, appliedID: appliedID)
+    }
+
+    /// Reconcile, but never *materialize* an overlay in an otherwise-untouched account:
+    /// when `config` sets nothing and no overlay exists yet, do nothing (return `nil`).
+    /// Used for the default account so a broker-off fresh install leaves it alone, while
+    /// a broker-off *restore* still runs on an existing overlay to drop our keys — and it
+    /// merges (never deletes the tier), preserving any keys Claude itself keeps there.
+    @discardableResult
+    public func reconcilePreservingUntouched(
+        _ config: ProfileManagedConfig,
+        userDataPath: String
+    ) throws -> Outcome? {
+        if config.flatEntries.isEmpty, !overlayExists(userDataPath: userDataPath) {
+            return nil
+        }
+        return try reconcile(config, userDataPath: userDataPath)
     }
 
     /// Delete the entire `-3p` local tier for a user-data dir (used when the profile

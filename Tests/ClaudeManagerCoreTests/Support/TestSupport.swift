@@ -201,6 +201,9 @@ struct StoreEnv {
     /// (never reads the host's real managed-preferences). A probe asserting on the
     /// store's on-disk overlay must use these same paths.
     let managedPreferencesURLs: [URL]
+    /// A **temp** stand-in for the default account's user-data dir, so deep-link tests
+    /// never touch the real `~/Library/Application Support/Claude`.
+    let defaultAccountUserDataPath: String
 
     func name(_ base: String) -> String {
         base + token
@@ -218,6 +221,7 @@ struct StoreEnv {
 /// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
 /// stubbed, so no process is killed and the Dock is never restarted for real.
 func makeStoreEnv(
+    deepLinkBrokerEnabled: Bool = false,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -228,12 +232,15 @@ func makeStoreEnv(
     let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
     let runner = RecordingCommandRunner.delegating(stub: stub)
     let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
+    let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
     let store = ProfileStore(
         realClaude: real,
         configuration: ProfileStoreConfiguration(
             installDirectory: installDir,
             defaultProfilesDirectory: profilesDir,
-            managedPreferencesURLs: managedPreferencesURLs
+            managedPreferencesURLs: managedPreferencesURLs,
+            defaultAccountUserDataPath: defaultAccountUserDataPath,
+            deepLinkBrokerEnabled: deepLinkBrokerEnabled
         ),
         runner: runner,
         signalSender: { _, _ in 0 }
@@ -242,6 +249,7 @@ func makeStoreEnv(
     return StoreEnv(
         root: root, installDir: installDir, profilesDir: profilesDir,
         real: real, runner: runner, store: store, token: token,
-        managedPreferencesURLs: managedPreferencesURLs
+        managedPreferencesURLs: managedPreferencesURLs,
+        defaultAccountUserDataPath: defaultAccountUserDataPath
     )
 }
