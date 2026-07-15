@@ -94,7 +94,7 @@ final class AppModel: ObservableObject {
         didSet { persistBadgeStyle() }
     }
 
-    /// Whether the `claude://` deep-link broker owns the handler (opt-in). Changing it
+    /// Whether the `claude://` deep-link broker owns the handler (on by default). Changing it
     /// after launch reconciles the overlays and grabs / restores the handler.
     @Published var deepLinkBrokerEnabled: Bool {
         didSet {

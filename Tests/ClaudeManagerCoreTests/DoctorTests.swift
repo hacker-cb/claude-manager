@@ -306,6 +306,15 @@ struct DoctorTests {
     }
 
     @Test
+    func noSuppressionWarningWhenDefaultAccountClean() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        // Broker on (runDoctor's default), default account never written → no false positive.
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(!diags.contains { $0.title.contains("deep-link registration is suppressed") })
+    }
+
+    @Test
     func warnsWhenCloneOverlayMissing() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }

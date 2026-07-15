@@ -141,8 +141,10 @@ struct SettingsView: View {
             .font(.caption).foregroundStyle(.secondary)
             Text(
                 "Your default account is never modified — Claude Manager just holds the "
-                    + "handler while it runs, and hands it back when you turn this off or quit. "
-                    + "Links to an already-running account can't be delivered — quit it first."
+                    + "handler while it runs, and hands it straight back to Claude when you turn "
+                    + "this off (or when Claude Manager is removed). While it isn't running, a "
+                    + "claude:// link opens (or relaunches) Claude Manager to route it. Links to "
+                    + "an already-running account can't be delivered — quit it first."
             )
             .font(.caption).foregroundStyle(.secondary)
         }
