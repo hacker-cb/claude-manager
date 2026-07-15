@@ -142,7 +142,12 @@ public struct Doctor {
     /// the updater — a best-effort write that silently failed, or a profile predating
     /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
     private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        guard !discovered.isEmpty else { return [] }
+        // Nothing to manage: no clones and the broker never touched the default account.
+        let defaultPath = configuration.defaultAccountUserDataPath
+        let brokerRelevant = configuration.deepLinkBrokerEnabled
+            || managedConfigWriter.overlayExists(userDataPath: defaultPath)
+        guard !discovered.isEmpty || brokerRelevant else { return [] }
+
         if managedConfigWriter.mdmPresent {
             let path = managedConfigWriter.presentManagedPreferencesURL?.path
                 ?? CoreConstants.claudeManagedPreferencesPaths.first ?? ""
@@ -152,12 +157,16 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(path)
             )]
         }
-        // Validate against the overlay the current broker setting expects — with the
-        // broker on, a clone missing `disableDeepLinkRegistration` is a real miss too.
+        return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
+    }
+
+    /// Warn once per distinct clone user-data-dir whose overlay does not match what the
+    /// current broker setting expects (updater not disabled, or — with the broker on —
+    /// deep-link registration not suppressed).
+    private func cloneOverlayDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
         let expected = ProfileManagedConfig.clone(
             deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
         )
-        // Dedup by user-data-dir so two launchers sharing one profile warn once.
         var seen = Set<String>()
         return discovered.compactMap { launcher in
             let profilePath = launcher.marker.profile
@@ -170,6 +179,33 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(profilePath)
             )
         }
+    }
+
+    /// The default account's deep-link-broker overlay state — the only visibility into the
+    /// safety-critical write, since its reconcile is best-effort. Broker on → the default
+    /// must suppress deep-link registration; broker off → that suppression must have been
+    /// *restored* (key removed). A silent failure of either leaves the default account's
+    /// link handling wrong.
+    private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
+        if configuration.deepLinkBrokerEnabled {
+            guard !managedConfigWriter.isSatisfied(
+                .defaultAccount(deepLinkBrokerEnabled: true), userDataPath: defaultPath
+            ) else { return [] }
+            return [Diagnostic(
+                severity: .warning,
+                title: "Default account: claude:// broker not applied — reopen Claude Manager",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            )]
+        }
+        // Broker off: warn only if the suppression key is still present (restore incomplete).
+        guard managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
+        ) else { return [] }
+        return [Diagnostic(
+            severity: .warning,
+            title: "Default account: deep-link handling not restored — toggle the broker off again",
+            detail: PathUtils.abbreviatingHome(defaultPath)
+        )]
     }
 
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {

@@ -56,7 +56,12 @@ final class DeepLinkService {
         guard handlerGuard != nil else { return }
         handlerGuard?.stop()
         handlerGuard = nil
-        let claudeURL = realClaude?.appURL ?? URL(fileURLWithPath: CoreConstants.defaultRealClaudePath)
+        // Resolve Claude as robustly as possible: the passed app, else a fresh
+        // LaunchServices bundle-id lookup (finds it even if moved/renamed), else the
+        // well-known install path. Restoring the handler is safety-critical.
+        let claudeURL = realClaude?.appURL
+            ?? (try? RealClaudeLocator().locate())?.appURL
+            ?? URL(fileURLWithPath: CoreConstants.defaultRealClaudePath)
         guard FileManager.default.fileExists(atPath: claudeURL.path) else { return }
         makeReassert(to: claudeURL)()
     }

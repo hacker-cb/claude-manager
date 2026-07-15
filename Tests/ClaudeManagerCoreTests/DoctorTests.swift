@@ -2,75 +2,85 @@ import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
+/// Shared fixture for the Doctor suites. Top-level (not nested in a test struct) so both
+/// `DoctorTests` and `DoctorManagedConfigTests` reuse it without inflating either type's
+/// body past the length budget.
+struct DoctorScene {
+    let root: URL
+    let installDir: URL
+    let profilesDir: URL
+    let real: RealClaude
+    /// A temp stand-in for the default account, so the default-account overlay checks
+    /// never read the host's real `~/Library/Application Support/Claude`.
+    var defaultAccountPath: String {
+        root.appendingPathComponent("default-account/Claude").path
+    }
+
+    var noMDM: [URL] {
+        [root.appendingPathComponent("no-mdm.plist")]
+    }
+}
+
+func makeDoctorScene(_ fm: FileManager = .default) throws -> DoctorScene {
+    let root = try Fixture.makeTempDir()
+    let installDir = root.appendingPathComponent("apps")
+    let profilesDir = root.appendingPathComponent("profiles")
+    try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
+    try fm.createDirectory(at: profilesDir, withIntermediateDirectories: true)
+    let real = try Fixture.makeFakeRealApp(in: root, iconData: Data("x".utf8))
+    return DoctorScene(root: root, installDir: installDir, profilesDir: profilesDir, real: real)
+}
+
+func buildDoctorLauncher(
+    in scene: DoctorScene,
+    name: String,
+    profileDir: URL?,
+    realBinaryPath: String? = nil
+) throws {
+    let display = Profile.defaultDisplayName(for: name)
+    let profile = Profile(
+        name: name,
+        displayName: display,
+        label: "L",
+        color: .named("blue"),
+        profilePath: (profileDir ?? scene.profilesDir.appendingPathComponent(name)).path,
+        bundleID: Profile.defaultBundleID(for: name),
+        appPath: scene.installDir.appendingPathComponent("\(display).app").path
+    )
+    try LauncherBundle().build(
+        profile: profile,
+        realBinaryPath: realBinaryPath ?? scene.real.binaryURL.path,
+        icnsData: Data("i".utf8)
+    )
+}
+
+func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .default) -> [Diagnostic] {
+    Doctor(
+        realClaude: scene.real,
+        configuration: ProfileStoreConfiguration(
+            installDirectory: scene.installDir,
+            defaultProfilesDirectory: scene.profilesDir,
+            defaultAccountUserDataPath: scene.defaultAccountPath
+        ),
+        processProbe: ProcessProbe(runner: runner),
+        // Hermetic MDM state: point at an absent path so tests never depend on the
+        // host machine's real managed-preferences.
+        managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
+    ).run()
+}
+
 struct DoctorTests {
     let fm = FileManager.default
 
-    struct Scene {
-        let root: URL
-        let installDir: URL
-        let profilesDir: URL
-        let real: RealClaude
-    }
-
-    func makeScene() throws -> Scene {
-        let root = try Fixture.makeTempDir()
-        let installDir = root.appendingPathComponent("apps")
-        let profilesDir = root.appendingPathComponent("profiles")
-        try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
-        try fm.createDirectory(at: profilesDir, withIntermediateDirectories: true)
-        let real = try Fixture.makeFakeRealApp(in: root, iconData: Data("x".utf8))
-        return Scene(root: root, installDir: installDir, profilesDir: profilesDir, real: real)
-    }
-
-    func buildLauncher(
-        in scene: Scene,
-        name: String,
-        profileDir: URL?,
-        realBinaryPath: String? = nil
-    ) throws {
-        let display = Profile.defaultDisplayName(for: name)
-        let profile = Profile(
-            name: name,
-            displayName: display,
-            label: "L",
-            color: .named("blue"),
-            profilePath: (profileDir ?? scene.profilesDir.appendingPathComponent(name)).path,
-            bundleID: Profile.defaultBundleID(for: name),
-            appPath: scene.installDir.appendingPathComponent("\(display).app").path
-        )
-        try LauncherBundle().build(
-            profile: profile,
-            realBinaryPath: realBinaryPath ?? scene.real.binaryURL.path,
-            icnsData: Data("i".utf8)
-        )
-    }
-
-    func doctor(_ scene: Scene, runner: CommandRunner) -> [Diagnostic] {
-        Doctor(
-            realClaude: scene.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir,
-                defaultProfilesDirectory: scene.profilesDir
-            ),
-            processProbe: ProcessProbe(runner: runner),
-            // Hermetic MDM state: point at an absent path so tests never depend on the
-            // host machine's real managed-preferences.
-            managedConfigWriter: ManagedConfigWriter(
-                fileManager: fm,
-                managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
-            )
-        ).run()
-    }
-
     @Test
     func reportsHealthyLauncherAndRealApp() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(diags.allHealthy)
         #expect(diags.contains { $0.title.contains("Real Claude.app v9.9.9") })
         #expect(diags.contains { $0.severity == .ok && $0.title.contains("Claude WORK: ok") })
@@ -78,12 +88,13 @@ struct DoctorTests {
 
     @Test
     func reportsMissingRealApp() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let diags = Doctor(
             realClaude: nil,
             configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
+                defaultAccountUserDataPath: scene.defaultAccountPath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
@@ -92,14 +103,15 @@ struct DoctorTests {
 
     @Test
     func reportsRealAppWithoutExecutable() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         // The bundle "resolves" but its executable is absent (a broken/partial update).
         let broken = RealClaude(appURL: scene.root.appendingPathComponent("Missing.app"))
         let diags = Doctor(
             realClaude: broken,
             configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
+                defaultAccountUserDataPath: scene.defaultAccountPath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
@@ -108,19 +120,19 @@ struct DoctorTests {
 
     @Test
     func warnsWhenProfileDirMissing() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        try buildLauncher(in: scene, name: "work", profileDir: nil) // dir not created
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: nil) // dir not created
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(diags.contains { $0.severity == .warning && $0.title.contains("profile dir missing") })
     }
 
     @Test
     func errorsWhenScriptDoesNotPointAtRealBinary() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        try buildLauncher(
+        try buildDoctorLauncher(
             in: scene,
             name: "work",
             profileDir: scene.profilesDir.appendingPathComponent("work"),
@@ -131,7 +143,7 @@ struct DoctorTests {
             withIntermediateDirectories: true
         )
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.allHealthy)
         #expect(diags
             .contains { $0.severity == .error && $0.title.contains("does not point at the real binary") })
@@ -139,7 +151,7 @@ struct DoctorTests {
 
     @Test
     func warnsOnOrphanProfile() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         try fm.createDirectory(
             at: scene.profilesDir.appendingPathComponent("ghost"),
@@ -151,7 +163,7 @@ struct DoctorTests {
             withIntermediateDirectories: true
         )
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(diags
             .contains { $0.title == "Orphan profile (no launcher)" && ($0.detail?.contains("ghost") ?? false)
             })
@@ -160,18 +172,19 @@ struct DoctorTests {
 
     @Test
     func notesWhenClaudeIsMDMManaged() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
         let mdm = scene.root.appendingPathComponent("com.anthropic.claudefordesktop.plist")
         try Data("<plist/>".utf8).write(to: mdm)
 
         let diags = Doctor(
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
+                defaultAccountUserDataPath: scene.defaultAccountPath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
@@ -185,7 +198,7 @@ struct DoctorTests {
 
     @Test
     func noMDMNoteWhenNoLaunchers() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let mdm = scene.root.appendingPathComponent("com.anthropic.claudefordesktop.plist")
         try Data("<plist/>".utf8).write(to: mdm)
@@ -193,7 +206,8 @@ struct DoctorTests {
         let diags = Doctor(
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir
+                installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
+                defaultAccountUserDataPath: scene.defaultAccountPath
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
@@ -203,18 +217,18 @@ struct DoctorTests {
 
     @Test
     func overlayTierNotFlaggedAsOrphanProfile() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
         // The clone's `-3p` overlay tier lives in the profiles dir — not a user profile.
         try fm.createDirectory(
             at: scene.profilesDir.appendingPathComponent("work-3p"),
             withIntermediateDirectories: true
         )
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains {
             $0.title == "Orphan profile (no launcher)" && ($0.detail?.contains("work-3p") ?? false)
         })
@@ -222,11 +236,11 @@ struct DoctorTests {
 
     @Test
     func warnsWhenBrokerOnButCloneMissesDeepLinkKey() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
         let noMDM = [scene.root.appendingPathComponent("no-mdm.plist")]
         // Seed only the broker-OFF overlay (disableAutoUpdates), missing the deep-link key.
         try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
@@ -239,6 +253,7 @@ struct DoctorTests {
                 installDirectory: scene.installDir,
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: noMDM,
+                defaultAccountUserDataPath: scene.defaultAccountPath,
                 deepLinkBrokerEnabled: true
             ),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
@@ -250,14 +265,39 @@ struct DoctorTests {
     }
 
     @Test
+    func warnsWhenBrokerOffButDefaultAccountStillSuppressed() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        // A failed restore: the default account still carries the deep-link suppression.
+        try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
+            .reconcile(.defaultAccount(deepLinkBrokerEnabled: true), userDataPath: scene.defaultAccountPath)
+
+        let diags = Doctor(
+            realClaude: scene.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir,
+                defaultProfilesDirectory: scene.profilesDir,
+                managedPreferencesURLs: scene.noMDM,
+                defaultAccountUserDataPath: scene.defaultAccountPath,
+                deepLinkBrokerEnabled: false
+            ),
+            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
+            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
+        ).run()
+        #expect(diags.contains {
+            $0.severity == .warning && $0.title.contains("deep-link handling not restored")
+        })
+    }
+
+    @Test
     func warnsWhenCloneOverlayMissing() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(diags.contains {
             $0.severity == .warning && $0.title.contains("managed config not applied")
         })
@@ -265,23 +305,23 @@ struct DoctorTests {
 
     @Test
     func noOverlayWarningWhenSatisfied() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
         try ManagedConfigWriter(
             fileManager: fm,
             managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
         ).reconcile(.clone(), userDataPath: profileDir.path)
 
-        let diags = doctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains { $0.title.contains("managed config not applied") })
     }
 
     @Test
     func warnsOnDuplicateInstances() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let runner = RecordingCommandRunner { executable, args in
             if executable == CoreConstants.psPath {
@@ -292,7 +332,7 @@ struct DoctorTests {
             }
             return idleStub(executable, args)
         }
-        let diags = doctor(scene, runner: runner)
+        let diags = runDoctor(scene, runner: runner)
         #expect(diags.contains {
             $0.severity == .warning
                 && $0.title == "Duplicate instances on one profile"
@@ -302,11 +342,11 @@ struct DoctorTests {
 
     @Test
     func warnsWhenRunningInstanceIsBehindClaude() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
 
         // A live instance on 9.9.8 (from its child's telemetry) while the app on disk
         // is 9.9.9 (makeFakeRealApp) — the launcher should be told to restart.
@@ -319,7 +359,7 @@ struct DoctorTests {
             }
             return idleStub(executable, args)
         }
-        let diags = doctor(scene, runner: runner)
+        let diags = runDoctor(scene, runner: runner)
         #expect(diags.contains {
             $0.severity == .warning
                 && $0.title.contains("Claude WORK: running v9.9.8")
@@ -329,11 +369,11 @@ struct DoctorTests {
 
     @Test
     func noSkewWarningWhenInstanceMatchesDiskVersion() throws {
-        let scene = try makeScene()
+        let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildLauncher(in: scene, name: "work", profileDir: profileDir)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
 
         // Instance already on 9.9.9 — no restart nudge; and an unmanaged instance on an
         // old version (a profile no launcher owns) must never be flagged either.
@@ -348,7 +388,7 @@ struct DoctorTests {
             }
             return idleStub(executable, args)
         }
-        let diags = doctor(scene, runner: runner)
+        let diags = runDoctor(scene, runner: runner)
         #expect(!diags.contains { $0.title.contains("restart to update") })
     }
 }

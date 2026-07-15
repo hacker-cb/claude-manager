@@ -44,11 +44,12 @@ public extension ProfileStore {
 
 /// Helpers for the `claude://` deep-link scheme. Pure and side-effect free.
 public enum DeepLink {
-    /// Whether `string` is a well-formed URL whose scheme is exactly `claude` (case
-    /// insensitive, as URL schemes are). Guards the forwarder against handing anything
-    /// other than a real deep link to a launcher.
+    /// Whether `string` is a well-formed **`claude://`** URL — the hierarchical form with
+    /// an authority, not a bare opaque `claude:foo` (which shares the scheme but isn't the
+    /// deep-link shape the docs, UI, and error messages all refer to). Guards the forwarder
+    /// against handing anything other than a real deep link to a launcher.
     public static func isClaudeURL(_ string: String) -> Bool {
-        guard let scheme = URLComponents(string: string)?.scheme else { return false }
-        return scheme.lowercased() == CoreConstants.claudeURLScheme
+        guard string.lowercased().hasPrefix("\(CoreConstants.claudeURLScheme)://") else { return false }
+        return URLComponents(string: string)?.scheme?.lowercased() == CoreConstants.claudeURLScheme
     }
 }

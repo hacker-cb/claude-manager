@@ -11,6 +11,8 @@ struct DeepLinkURLTests {
         #expect(!DeepLink.isClaudeURL("claudex://y"))
         #expect(!DeepLink.isClaudeURL("not a url"))
         #expect(!DeepLink.isClaudeURL(""))
+        // Bare opaque form (no authority) is not the deep-link shape → rejected.
+        #expect(!DeepLink.isClaudeURL("claude:foo"))
     }
 }
 
