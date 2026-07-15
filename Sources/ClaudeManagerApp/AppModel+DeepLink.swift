@@ -39,8 +39,11 @@ extension AppModel {
             // spawn a duplicate default on one user-data-dir (LevelDB corruption). The
             // per-call running-PID probe lags process startup, so it can't catch the second.
             Task {
-                await forwardToDefaultAccount(url: claudeURLs[0])
-                if claudeURLs.count > 1 {
+                let delivered = await forwardToDefaultAccount(url: claudeURLs[0])
+                // Only note the dropped extras if the first actually launched — otherwise
+                // `forwardToDefaultAccount` already set a more important error (default
+                // running, or a staged-update apply in progress) that must not be masked.
+                if delivered, claudeURLs.count > 1 {
                     currentError = AppError(message: Self.batchDeliveryLimitMessage(claudeURLs.count))
                 }
                 await refresh()
@@ -150,20 +153,24 @@ extension AppModel {
         _ = await perform { store in try store.openForwarding(profile, url: url.absoluteString) }
     }
 
-    private func forwardToDefaultAccount(url: URL) async {
-        guard !launchBlockedByStagedApply() else { return }
+    /// Forward to the default account, returning whether the link was actually launched
+    /// (`false` when refused: mid staged-apply, a concurrent open, or the default already
+    /// running). The caller uses this to avoid masking a refusal's error with a notice.
+    @discardableResult
+    private func forwardToDefaultAccount(url: URL) async -> Bool {
+        guard !launchBlockedByStagedApply() else { return false }
         // Same running-instance limitation, plus: a second `open -n` on a live default
         // would corrupt its user-data-dir. Share `openReal`'s serialization guard so a
         // concurrent openReal or a second forward can't both pass the probe and launch a
         // duplicate default (the probe → launch window is otherwise a TOCTOU race).
-        guard !isOpeningReal else { return }
+        guard !isOpeningReal else { return false }
         isOpeningReal = true
         defer { isOpeningReal = false }
         if let pid = await perform({ store in store.runningDefaultPID() }).flatMap(\.self) {
             currentError = AppError(message: deliveryToRunningMessage("the default account", pid: pid))
-            return
+            return false
         }
-        _ = await perform { store in try store.openRealForwarding(url: url.absoluteString) }
+        return await perform { store in try store.openRealForwarding(url: url.absoluteString) } != nil
     }
 
     private func pid(for profile: Profile) async -> Int32? {
