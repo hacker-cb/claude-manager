@@ -21,8 +21,9 @@ extension AppModel {
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked
-    /// update nags a single time. Clears the record when the staged update resolves, so a
-    /// later staged version notifies afresh.
+    /// update nags a single time. The record is keyed by version and intentionally never
+    /// cleared: a later staged version is a different key, so it notifies afresh, while a
+    /// transient nil probe can't re-arm a duplicate for the same version.
     func notifyStagedUpdateIfNeeded() async {
         // Key on the version string, so each staged version nags once. Don't clear the
         // record when the probe is nil: a transient nil (mid-swap, or a slow read) would
