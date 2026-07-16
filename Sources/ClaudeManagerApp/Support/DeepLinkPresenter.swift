@@ -31,6 +31,13 @@ final class DeepLinkPresenter: NSObject, NSWindowDelegate {
         reserved = true
     }
 
+    /// Release a reservation made by `reserve()` *without* presenting — for when the caller
+    /// decides not to show a picker after all (e.g. Claude went missing). Leaves `isPresenting`
+    /// false so the queue can advance instead of stalling on a reservation that never opened.
+    func cancelReservation() {
+        reserved = false
+    }
+
     /// Present the picker. `onDismiss` fires once after the window closes for *any* reason
     /// (pick, cancel, or the close button), so the caller can advance its queue. The model
     /// only calls this while idle (`!isPresenting`), so there is never a prior window.

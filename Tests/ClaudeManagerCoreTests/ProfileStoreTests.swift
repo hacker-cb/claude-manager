@@ -135,6 +135,33 @@ struct ProfileStoreTests {
     }
 
     @Test
+    func purgeSpares3pSiblingThatIsAnotherLaunchersData() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("sibling"))
+        }
+        // Pathological but reachable: launcher B's user-data dir is literally launcher A's
+        // `-3p` overlay path. Purging A must delete A's data + overlay but spare B's data.
+        let workPath = env.profilesDir.appendingPathComponent("work").path
+        let siblingPath = workPath + "-3p"
+        let work = try env.store
+            .add(AddProfileRequest(name: env.name("work"), profilePath: workPath)).profile
+        _ = try env.store
+            .add(AddProfileRequest(name: env.name("sibling"), profilePath: siblingPath)).profile
+        try fm.createDirectory(atPath: siblingPath, withIntermediateDirectories: true, attributes: nil)
+        let keep = URL(fileURLWithPath: siblingPath).appendingPathComponent("data")
+        try Data("keep".utf8).write(to: keep)
+
+        _ = try env.store.remove(work, purgeProfile: true)
+
+        // B's data dir (== A's `-3p` path) belongs to another launcher, so it is spared.
+        #expect(fm.fileExists(atPath: siblingPath))
+        #expect(fm.fileExists(atPath: keep.path))
+    }
+
+    @Test
     func removeKeepsDataSharedByAnotherLauncher() throws {
         let env = try makeStoreEnv()
         defer {

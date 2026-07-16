@@ -133,7 +133,9 @@ struct RootView: View {
                 "Launch or focus your primary Claude account (the default profile). "
                     + "Use this instead of the Dock icon while clones are running."
             )
-            .disabled(model.realClaude == nil)
+            // Disabled during a staged-update apply too, matching every other Open affordance —
+            // a launch mid-swap is refused by `launchBlockedByStagedApply` anyway.
+            .disabled(model.realClaude == nil || model.isApplyingStagedUpdate)
         }
         ToolbarItem {
             Button { Task { await model.refresh() } } label: {

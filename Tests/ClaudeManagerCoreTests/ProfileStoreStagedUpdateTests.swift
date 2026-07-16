@@ -149,6 +149,58 @@ struct ProfileStoreStagedUpdateTests {
     }
 
     @Test
+    func abortReportsBlockersCapturedBeforeRelaunch() async throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let clone = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        // The clone runs at snapshot then quits (pgrep: running once, gone after). An
+        // *external*, unmanaged real-Claude instance keeps blocking the swap forever, so the
+        // apply aborts. The relaunched clone becomes ps-visible only AFTER we reopen it — so a
+        // blocker list captured after relaunch would wrongly include it.
+        let realBin = env.real.binaryURL.path
+        let cloneProfile = clone.profilePath
+        let cloneAppPath = clone.appPath
+        let pgrep = CallCounter()
+        let runner = env.runner
+        env.runner.setHandler { executable, _ in
+            if executable == CoreConstants.pgrepPath {
+                let running = pgrep.next() == 1
+                return CommandOutput(
+                    exitCode: running ? 0 : 1, standardOutput: running ? "555\n" : "", standardError: ""
+                )
+            }
+            if executable == CoreConstants.psPath {
+                var out = "  900     1 \(realBin) --user-data-dir=/external\n"
+                // Once relaunchSnapshot has reopened the clone (open -n <clone>.app) it too
+                // shows up in `ps` — the exact case the ordering fix must exclude.
+                let cloneRelaunched = runner.invocations(of: CoreConstants.openPath)
+                    .contains { $0.arguments.contains(cloneAppPath) }
+                if cloneRelaunched {
+                    out += "  555     1 \(realBin) --user-data-dir=\(cloneProfile)\n"
+                }
+                return CommandOutput(exitCode: 0, standardOutput: out, standardError: "")
+            }
+            return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+        }
+
+        let result = await env.store.applyStagedUpdateToAll(stopPollInterval: 0.01, stopMaxPolls: 3)
+        guard case let .instancesStillRunning(names) = result.outcome else {
+            Issue.record("expected instancesStillRunning, got \(result.outcome)")
+            return
+        }
+        // Only the genuine external blocker is named — the clone we reopened is not, because
+        // the names are captured before relaunch.
+        #expect(!names.contains(clone.displayName))
+        #expect(names == ["/external"])
+        #expect(result.relaunched == [clone.displayName])
+    }
+
+    @Test
     func makeDefaultDerivesShipItPathFromBundleID() throws {
         let root = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: root) }

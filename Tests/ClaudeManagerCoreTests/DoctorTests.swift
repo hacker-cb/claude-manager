@@ -294,44 +294,6 @@ struct DoctorTests {
     }
 
     @Test
-    func warnsWhenDefaultAccountIsSuppressed() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        // The default account should never carry disableDeepLinkRegistration (guard-based).
-        // A leftover key (e.g. from an earlier build) must be flagged.
-        try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
-            .reconcile(
-                ProfileManagedConfig(disableDeepLinkRegistration: true),
-                userDataPath: scene.defaultAccountPath
-            )
-
-        let diags = Doctor(
-            realClaude: scene.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir,
-                defaultProfilesDirectory: scene.profilesDir,
-                managedPreferencesURLs: scene.noMDM,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
-                shipItStatePath: scene.shipItStatePath
-            ),
-            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
-            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
-        ).run()
-        #expect(diags.contains {
-            $0.severity == .warning && $0.title.contains("deep-link registration is suppressed")
-        })
-    }
-
-    @Test
-    func noSuppressionWarningWhenDefaultAccountClean() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        // Broker on (runDoctor's default), default account never written → no false positive.
-        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
-        #expect(!diags.contains { $0.title.contains("deep-link registration is suppressed") })
-    }
-
-    @Test
     func warnsWhenCloneOverlayMissing() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }

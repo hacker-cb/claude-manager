@@ -190,6 +190,9 @@ final class AppModel: ObservableObject {
             realClaude = nil
             realClaudeVersion = nil
             primaryAccount = nil
+            // A vanished Claude has no staged update to apply; clear it so the banner doesn't
+            // outlive the app it refers to (refresh, its only other writer, bails while nil).
+            stagedUpdate = nil
             locateError = Self.describe(error)
         }
     }
@@ -347,23 +350,6 @@ final class AppModel: ObservableObject {
         return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
     }
 
-    // MARK: - Finder helpers
-
-    func revealProfileData(_ profile: Profile) {
-        NSWorkspace.shared.activateFileViewerSelecting([profile.profileURL])
-    }
-
-    func revealLauncher(_ profile: Profile) {
-        NSWorkspace.shared.activateFileViewerSelecting([profile.appURL])
-    }
-
-    /// Reveal the real Claude.app (the default account's bundle) in Finder. No-op if it
-    /// isn't located — the missing-Claude banner covers that case.
-    func revealRealClaude() {
-        guard let real = realClaude else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([real.appURL])
-    }
-
     // MARK: - Claude update monitoring
 
     /// Start watching for the real Claude.app updating out from under running
@@ -443,9 +429,13 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
-        // A vanished Claude leaves no default account; `reconcile` returns before `refresh`
-        // could recompute it, so clear the stale row here.
-        if located.real == nil { primaryAccount = nil }
+        // A vanished Claude leaves no default account and no staged update to apply;
+        // `reconcile` returns before `refresh` could recompute them, so clear the stale
+        // primary row and staged-update banner here.
+        if located.real == nil {
+            primaryAccount = nil
+            stagedUpdate = nil
+        }
         locateError = located.error
     }
 

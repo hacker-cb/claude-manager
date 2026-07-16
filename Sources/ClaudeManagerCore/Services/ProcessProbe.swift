@@ -158,9 +158,13 @@ public struct ProcessProbe {
 
     /// Capture the whole --user-data-dir value, including spaces (the default
     /// profiles dir lives under "Application Support/Claude Manager/…"), stopping
-    /// only before the next `--flag` or end of line. `ps` space-joins argv, so a
-    /// greedy `\S+` would truncate any path containing a space.
-    private static let profileRegex = makeRegex(#"--user-data-dir=(.+?)(?=\s--|$)"#)
+    /// before the next `--flag`, a positional URL argument, or end of line. `ps`
+    /// space-joins argv, so a greedy `\S+` would truncate any path containing a
+    /// space. The URL stop matters because a forwarded deep link arrives as a
+    /// positional `claude://…` arg *after* `--user-data-dir` (see `openForwarding`);
+    /// without it the value would swallow the URL as part of the profile path.
+    private static let profileRegex =
+        makeRegex(#"--user-data-dir=(.+?)(?=\s--|\s[a-zA-Z][a-zA-Z0-9+.\-]*://|$)"#)
 
     private static func userDataDir(in arguments: String) -> String? {
         let range = NSRange(arguments.startIndex ..< arguments.endIndex, in: arguments)
