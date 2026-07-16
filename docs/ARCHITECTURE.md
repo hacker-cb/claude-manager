@@ -7,21 +7,21 @@ design. For the rejected alternatives that led here, see [DECISIONS.md](DECISION
 
 ```
 ClaudeManagerCore (Swift package — headless, fully tested)
-├─ Models      Profile, BadgeColor, BadgeStyle, LauncherMarker, ManagedProfile, Diagnostic,
-│              ProfileManagedConfig (overlay desired-state), StagedUpdate
-├─ RealClaude  locate the real app (LaunchServices + fallbacks), version, icon
-├─ Launcher    LauncherBundle (build/scan/remove) + LauncherScript (bash launcher, duplicate guard)
-├─ Icons       BadgeRenderer (CoreGraphics) → IcnsPacker (iconutil) → IconCache
-├─ Process     ProcessProbe — pgrep/ps main-process detection (ppid==1 filter)
+├─ Models        Profile, BadgeColor, BadgeStyle, LauncherMarker, ManagedProfile, Diagnostic,
+│                ProfileManagedConfig (overlay desired-state), StagedUpdate
+├─ RealClaude    locate the real app (LaunchServices + fallbacks), version, icon
+├─ Launcher      LauncherBundle (build/scan/remove) + LauncherScript (bash launcher, duplicate guard)
+├─ Icons         BadgeRenderer (CoreGraphics) → IcnsPacker (iconutil) → IconCache
+├─ Process       ProcessProbe — pgrep/ps main-process detection (ppid==1 filter)
 ├─ ManagedConfig ManagedConfigWriter — the per-clone `-3p` overlay (disable update / deep-link reg)
-├─ DeepLink    LaunchServicesHandlerGuard (hold claude://) + ProfileStore forwarding (open -n --args)
-├─ Update      StagedUpdateProbe (read ShipItState.plist) + ProfileStore apply-to-all (quiesce/swap/relaunch)
+├─ DeepLink      LaunchServicesHandlerGuard (hold claude://) + ProfileStore forwarding (open -n --args)
+├─ Update        StagedUpdateProbe (read ShipItState.plist) + ProfileStore apply-to-all (quiesce/swap/relaunch)
 ├─ ProfileStore  the façade: add / remove / open / stop / update / rebuild / doctor
 └─ CommandRunner injected process runner (mocked in tests)
 
 ClaudeManagerApp (SwiftUI — thin)
-└─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings ·
-   DeepLinkService + DeepLinkPresenter (claude:// hold + account picker)
+├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
+└─ DeepLinkService + DeepLinkPresenter — claude:// hold + account picker
 ```
 
 Everything the app does lives in `ClaudeManagerCore`; the SwiftUI layer is a thin
