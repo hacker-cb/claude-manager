@@ -67,6 +67,44 @@ public enum CoreConstants {
     /// Icon resource inside the real app bundle used as the badge base.
     public static let defaultRealIconFileName = "electron.icns"
 
+    // MARK: - Claude managed-config overlay
+
+    /// MDM-delivered managed-preferences plists for the real Claude app — one per
+    /// bundle id we may wrap (current + legacy). When any exists, Claude's *managed*
+    /// config tier overrides the per-userData *local* tier we write into, so our
+    /// overlay would be ignored — the writer skips it and `Doctor` surfaces a note.
+    /// Derived from `realClaudeBundleIDs` so a legacy-id install is covered too.
+    public static let claudeManagedPreferencesPaths = realClaudeBundleIDs.map {
+        "/Library/Managed Preferences/\($0).plist"
+    }
+
+    /// Claude Desktop version whose managed-config resolver and key schema this
+    /// overlay was reverse-engineered and verified against. The flat enterprise-policy
+    /// keys (e.g. `disableAutoUpdates`) and the `<userData>-3p/configLibrary`
+    /// local-tier path are pinned to this build; a newer Claude may reshape them, so
+    /// all overlay parsing is defensive (nil/skip on failure) rather than trusted.
+    public static let claudeManagedConfigValidatedVersion = "1.20186.1"
+
+    /// The default account's Electron user-data dir name under Application Support
+    /// (`~/Library/Application Support/Claude`). Its managed-config local tier is the
+    /// `-3p` sibling; the broker keeps it overlay-free (the default's `claude://` handler
+    /// is held by the guard, not a written key) and only cleans up a stray key there.
+    public static let defaultAccountUserDataDirName = "Claude"
+
+    /// The custom URL scheme Claude Desktop owns and the broker takes over.
+    public static let claudeURLScheme = "claude"
+
+    /// ShipIt (Squirrel.Mac) per-bundle state file — `ShipItState.plist` under Caches,
+    /// which is **JSON** despite the extension. When a job is armed it names the staged
+    /// `updateBundleURL`; reading it is how we detect a staged-but-unapplied update that
+    /// running clones are blocking. Keyed by the app's bundle id.
+    public static func shipItStatePath(
+        forBundleID bundleID: String,
+        home: String = NSHomeDirectory()
+    ) -> String {
+        "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
+    }
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =

@@ -53,4 +53,42 @@ struct ProfileStorePrimaryAccountTests {
         }
         #expect(env.store.runningDefaultPID() == nil)
     }
+
+    @Test
+    func snapshotReportsDefaultAccountPIDFromOneScan() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let real = env.real.binaryURL.path
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                let ps = "  501     1 \(real)\n"
+                    + "  777     1 \(real) --user-data-dir=/data/clone\n"
+                return CommandOutput(exitCode: 0, standardOutput: ps, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        let snapshot = env.store.snapshot()
+        #expect(snapshot.primaryAccount.pid == 501)
+        #expect(snapshot.primaryAccount.isRunning)
+        // The whole snapshot — launcher list *and* default status — comes from ONE `ps` sweep.
+        #expect(env.runner.invocations(of: CoreConstants.psPath).count == 1)
+    }
+
+    @Test
+    func snapshotDefaultAccountNotRunningWithoutADefault() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let real = env.real.binaryURL.path
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                // Only a clone runs → there is no default-account instance.
+                let ps = "  777     1 \(real) --user-data-dir=/data/clone\n"
+                return CommandOutput(exitCode: 0, standardOutput: ps, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        let snapshot = env.store.snapshot()
+        #expect(snapshot.primaryAccount.pid == nil)
+        #expect(!snapshot.primaryAccount.isRunning)
+    }
 }

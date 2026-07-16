@@ -197,6 +197,16 @@ struct StoreEnv {
     /// Per-test token so trashed launchers never collide across the shared `~/.Trash`
     /// (Swift Testing runs tests in parallel).
     let token: String
+    /// Absent MDM plist paths the store is wired to, so overlay reconcile is hermetic
+    /// (never reads the host's real managed-preferences). A probe asserting on the
+    /// store's on-disk overlay must use these same paths.
+    let managedPreferencesURLs: [URL]
+    /// A **temp** stand-in for the default account's user-data dir, so deep-link tests
+    /// never touch the real `~/Library/Application Support/Claude`.
+    let defaultAccountUserDataPath: String
+    /// A **temp** stand-in for ShipIt's state file, so staged-update tests never read the
+    /// host's real ShipIt cache. A test arms an update by writing this path + a bundle.
+    let shipItStatePath: String
 
     func name(_ base: String) -> String {
         base + token
@@ -214,6 +224,7 @@ struct StoreEnv {
 /// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
 /// stubbed, so no process is killed and the Dock is never restarted for real.
 func makeStoreEnv(
+    deepLinkBrokerEnabled: Bool = false,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -223,11 +234,18 @@ func makeStoreEnv(
     try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
     let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
     let runner = RecordingCommandRunner.delegating(stub: stub)
+    let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
+    let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
+    let shipItStatePath = root.appendingPathComponent("ShipItState.plist").path
     let store = ProfileStore(
         realClaude: real,
         configuration: ProfileStoreConfiguration(
             installDirectory: installDir,
-            defaultProfilesDirectory: profilesDir
+            defaultProfilesDirectory: profilesDir,
+            managedPreferencesURLs: managedPreferencesURLs,
+            defaultAccountUserDataPath: defaultAccountUserDataPath,
+            deepLinkBrokerEnabled: deepLinkBrokerEnabled,
+            shipItStatePath: shipItStatePath
         ),
         runner: runner,
         signalSender: { _, _ in 0 }
@@ -235,6 +253,9 @@ func makeStoreEnv(
     let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
     return StoreEnv(
         root: root, installDir: installDir, profilesDir: profilesDir,
-        real: real, runner: runner, store: store, token: token
+        real: real, runner: runner, store: store, token: token,
+        managedPreferencesURLs: managedPreferencesURLs,
+        defaultAccountUserDataPath: defaultAccountUserDataPath,
+        shipItStatePath: shipItStatePath
     )
 }

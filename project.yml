@@ -79,6 +79,13 @@ targets:
         # release if this still holds the placeholder, so a build can never ship unsigned.
         SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
         SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
+        # The deep-link broker: declaring the claude:// scheme makes Claude Manager an
+        # eligible default handler. The broker is ON by default, so CM becomes the default
+        # handler and forwards links to a chosen account; disabling it in Settings hands
+        # claude:// back to Claude.
+        CFBundleURLTypes:
+          - CFBundleURLName: io.github.hacker-cb.claude-manager.claude
+            CFBundleURLSchemes: [claude]
     entitlements:
       path: Sources/ClaudeManagerApp/Resources/ClaudeManager.entitlements
       properties:

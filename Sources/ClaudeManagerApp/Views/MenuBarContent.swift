@@ -14,18 +14,53 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
-            // The primary (default-account) Claude — launched separately from any
-            // launcher. Reliable even while clones run, unlike the raw Dock icon.
+            if let staged = model.stagedUpdate {
+                if model.isApplyingStagedUpdate {
+                    // A disabled Button, not a bare Label: an item with no action can still
+                    // look selectable in a menu, so mark it clearly non-interactive.
+                    Button {} label: {
+                        Label(
+                            "Applying Claude \(staged.stagedVersion)…",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                    }
+                    .disabled(true)
+                } else {
+                    // A submenu, not a one-click button: applying quits and relaunches every
+                    // open account (interrupting live sessions), so it must never fire from a
+                    // single click. Opening the submenu and clicking the explicit item is the
+                    // menu-bar's confirmation (a `.confirmationDialog` can't present from a menu).
+                    Menu {
+                        Button("Quit & Update All Accounts") {
+                            Task { await model.applyStagedUpdate() }
+                        }
+                    } label: {
+                        Label(
+                            "Apply Claude \(staged.stagedVersion) to all accounts…",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                    }
+                }
+                Divider()
+            }
+
+            // Accounts — the default account first, then each clone, as one uniform list.
+            // The default keeps its own person glyph (filled when running, mirroring the
+            // clones' filled/empty circle) so it reads as a peer, not a special case.
             Button {
                 Task { await model.openReal() }
             } label: {
-                Label("Open Claude (default account)", systemImage: "person.crop.circle")
+                Label(
+                    "Default account\(model.primaryAccount?.isRunning == true ? " — running" : "")",
+                    systemImage: model.primaryAccount?.isRunning == true
+                        ? "person.crop.circle.fill" : "person.crop.circle"
+                )
             }
+            .disabled(model.isApplyingStagedUpdate)
 
             if model.profiles.isEmpty {
                 Text("No launchers yet")
             } else {
-                Divider()
                 ForEach(model.profiles) { managed in
                     Button {
                         Task { await model.open(managed.profile) }
@@ -35,32 +70,41 @@ struct MenuBarContent: View {
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
                     }
+                    .disabled(model.isApplyingStagedUpdate)
                 }
+            }
 
-                let running = model.profiles.filter(\.isRunning)
-                if !running.isEmpty {
-                    Divider()
-                    Menu("Stop") {
-                        ForEach(running) { managed in
-                            Button(managed.profile.displayName) {
-                                Task { await model.stop(managed.profile, force: false) }
-                            }
+            // Stop — every running account, the default account included.
+            let runningClones = model.profiles.filter(\.isRunning)
+            let defaultRunning = model.primaryAccount?.isRunning == true
+            if defaultRunning || !runningClones.isEmpty {
+                Divider()
+                Menu("Stop") {
+                    if defaultRunning {
+                        Button("Default account") {
+                            Task { await model.stopDefaultAccount(force: false) }
+                        }
+                    }
+                    ForEach(runningClones) { managed in
+                        Button(managed.profile.displayName) {
+                            Task { await model.stop(managed.profile, force: false) }
                         }
                     }
                 }
+            }
 
-                let behind = model.profiles.filter(\.claudeUpdateAvailable)
-                if !behind.isEmpty {
-                    Menu("Restart to Update") {
-                        ForEach(behind) { managed in
-                            Button(
-                                "\(managed.profile.displayName) — v\(managed.availableClaudeVersion ?? "")"
-                            ) {
-                                Task { await model.restart(managed.profile) }
-                            }
+            let behind = model.profiles.filter(\.claudeUpdateAvailable)
+            if !behind.isEmpty {
+                Menu("Restart to Update") {
+                    ForEach(behind) { managed in
+                        Button(
+                            "\(managed.profile.displayName) — v\(managed.availableClaudeVersion ?? "")"
+                        ) {
+                            Task { await model.restart(managed.profile) }
                         }
                     }
                 }
+                .disabled(model.isApplyingStagedUpdate)
             }
         }
 

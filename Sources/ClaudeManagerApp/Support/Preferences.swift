@@ -8,4 +8,7 @@ enum PreferenceKeys {
     static let measureSizes = "measureSizes"
     /// JSON-encoded global `BadgeStyle` applied to every launcher icon.
     static let badgeStyle = "badgeStyle"
+    /// Whether the `claude://` deep-link broker owns the handler. On by default; unset
+    /// reads as on (see `AppModel.init`), an explicit off is honored.
+    static let deepLinkBrokerEnabled = "deepLinkBrokerEnabled"
 }

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
@@ -55,6 +56,30 @@ struct ProcessProbeTests {
             + "--user-data-dir=/data/my work --enable-logging"
         let mains = ProcessProbe.parseMains(psOutput: ps)
         #expect(mains[0].profilePath == "/data/my work")
+    }
+
+    @Test
+    func stopsProfileCaptureAtForwardedDeepLinkURL() {
+        // A forwarded deep link launches the launcher with the URL as a positional arg AFTER
+        // --user-data-dir (see openForwarding). The profile path must stop before the URL, not
+        // swallow it — else the running instance is misattributed and the URL leaks into
+        // version diagnostics / blocker output.
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/data/work claude://login?code=abc123"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains.count == 1)
+        #expect(mains[0].profilePath == "/data/work")
+    }
+
+    @Test
+    func keepsSpacedProfilePathButStopsAtDeepLinkURL() {
+        // The spaced-path capture and the URL stop must coexist: a path with spaces followed
+        // by a positional https:// auth callback keeps the whole path and drops the URL.
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/Users/x/Application Support/Claude Manager/Profiles/work "
+            + "https://auth.example/callback"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains[0].profilePath == "/Users/x/Application Support/Claude Manager/Profiles/work")
     }
 
     @Test
@@ -125,6 +150,33 @@ struct ProcessProbeTests {
         #expect(call?.arguments.first == "-f")
         #expect(call?.arguments
             .last == #"^/Applications/Claude\.app/Contents/MacOS/Claude --user-data-dir=/data/p( |$)"#)
+    }
+
+    @Test
+    func isRealClaudeBinaryMatchesOnlyTheRealBinary() {
+        let real = RealClaude(appURL: URL(fileURLWithPath: "/Applications/Claude.app"))
+        // The default account and every clone exec the real binary — all count as blockers.
+        let defaultMain = ClaudeInstance(pid: 1, executablePath: realBinary, profilePath: nil)
+        let clone = ClaudeInstance(pid: 2, executablePath: realBinary, profilePath: "/data/work")
+        #expect(defaultMain.isRealClaudeBinary(real))
+        #expect(clone.isRealClaudeBinary(real))
+
+        // Claude Manager's own main also has "Claude" in its path (so `parseMains` matches it),
+        // but it is not the real binary and must never gate the swap.
+        let manager = ClaudeInstance(
+            pid: 3,
+            executablePath: "/Applications/Claude Manager.app/Contents/MacOS/Claude Manager",
+            profilePath: nil
+        )
+        #expect(!manager.isRealClaudeBinary(real))
+
+        // A different Claude edition (e.g. a Beta install) is likewise not this store's binary.
+        let beta = ClaudeInstance(
+            pid: 4,
+            executablePath: "/Applications/Claude Beta.app/Contents/MacOS/Claude",
+            profilePath: nil
+        )
+        #expect(!beta.isRealClaudeBinary(real))
     }
 }
 

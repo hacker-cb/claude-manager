@@ -1,38 +1,6 @@
 import Darwin
 import Foundation
 
-/// Where launchers are installed and where new profile data dirs default to.
-public struct ProfileStoreConfiguration: Sendable, Equatable {
-    /// Directory the launcher `.app` bundles live in (defaults to the real app's
-    /// own directory, so launchers sit next to Claude.app).
-    public var installDirectory: URL
-    /// Parent directory for auto-created `--user-data-dir`s.
-    public var defaultProfilesDirectory: URL
-    /// Global badge look applied to every launcher icon this store builds.
-    public var badgeStyle: BadgeStyle
-
-    public init(
-        installDirectory: URL,
-        defaultProfilesDirectory: URL,
-        badgeStyle: BadgeStyle = .default
-    ) {
-        self.installDirectory = installDirectory
-        self.defaultProfilesDirectory = defaultProfilesDirectory
-        self.badgeStyle = badgeStyle
-    }
-
-    public static func makeDefault(
-        realClaude: RealClaude,
-        fileManager: FileManager = .default
-    ) -> ProfileStoreConfiguration {
-        ProfileStoreConfiguration(
-            installDirectory: realClaude.installDirectory,
-            defaultProfilesDirectory: MetadataStore.defaultDirectory(fileManager: fileManager)
-                .appendingPathComponent("Profiles", isDirectory: true)
-        )
-    }
-}
-
 /// Parameters for creating a launcher; `nil` fields fall back to sensible defaults.
 public struct AddProfileRequest: Sendable {
     public var name: String
@@ -141,12 +109,30 @@ public struct ProfileStore {
 
     // MARK: - Read
 
+    /// The launcher list *and* the default-account status from a single `ps` sweep, so a
+    /// refresh pays for one process scan instead of two (`list` and the default-pid probe
+    /// each swept the table independently). The one read the app's `refresh` uses.
+    public func snapshot(measuringSizes: Bool = false) -> StoreSnapshot {
+        let mains = processProbe.allClaudeMains()
+        return StoreSnapshot(
+            profiles: list(measuringSizes: measuringSizes, mains: mains),
+            primaryAccount: PrimaryAccountStatus(pid: defaultPID(in: mains))
+        )
+    }
+
     /// All managed launchers with live running state (and optional disk usage). Also
     /// stamps each with the Claude version it's running vs the one on disk, so a
     /// launcher left on an older build surfaces as "restart to update".
     public func list(measuringSizes: Bool = false) -> [ManagedProfile] {
+        list(measuringSizes: measuringSizes, mains: processProbe.allClaudeMains())
+    }
+
+    /// `list`, but reusing an already-fetched process sweep for the running-version map — so
+    /// `snapshot` can share one `ps` across the launcher list and the default-account status.
+    /// `private`: an implementation detail shared only by `snapshot` and the no-arg `list`.
+    private func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
-        let runningVersions = processProbe.runningVersionsByProfilePath()
+        let runningVersions = processProbe.runningVersionsByProfilePath(from: mains)
         return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
             let profile = discovered.profile
             let pid = runningPID(for: profile)
@@ -160,6 +146,17 @@ public struct ProfileStore {
                 availableClaudeVersion: availableVersion
             )
         }
+    }
+
+    /// The staged-but-unapplied Claude update (if any) — a ShipIt job armed with a newer
+    /// bundle that open instances are blocking. Surfaced by the app apart from the launcher
+    /// list (a global banner / menu item), and re-probed at apply time.
+    public func stagedUpdate() -> StagedUpdate? {
+        StagedUpdateProbe(
+            realClaude: realClaude,
+            shipItStatePath: configuration.shipItStatePath,
+            fileManager: fileManager
+        ).probe()
     }
 
     /// The full defaults a new profile named `name` would get — drives the editor
@@ -251,6 +248,10 @@ public struct ProfileStore {
         let restartDock = request.force || bundle.hasTrashedTwin(appURL: profile.appURL)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
 
+        // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
+        // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
+        try? reconcileManagedConfig(for: profile)
+
         return AddResult(profile: profile, reusedProfileData: reused)
     }
 
@@ -301,6 +302,8 @@ public struct ProfileStore {
         // path only needs a restart if a same-named twin is in the Trash.
         let restartDock = !renaming || bundle.hasTrashedTwin(appURL: updated.appURL)
         iconCache.refresh(appURL: updated.appURL, restartDock: restartDock)
+        // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
+        try? reconcileManagedConfig(for: updated)
         return updated
     }
 
@@ -316,15 +319,29 @@ public struct ProfileStore {
         }
         let trashed = try bundle.moveToTrash(appURL: profile.appURL)
         var purged = false
-        if purgeProfile, fileManager.fileExists(atPath: profile.profilePath) {
+        if purgeProfile {
             // Never delete data another launcher still points at (the launcher we
             // just trashed is already gone from the scan).
-            let sharedByAnother = bundle
-                .scan(installDirectory: configuration.installDirectory)
-                .contains { $0.marker.profile == profile.profilePath }
+            let survivors = bundle.scan(installDirectory: configuration.installDirectory)
+            let sharedByAnother = survivors.contains { $0.marker.profile == profile.profilePath }
             if !sharedByAnother {
-                try fileManager.removeItem(at: profile.profileURL)
-                purged = true
+                if fileManager.fileExists(atPath: profile.profilePath) {
+                    try fileManager.removeItem(at: profile.profileURL)
+                    purged = true
+                }
+                // Purge the `<profilePath>-3p` overlay sibling too — it is created
+                // independently of the data dir, so remove it even if the data dir is
+                // already gone (removeOverlay no-ops when absent). Guard a name collision:
+                // if another launcher's user-data dir *is* that `-3p` path, it's that
+                // account's data, not our overlay — leave it alone.
+                let overlayPath = ManagedConfigWriter
+                    .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
+                let overlayIsAnothersData = survivors.contains {
+                    URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path == overlayPath
+                }
+                if !overlayIsAnothersData {
+                    try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
+                }
             }
         }
         return RemovalResult(
@@ -341,17 +358,9 @@ public struct ProfileStore {
     }
 
     /// Stop the running instance, polling until it exits or the timeout elapses.
-    ///
-    /// Polls with `Task.sleep`, not `Thread.sleep`: a stubborn process can keep us
-    /// waiting up to `pollInterval * maxPolls` (~10s by default), and this runs off
-    /// the main actor on the shared cooperative pool. Suspending instead of blocking
-    /// keeps that thread free for other work while we wait.
-    ///
-    /// Cancellation stops the wait: a cancelled `Task.sleep` throws, and we break out
-    /// rather than swallowing it and busy-spinning `runningPID` for the rest of the
-    /// budget. `pollInterval` is clamped only to keep a negative value out of
-    /// `Duration.seconds`; a zero or tiny interval still returns near-immediately, so
-    /// the loop can spin fast — bounded, either way, only by the `maxPolls` cap.
+    /// Graceful (SIGTERM) unless `force` requests SIGKILL. Delegates the signal +
+    /// poll loop to `stopProcess` (see `ProfileStore+Stop.swift`), differing from
+    /// `stopDefault` only in keying on this profile's pid.
     @discardableResult
     public func stop(
         _ profile: Profile,
@@ -360,17 +369,9 @@ public struct ProfileStore {
         maxPolls: Int = 20
     ) async -> StopOutcome {
         guard let pid = runningPID(for: profile) else { return .notRunning }
-        _ = signalSender(pid, force ? SIGKILL : SIGTERM)
-        let interval = Duration.seconds(max(0, pollInterval))
-        for _ in 0 ..< maxPolls {
-            do {
-                try await Task.sleep(for: interval)
-            } catch {
-                break // cancelled — stop waiting
-            }
-            if runningPID(for: profile) == nil { return .stopped }
+        return await stopProcess(pid: pid, force: force, pollInterval: pollInterval, maxPolls: maxPolls) {
+            runningPID(for: profile) == nil
         }
-        return .stillRunning(pid: pid)
     }
 
     /// Rebuild one launcher end-to-end from the current wrapper format — its bash
@@ -395,6 +396,9 @@ public struct ProfileStore {
         )
         try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
         iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+        // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
+        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
+        try? reconcileManagedConfig(for: profile)
     }
 
     /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
@@ -424,23 +428,12 @@ public struct ProfileStore {
             }
         }
         if !rebuilt.isEmpty { iconCache.restartDock() }
+        // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
+        // (harmless while live — read at next launch). No extra scan: reuse the sets.
+        for profile in skippedRunning {
+            try? reconcileManagedConfig(for: profile)
+        }
         return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
-    }
-
-    /// All running Claude instances across every bundle (for the status view).
-    public func runningInstances() -> [ClaudeInstance] {
-        processProbe.allClaudeMains()
-    }
-
-    /// Health check.
-    public func doctor() -> [Diagnostic] {
-        Doctor(
-            realClaude: realClaude,
-            configuration: configuration,
-            bundle: bundle,
-            processProbe: processProbe,
-            fileManager: fileManager
-        ).run()
     }
 
     // MARK: - Helpers

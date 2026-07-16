@@ -20,6 +20,17 @@ public struct ClaudeInstance: Equatable, Sendable {
         self.profilePath = profilePath
         self.runningVersion = runningVersion
     }
+
+    /// True when this instance runs the real Claude binary at `realClaude`'s path —
+    /// exactly the set ShipIt's swap gates on (the default account and every clone
+    /// `exec` that one binary). Excludes Claude Manager's own "Claude Manager" main,
+    /// which `ProcessProbe` also matches (its path contains "Claude" too) and which
+    /// must never count as a swap blocker. The single definition of "real-Claude
+    /// instance"; change the match (bundle id, a second binary path, symlink
+    /// resolution) here and every gate stays in lockstep.
+    public func isRealClaudeBinary(_ realClaude: RealClaude) -> Bool {
+        executablePath == realClaude.binaryURL.path
+    }
 }
 
 /// Detects running Claude instances. All process listing goes through the injected
@@ -62,14 +73,14 @@ public struct ProcessProbe {
         return Self.parseMains(psOutput: output.standardOutput)
     }
 
-    /// Profile dir → the version its live instance is running, from one `ps` sweep.
-    /// Only mains that reported a version and carry a `--user-data-dir` are included.
-    /// If duplicate instances share one profile, keeps the OLDEST version, so a lagging
-    /// instance still surfaces "restart to update" instead of being masked by a newer
-    /// sibling (a duplicate is itself flagged separately by `Doctor`).
-    public func runningVersionsByProfilePath() -> [String: String] {
+    /// Profile dir → the version its live instance is running, from an already-fetched sweep.
+    /// Only mains that reported a version and carry a `--user-data-dir` are included. If
+    /// duplicate instances share one profile, keeps the OLDEST version, so a lagging instance
+    /// still surfaces "restart to update" instead of being masked by a newer sibling (a
+    /// duplicate is itself flagged separately by `Doctor`).
+    public func runningVersionsByProfilePath(from mains: [ClaudeInstance]) -> [String: String] {
         var versions: [String: String] = [:]
-        for instance in allClaudeMains() {
+        for instance in mains {
             guard let profile = instance.profilePath, let version = instance.runningVersion else { continue }
             if let existing = versions[profile], !VersionOrder.isNewer(existing, than: version) { continue }
             versions[profile] = version
@@ -147,9 +158,13 @@ public struct ProcessProbe {
 
     /// Capture the whole --user-data-dir value, including spaces (the default
     /// profiles dir lives under "Application Support/Claude Manager/…"), stopping
-    /// only before the next `--flag` or end of line. `ps` space-joins argv, so a
-    /// greedy `\S+` would truncate any path containing a space.
-    private static let profileRegex = makeRegex(#"--user-data-dir=(.+?)(?=\s--|$)"#)
+    /// before the next `--flag`, a positional URL argument, or end of line. `ps`
+    /// space-joins argv, so a greedy `\S+` would truncate any path containing a
+    /// space. The URL stop matters because a forwarded deep link arrives as a
+    /// positional `claude://…` arg *after* `--user-data-dir` (see `openForwarding`);
+    /// without it the value would swallow the URL as part of the profile path.
+    private static let profileRegex =
+        makeRegex(#"--user-data-dir=(.+?)(?=\s--|\s[a-zA-Z][a-zA-Z0-9+.\-]*://|$)"#)
 
     private static func userDataDir(in arguments: String) -> String? {
         let range = NSRange(arguments.startIndex ..< arguments.endIndex, in: arguments)

@@ -8,19 +8,22 @@ public struct Doctor {
     let bundle: LauncherBundle
     let processProbe: ProcessProbe
     let fileManager: FileManager
+    let managedConfigWriter: ManagedConfigWriter
 
     public init(
         realClaude: RealClaude?,
         configuration: ProfileStoreConfiguration,
         bundle: LauncherBundle = LauncherBundle(),
         processProbe: ProcessProbe,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        managedConfigWriter: ManagedConfigWriter? = nil
     ) {
         self.realClaude = realClaude
         self.configuration = configuration
         self.bundle = bundle
         self.processProbe = processProbe
         self.fileManager = fileManager
+        self.managedConfigWriter = managedConfigWriter ?? ManagedConfigWriter(fileManager: fileManager)
     }
 
     public func run() -> [Diagnostic] {
@@ -36,9 +39,37 @@ public struct Doctor {
 
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
+        diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
+        diagnostics.append(contentsOf: stagedUpdateDiagnostics())
         diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
+    }
+
+    /// A warning when a Claude update is staged but not applied — ShipIt can't swap
+    /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
+    /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
+    private func stagedUpdateDiagnostics() -> [Diagnostic] {
+        guard let realClaude,
+              let staged = StagedUpdateProbe(
+                  realClaude: realClaude,
+                  shipItStatePath: configuration.shipItStatePath,
+                  fileManager: fileManager
+              ).probe()
+        else { return [] }
+        // Count only real-Claude instances (default + clones exec the real binary) — not
+        // Claude Manager's own process, whose path also contains "Claude".
+        let running = processProbe.allClaudeMains()
+            .count(where: { $0.isRealClaudeBinary(realClaude) })
+
+        let blockers = running == 0
+            ? ""
+            : " — \(running) running instance\(running == 1 ? "" : "s") block the swap"
+        return [Diagnostic(
+            severity: .warning,
+            title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
+            detail: "Use “Apply update to all accounts” to quit every account, swap, and reopen"
+        )]
     }
 
     // MARK: - Individual checks
@@ -130,6 +161,83 @@ public struct Doctor {
         }
     }
 
+    /// Managed-config overlay health for the cloned launchers. With no launchers there
+    /// is nothing to report. When Claude is MDM-managed the local overlay is overridden,
+    /// so we surface one *informational* (`.ok`) note — not a standing warning the user
+    /// can't clear — and skip the per-clone checks (the managed tier owns the policy).
+    /// Otherwise, warn once per distinct user-data-dir whose overlay does not disable
+    /// the updater — a best-effort write that silently failed, or a profile predating
+    /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
+    private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        // Nothing on disk to manage: no clones and no default-account overlay to check.
+        // Keyed on actual state, not the broker flag — the default account is never
+        // written, so an on-by-default broker alone is not something to report.
+        let defaultPath = configuration.defaultAccountUserDataPath
+        guard !discovered.isEmpty
+            || managedConfigWriter.overlayExists(userDataPath: defaultPath) else { return [] }
+
+        if managedConfigWriter.mdmPresent {
+            let path = managedConfigWriter.presentManagedPreferencesURL?.path
+                ?? CoreConstants.claudeManagedPreferencesPaths.first ?? ""
+            return [Diagnostic(
+                severity: .ok,
+                title: "Claude is MDM-managed — per-profile auto-update control is handled by managed preferences",
+                detail: PathUtils.abbreviatingHome(path)
+            )]
+        }
+        return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
+    }
+
+    /// Warn once per distinct clone user-data-dir whose overlay does not match what the
+    /// current broker setting expects (updater not disabled, or — with the broker on —
+    /// deep-link registration not suppressed).
+    private func cloneOverlayDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        let expected = ProfileManagedConfig.clone(
+            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
+        )
+        var seen = Set<String>()
+        return discovered.compactMap { launcher in
+            let profilePath = launcher.marker.profile
+            guard seen.insert(profilePath).inserted,
+                  !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath)
+            else { return nil }
+            return Diagnostic(
+                severity: .warning,
+                title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
+                detail: PathUtils.abbreviatingHome(profilePath)
+            )
+        }
+    }
+
+    /// The default account's overlay should be **empty**: it's the update leader (auto-update
+    /// stays on) and its `claude://` handler is held by the event-driven guard, never by a
+    /// written key. Warn if either CM-owned key is present anyway (left by an earlier build or
+    /// a manual edit) — a stray `disableAutoUpdates` silently breaks the update model for every
+    /// account, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
+    /// links. A reconcile (reopening Claude Manager) removes them.
+    private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
+        var diagnostics: [Diagnostic] = []
+        if managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableAutoUpdates: true), userDataPath: defaultPath
+        ) {
+            diagnostics.append(Diagnostic(
+                severity: .warning,
+                title: "Default account: auto-updates are disabled — reopen Claude Manager to restore them",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            ))
+        }
+        if managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
+        ) {
+            diagnostics.append(Diagnostic(
+                severity: .warning,
+                title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            ))
+        }
+        return diagnostics
+    }
+
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
         let dir = configuration.defaultProfilesDirectory
         guard let entries = try? fileManager.contentsOfDirectory(
@@ -146,6 +254,10 @@ public struct Doctor {
                 return isDirectory.boolValue
                     && !known.contains(entry.path)
                     && !entry.lastPathComponent.hasPrefix("_")
+                    // Skip our managed-config tier (`<userData>-3p`) — identified by its
+                    // `configLibrary/_meta.json`, not the name suffix, so a profile a user
+                    // happens to name `…-3p` is still orphan-scanned.
+                    && !isManagedConfigTier(entry)
             }
             .map {
                 Diagnostic(
@@ -154,6 +266,16 @@ public struct Doctor {
                     detail: PathUtils.abbreviatingHome($0.path)
                 )
             }
+    }
+
+    /// Whether `dir` is a Claude-Manager managed-config tier (`<userData>-3p`), identified
+    /// by its `configLibrary/_meta.json` sentinel rather than the `-3p` name suffix alone
+    /// (a user may legitimately name a profile ending in `-3p`).
+    private func isManagedConfigTier(_ dir: URL) -> Bool {
+        dir.lastPathComponent.hasSuffix("-3p")
+            && fileManager.fileExists(
+                atPath: dir.appendingPathComponent("configLibrary/_meta.json").path
+            )
     }
 
     private func duplicateInstanceDiagnostics() -> [Diagnostic] {

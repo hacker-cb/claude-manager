@@ -19,7 +19,7 @@ struct SettingsView: View {
                     value: model.realClaude.map { PathUtils.abbreviatingHome($0.appURL.path) } ?? "Not found"
                 )
                 LabeledContent("Version", value: model.realClaudeVersion ?? "—")
-                Button("Re-detect") { model.locate() }
+                Button("Re-detect") { Task { await model.relocate() } }
             }
 
             Section("Launcher install location") {
@@ -58,6 +58,8 @@ struct SettingsView: View {
             badgeSection
 
             startupSection
+
+            deepLinkSection
 
             Section("Updates") {
                 UpdaterSettingsView(updater: updater)
@@ -125,6 +127,26 @@ struct SettingsView: View {
             }
             Text("Editing updates newly created launchers. “Apply” rebuilds every existing launcher.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var deepLinkSection: some View {
+        Section("Deep links") {
+            Toggle("Route claude:// links to a chosen account", isOn: $model.deepLinkBrokerEnabled)
+            Text(
+                "On by default: Claude Manager is the default handler for claude:// links "
+                    + "and shows a picker so a login or SSO callback opens in the account you "
+                    + "choose — not always the default one."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            Text(
+                "Your default account is never modified — Claude Manager just holds the "
+                    + "handler while it runs, and hands it straight back to Claude when you turn "
+                    + "this off (or when Claude Manager is removed). While it isn't running, a "
+                    + "claude:// link opens (or relaunches) Claude Manager to route it. Links to "
+                    + "an already-running account can't be delivered — quit it first."
+            )
+            .font(.caption).foregroundStyle(.secondary)
         }
     }
 

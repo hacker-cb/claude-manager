@@ -33,8 +33,23 @@ struct MessageError: LocalizedError {
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var profiles: [ManagedProfile] = []
+    /// Observable state of the default account (the untouched real app), shown as the first
+    /// row of the account lists. `nil` when Claude.app can't be located.
+    @Published private(set) var primaryAccount: PrimaryAccountStatus?
     @Published private(set) var realClaude: RealClaude?
     @Published private(set) var realClaudeVersion: String?
+
+    /// The sidebar's account rows: the default account first (whenever Claude is located —
+    /// provisionally "stopped" until the next status probe fills `primaryAccount` in), then
+    /// each managed clone. Keyed off `realClaude`, not `primaryAccount`, so a Retry that
+    /// re-finds Claude shows the default row at once instead of waiting for a refresh. The
+    /// menu bar renders the same ordering directly, since its per-item affordances differ.
+    var accounts: [Account] {
+        guard realClaude != nil else { return profiles.map(Account.clone) }
+        let primary = primaryAccount ?? PrimaryAccountStatus(pid: nil)
+        return [.primary(primary)] + profiles.map(Account.clone)
+    }
+
     @Published var locateError: String?
     @Published private(set) var isBusy = false
     @Published var currentError: AppError?
@@ -48,10 +63,26 @@ final class AppModel: ObservableObject {
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
+    /// A Claude update ShipIt has staged but not applied (any open account blocks the
+    /// swap) — drives the "Apply update to all accounts" affordance. `nil` when none.
+    @Published private(set) var stagedUpdate: StagedUpdate?
+    /// True while a coordinated apply is in flight, so the UI disables re-triggering and
+    /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
+    @Published private(set) var isApplyingStagedUpdate = false
+    /// Staged versions already surfaced as a notification, so it nags once per version.
+    var notifiedStagedUpdate: Set<String> = []
+
+    /// Flip the apply-in-flight flag (`private(set)`, so the extension drives it via this).
+    func setApplyingStagedUpdate(_ value: Bool) {
+        isApplyingStagedUpdate = value
+    }
+
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    private var notifiedClaudeUpdates: Set<String> = []
+    /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
+    /// notifications.
+    var notifiedClaudeUpdates: Set<String> = []
     private var monitorTask: Task<Void, Never>?
     private var activationObserver: (any NSObjectProtocol)?
 
@@ -77,6 +108,27 @@ final class AppModel: ObservableObject {
         didSet { persistBadgeStyle() }
     }
 
+    /// Whether the `claude://` deep-link broker owns the handler (on by default). Changing it
+    /// after launch reconciles the overlays and grabs / restores the handler.
+    @Published var deepLinkBrokerEnabled: Bool {
+        didSet {
+            defaults.set(deepLinkBrokerEnabled, forKey: PreferenceKeys.deepLinkBrokerEnabled)
+            guard didFinishInit else { return }
+            scheduleBrokerApply()
+        }
+    }
+
+    /// App-layer wiring for the broker (handler registration + hold/restore). Non-private
+    /// so the `AppModel+DeepLink` extension can reach it.
+    let deepLinkService = DeepLinkService()
+    let deepLinkPresenter = DeepLinkPresenter()
+    /// Inbound `claude://` links awaiting a picker, shown one at a time.
+    var pendingDeepLinkQueue: [URL] = []
+    /// The in-flight broker apply, so a rapid toggle chains rather than races (see
+    /// `scheduleBrokerApply`). Non-private for the `AppModel+DeepLink` extension.
+    var brokerApplyTask: Task<Void, Never>?
+    private var didFinishInit = false
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -85,8 +137,24 @@ final class AppModel: ObservableObject {
         installOverridePath = defaults.string(forKey: PreferenceKeys.installDirectoryOverride) ?? ""
         profilesOverridePath = defaults.string(forKey: PreferenceKeys.profilesDirectoryOverride) ?? ""
         badgeStyle = Self.loadBadgeStyle(from: defaults)
+        // On by default: `object` distinguishes "never set" (→ true) from an explicit off.
+        deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
         locate()
+        didFinishInit = true
+        // On the next runloop (delegate installed), wire the AppKit deep-link sink and run
+        // the launch tasks — window-independently, since a login/menu-bar-only launch shows
+        // no window (so `RootView.task` may never run) yet must still grab the handler.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            (NSApp.delegate as? AppDelegate)?.deepLinkHandler = { [weak self] urls in
+                self?.handleDeepLinks(urls)
+            }
+            Task { @MainActor in await self.performLaunchTasks() }
+        }
     }
+
+    /// One-shot guard for `performLaunchTasks` (owned by the `AppModel+DeepLink` extension).
+    var didPerformLaunch = false
 
     private static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
         guard let data = defaults.data(forKey: PreferenceKeys.badgeStyle),
@@ -121,8 +189,28 @@ final class AppModel: ObservableObject {
         } catch {
             realClaude = nil
             realClaudeVersion = nil
+            primaryAccount = nil
+            // A vanished Claude has no staged update to apply; clear it so the banner doesn't
+            // outlive the app it refers to (refresh, its only other writer, bails while nil).
+            stagedUpdate = nil
             locateError = Self.describe(error)
         }
+    }
+
+    /// User-driven re-detect (the missing-Claude banner's Retry and Settings' Re-detect):
+    /// locate synchronously, then — only if Claude was found — refresh so it repopulates the
+    /// account list (the default-account row included) without waiting for the next poll.
+    /// Skipping refresh when locate still fails avoids `perform` surfacing a redundant
+    /// "Claude not found" alert on top of the banner that already says so.
+    func relocate() async {
+        locate()
+        guard realClaude != nil else { return }
+        await refresh()
+        // A first launch with Claude missing skipped the broker apply (`perform` bailed, so
+        // `reconcileAllManagedConfigs` never ran and the `claude://` handler was never grabbed).
+        // Re-run it now that Claude is found, so clone overlays and the handler are consistent
+        // without needing an app restart or a manual broker toggle. Idempotent.
+        await applyDeepLinkBroker()
     }
 
     private func currentConfiguration() -> ProfileStoreConfiguration? {
@@ -131,6 +219,7 @@ final class AppModel: ObservableObject {
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
         config.defaultProfilesDirectory = effectiveProfilesDirectory
         config.badgeStyle = badgeStyle
+        config.deepLinkBrokerEnabled = deepLinkBrokerEnabled
         return config
     }
 
@@ -144,9 +233,15 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let sizes = measureSizes
-        guard let listed = await perform({ store in store.list(measuringSizes: sizes) }) else { return }
-        profiles = listed
+        // One process sweep yields both the launcher list and the default-account status.
+        guard let snapshot = await perform({ store in store.snapshot(measuringSizes: sizes) }) else { return }
+        profiles = snapshot.profiles
+        primaryAccount = snapshot.primaryAccount
+        // Probe the staged update directly (not via `snapshot`, which is empty of clones when
+        // there are none — the default account can still have one staged).
+        stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
+        await notifyStagedUpdateIfNeeded()
     }
 
     func runDoctor() async {
@@ -194,27 +289,6 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
-    func open(_ profile: Profile) async {
-        // A running profile only needs its window raised — activate it by pid instead of
-        // relaunching the launcher app, which would flash a transient Dock icon (it
-        // starts, self-activates via `activate_existing`, and exits at once). Fall back to
-        // a launch (shlock-guarded) when nothing owns the probed pid. Refresh either way,
-        // so a list that was stale-as-stopped reflects the profile we just proved running.
-        if let pid = await runningPID(for: profile), activateApp(pid: pid) {
-            await refresh()
-            return
-        }
-        _ = await perform { store in try store.open(profile) }
-        await refresh()
-    }
-
-    /// Running pid for a managed profile, or `nil`. `nil` means "not running" — and a
-    /// `perform` probe failure flattens to the same `nil`, so the two are indistinguishable
-    /// here; the caller treats `nil` as "launch it", the safe reading either way.
-    private func runningPID(for profile: Profile) async -> Int32? {
-        await perform { store in store.runningPID(for: profile) }.flatMap(\.self)
-    }
-
     /// Bring the app that owns `pid` to the front, returning whether it was activated.
     /// `false` means no running app owns `pid` (just quit / not yet registered) or the
     /// activation request was refused — either way the caller falls back to a launch.
@@ -238,25 +312,6 @@ final class AppModel: ObservableObject {
         if case let .stillRunning(pid)? = outcome {
             currentError =
                 AppError(message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop.")
-        }
-        await refresh()
-    }
-
-    /// Quit the running instance and relaunch it — how a live instance moves onto a
-    /// freshly-updated Claude (its version is fixed at launch, so only a relaunch
-    /// picks up an in-place app update). Graceful stop first; if it won't exit, leave
-    /// it running and surface the same notice `stop` does rather than force-killing.
-    func restart(_ profile: Profile) async {
-        let outcome = await perform { store in await store.stop(profile, force: false) }
-        switch outcome {
-        case .stopped?, .notRunning?:
-            _ = await perform { store in try store.open(profile) }
-        case let .stillRunning(pid)?:
-            currentError = AppError(
-                message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop, then Open."
-            )
-        case nil:
-            break // perform already surfaced the failure
         }
         await refresh()
     }
@@ -300,16 +355,6 @@ final class AppModel: ObservableObject {
         return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
     }
 
-    // MARK: - Finder helpers
-
-    func revealProfileData(_ profile: Profile) {
-        NSWorkspace.shared.activateFileViewerSelecting([profile.profileURL])
-    }
-
-    func revealLauncher(_ profile: Profile) {
-        NSWorkspace.shared.activateFileViewerSelecting([profile.appURL])
-    }
-
     // MARK: - Claude update monitoring
 
     /// Start watching for the real Claude.app updating out from under running
@@ -322,7 +367,16 @@ final class AppModel: ObservableObject {
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.reconcile() }
+            Task { @MainActor in
+                guard let self else { return }
+                // A cheap guaranteed re-check on top of the Darwin observer: if Claude
+                // grabbed the handler while we were away, take it back.
+                self.deepLinkService.reassertIfNeeded()
+                // Skip the rescan while a staged-update apply is in flight (same reason as
+                // the poll loop: avoid a relaunch during ShipIt's swap window).
+                guard !self.isApplyingStagedUpdate else { return }
+                await self.reconcile()
+            }
         }
         monitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -330,8 +384,10 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 // Poll only while frontmost — a backgrounded menu-bar app catches up
                 // via didBecomeActive instead of spawning `ps` every minute forever.
-                // @MainActor so NSApp.isActive is read on the main thread.
-                if NSApp.isActive { await reconcile() }
+                // @MainActor so NSApp.isActive is read on the main thread. Skip while a
+                // staged-update apply is in flight: re-probing is fine, but a relaunch it
+                // could trigger during the swap window would trip ShipIt's Gate 2.
+                if NSApp.isActive, !isApplyingStagedUpdate { await reconcile() }
             }
         }
     }
@@ -378,38 +434,14 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
-        locateError = located.error
-    }
-
-    /// Post a local notification for each running launcher newly found to be behind the
-    /// on-disk Claude — once per pending version, and only once notifications are
-    /// actually authorized, so a permission prompt answered later still fires.
-    private func notifyClaudeUpdatesIfNeeded() async {
-        let behind = profiles.filter(\.claudeUpdateAvailable)
-        // Forget skews that resolved (the instance was restarted) so a later update
-        // re-notifies; a key is *added* only after its notification is actually posted.
-        notifiedClaudeUpdates.formIntersection(Set(behind.map(claudeUpdateKey)))
-        let fresh = behind.filter { !notifiedClaudeUpdates.contains(claudeUpdateKey($0)) }
-        guard !fresh.isEmpty else { return }
-        let center = UNUserNotificationCenter.current()
-        let status = await center.notificationSettings().authorizationStatus
-        // Not (yet) authorized — leave keys unmarked so a later refresh retries once
-        // the user has answered the permission prompt.
-        guard status == .authorized || status == .provisional else { return }
-        for managed in fresh {
-            let content = UNMutableNotificationContent()
-            content.title = "\(managed.profile.displayName): restart to update"
-            content.body = "Running \(managed.runningClaudeVersion ?? "an older build") — "
-                + "Claude \(managed.availableClaudeVersion ?? "") is installed."
-            try? await center.add(UNNotificationRequest(
-                identifier: "claude-update-\(managed.id)", content: content, trigger: nil
-            ))
-            notifiedClaudeUpdates.insert(claudeUpdateKey(managed))
+        // A vanished Claude leaves no default account and no staged update to apply;
+        // `reconcile` returns before `refresh` could recompute them, so clear the stale
+        // primary row and staged-update banner here.
+        if located.real == nil {
+            primaryAccount = nil
+            stagedUpdate = nil
         }
-    }
-
-    private func claudeUpdateKey(_ managed: ManagedProfile) -> String {
-        "\(managed.id)@\(managed.availableClaudeVersion ?? "")"
+        locateError = located.error
     }
 
     // MARK: - Plumbing
