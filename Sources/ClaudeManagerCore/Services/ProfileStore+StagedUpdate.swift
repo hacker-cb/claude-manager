@@ -120,17 +120,21 @@ public extension ProfileStore {
         return relaunched
     }
 
-    /// Reopen the default account, returning whether it launched. Uses a plain `open` (which
-    /// de-dups) when **no** real-Claude instance is running, so a default that ShipIt may have
-    /// relaunched between the `runningDefaultPID()` check and here is *activated*, not forced
-    /// into a duplicate on its user-data-dir (LevelDB corruption). Only when another real-Claude
-    /// instance is running is `-n` required — there a plain `open` would merely activate that
-    /// instance (they share the one bundle id) instead of starting the default.
+    /// Reopen the default account, returning whether it launched. A plain `open` (which
+    /// de-dups) is safe unless a **non-default** real-Claude instance is running: if nothing
+    /// runs it launches the default, and if only the default itself is up — e.g. ShipIt
+    /// relaunched it in the race window between `relaunchSnapshot`'s `runningDefaultPID()`
+    /// guard and here — it *activates* that instance rather than forcing a duplicate onto its
+    /// user-data-dir (LevelDB corruption). `-n` is required only when a clone or an external
+    /// `--user-data-dir` instance is running, since there a plain `open` would merely activate
+    /// *that* instance (all share the one bundle id) instead of starting the default. The
+    /// default's own instance carries no `--user-data-dir`, so it has a `nil` profile path.
     private func relaunchDefaultAccount() -> Bool {
-        if blockingInstances().isEmpty {
-            return (try? runner.runChecked(CoreConstants.openPath, [realClaude.appURL.path])) != nil
+        let nonDefaultRunning = blockingInstances().contains { $0.profilePath != nil }
+        if nonDefaultRunning {
+            return (try? openReal()) != nil
         }
-        return (try? openReal()) != nil
+        return (try? runner.runChecked(CoreConstants.openPath, [realClaude.appURL.path])) != nil
     }
 
     private func pollUntilNoBlockingInstances(interval: TimeInterval, maxPolls: Int) async -> Bool {

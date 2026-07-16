@@ -243,6 +243,39 @@ struct ProfileStoreStagedUpdateTests {
     }
 
     @Test
+    func relaunchUsesOpenNForDefaultWhenANonDefaultInstanceRuns() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        // Default running at snapshot (we quit it), while an external, unmanaged
+        // `--user-data-dir` instance keeps blocking the swap → abort path, default relaunched.
+        // A non-default instance is up, so the default must be reopened with `open -n` — a
+        // plain `open` would merely activate that instance (all share the one bundle id).
+        let realBin = env.real.binaryURL.path
+        let psCalls = CallCounter()
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                let defaultShown = psCalls.next() <= 2
+                var out = "  900     1 \(realBin) --user-data-dir=/external\n"
+                if defaultShown { out = "  501     1 \(realBin)\n" + out }
+                return CommandOutput(exitCode: 0, standardOutput: out, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+
+        let result = await env.store.applyStagedUpdateToAll(stopPollInterval: 0.01, stopMaxPolls: 2)
+        guard case .instancesStillRunning = result.outcome else {
+            Issue.record("expected instancesStillRunning, got \(result.outcome)")
+            return
+        }
+        #expect(result.relaunched == ["default account"])
+        let opens = env.runner.invocations(of: CoreConstants.openPath)
+        #expect(opens.contains { $0.arguments == ["-n", env.real.appURL.path] })
+        #expect(!opens.contains { $0.arguments == [env.real.appURL.path] })
+    }
+
+    @Test
     func makeDefaultDerivesShipItPathFromBundleID() throws {
         let root = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: root) }
