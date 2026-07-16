@@ -58,9 +58,13 @@ public extension ProfileStore {
         // ShipIt gates on *zero* real-Claude instances — if any won't exit, abort before
         // the swap but still reopen whatever *did* stop, so the working set isn't lost.
         guard await pollUntilNoBlockingInstances(interval: stopPollInterval, maxPolls: stopMaxPolls) else {
+            // Capture the blockers *before* relaunching — otherwise an account that did quit
+            // and we reopen here can reappear in `ps` and be misreported as one that
+            // "wouldn't quit gracefully", inflating the count and blaming a healthy account.
+            let stillRunning = blockingInstanceNames()
             let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
             return ApplyStagedUpdateResult(
-                outcome: .instancesStillRunning(blockingInstanceNames()), relaunched: relaunched
+                outcome: .instancesStillRunning(stillRunning), relaunched: relaunched
             )
         }
 

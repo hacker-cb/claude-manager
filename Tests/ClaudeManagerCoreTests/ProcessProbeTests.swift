@@ -59,6 +59,30 @@ struct ProcessProbeTests {
     }
 
     @Test
+    func stopsProfileCaptureAtForwardedDeepLinkURL() {
+        // A forwarded deep link launches the launcher with the URL as a positional arg AFTER
+        // --user-data-dir (see openForwarding). The profile path must stop before the URL, not
+        // swallow it — else the running instance is misattributed and the URL leaks into
+        // version diagnostics / blocker output.
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/data/work claude://login?code=abc123"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains.count == 1)
+        #expect(mains[0].profilePath == "/data/work")
+    }
+
+    @Test
+    func keepsSpacedProfilePathButStopsAtDeepLinkURL() {
+        // The spaced-path capture and the URL stop must coexist: a path with spaces followed
+        // by a positional https:// auth callback keeps the whole path and drops the URL.
+        let ps = "  501     1 /Applications/Claude.app/Contents/MacOS/Claude "
+            + "--user-data-dir=/Users/x/Application Support/Claude Manager/Profiles/work "
+            + "https://auth.example/callback"
+        let mains = ProcessProbe.parseMains(psOutput: ps)
+        #expect(mains[0].profilePath == "/Users/x/Application Support/Claude Manager/Profiles/work")
+    }
+
+    @Test
     func allClaudeMainsIgnoresFailedPs() {
         // A non-zero `ps` exit yields no instances — its output is ignored.
         let runner = RecordingCommandRunner { _, _ in

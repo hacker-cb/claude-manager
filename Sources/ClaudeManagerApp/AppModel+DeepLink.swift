@@ -124,6 +124,16 @@ extension AppModel {
     private func presentPicker(for url: URL) async {
         // Always refresh so a since-deleted profile is never offered as a target.
         await refresh()
+        // Claude vanished after the broker grabbed the handler — every target (default +
+        // clones) would dead-end in "Real Claude.app was not found", so don't offer a picker
+        // at all. Drain the queue, surface the reason once, and release the reservation so the
+        // presenter doesn't stall. Mirrors `accounts`, which also hides the default when nil.
+        guard realClaude != nil else {
+            currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
+            pendingDeepLinkQueue.removeAll()
+            deepLinkPresenter.cancelReservation()
+            return
+        }
         // Default account first, matching the sidebar and menu-bar ordering.
         let targets: [DeepLinkTarget] = [.defaultAccount] + profiles.map { .profile($0.profile) }
         deepLinkPresenter.present(url: url, targets: targets) { [weak self] target in

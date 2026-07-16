@@ -17,6 +17,9 @@ extension AppModel {
         if let result, let notice = Self.notice(for: result) {
             currentError = AppError(message: notice)
         }
+        // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
+        // otherwise the default account's version display lags a build until the next poll.
+        locate()
         // Refresh (which recomputes `stagedUpdate`) *before* clearing the flag, so the
         // Apply affordance isn't re-enabled for a frame with a now-stale staged update.
         await refresh()

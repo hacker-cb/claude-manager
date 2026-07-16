@@ -209,20 +209,33 @@ public struct Doctor {
         }
     }
 
-    /// The default account should **never** carry a CM-written `disableDeepLinkRegistration`
-    /// — its `claude://` handler is held by the event-driven guard, not a written key.
-    /// Warn if the key is present anyway (left by an earlier build, or a manual edit),
-    /// since that silently drops the default account's non-auth deep links; a reconcile
-    /// (reopening Claude Manager) removes it.
+    /// The default account's overlay should be **empty**: it's the update leader (auto-update
+    /// stays on) and its `claude://` handler is held by the event-driven guard, never by a
+    /// written key. Warn if either CM-owned key is present anyway (left by an earlier build or
+    /// a manual edit) — a stray `disableAutoUpdates` silently breaks the update model for every
+    /// account, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
+    /// links. A reconcile (reopening Claude Manager) removes them.
     private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
-        guard managedConfigWriter.isSatisfied(
+        var diagnostics: [Diagnostic] = []
+        if managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableAutoUpdates: true), userDataPath: defaultPath
+        ) {
+            diagnostics.append(Diagnostic(
+                severity: .warning,
+                title: "Default account: auto-updates are disabled — reopen Claude Manager to restore them",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            ))
+        }
+        if managedConfigWriter.isSatisfied(
             ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
-        ) else { return [] }
-        return [Diagnostic(
-            severity: .warning,
-            title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
-            detail: PathUtils.abbreviatingHome(defaultPath)
-        )]
+        ) {
+            diagnostics.append(Diagnostic(
+                severity: .warning,
+                title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            ))
+        }
+        return diagnostics
     }
 
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {

@@ -322,9 +322,8 @@ public struct ProfileStore {
         if purgeProfile {
             // Never delete data another launcher still points at (the launcher we
             // just trashed is already gone from the scan).
-            let sharedByAnother = bundle
-                .scan(installDirectory: configuration.installDirectory)
-                .contains { $0.marker.profile == profile.profilePath }
+            let survivors = bundle.scan(installDirectory: configuration.installDirectory)
+            let sharedByAnother = survivors.contains { $0.marker.profile == profile.profilePath }
             if !sharedByAnother {
                 if fileManager.fileExists(atPath: profile.profilePath) {
                     try fileManager.removeItem(at: profile.profileURL)
@@ -332,8 +331,17 @@ public struct ProfileStore {
                 }
                 // Purge the `<profilePath>-3p` overlay sibling too — it is created
                 // independently of the data dir, so remove it even if the data dir is
-                // already gone (removeOverlay no-ops when absent).
-                try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
+                // already gone (removeOverlay no-ops when absent). Guard a name collision:
+                // if another launcher's user-data dir *is* that `-3p` path, it's that
+                // account's data, not our overlay — leave it alone.
+                let overlayPath = ManagedConfigWriter
+                    .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
+                let overlayIsAnothersData = survivors.contains {
+                    URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path == overlayPath
+                }
+                if !overlayIsAnothersData {
+                    try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
+                }
             }
         }
         return RemovalResult(
