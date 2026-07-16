@@ -234,14 +234,31 @@ struct DoctorTests {
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
         try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
         // The clone's `-3p` overlay tier lives in the profiles dir — not a user profile.
-        try fm.createDirectory(
-            at: scene.profilesDir.appendingPathComponent("work-3p"),
-            withIntermediateDirectories: true
-        )
+        // It's identified by its `configLibrary/_meta.json` sentinel, so materialize that.
+        let tierConfigLib = scene.profilesDir.appendingPathComponent("work-3p/configLibrary")
+        try fm.createDirectory(at: tierConfigLib, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: tierConfigLib.appendingPathComponent("_meta.json"))
 
         let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains {
             $0.title == "Orphan profile (no launcher)" && ($0.detail?.contains("work-3p") ?? false)
+        })
+    }
+
+    @Test
+    func orphanDirNamedLikeTierIsStillFlagged() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        // A dir whose name merely ends in `-3p` but is NOT a managed-config tier (it has no
+        // `configLibrary/_meta.json`) is a real user profile dir — still orphan-scanned.
+        try fm.createDirectory(
+            at: scene.profilesDir.appendingPathComponent("ghost-3p"),
+            withIntermediateDirectories: true
+        )
+
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(diags.contains {
+            $0.title == "Orphan profile (no launcher)" && ($0.detail?.contains("ghost-3p") ?? false)
         })
     }
 

@@ -60,6 +60,22 @@ struct StagedUpdateProbeTests {
     }
 
     @Test
+    func detectsStagedBundleGivenPlainPath() throws {
+        let scene = try makeScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        try arm(scene, stagedVersion: "9.9.10")
+        // Rewrite the state with updateBundleURL as a plain absolute path (no `file://`),
+        // which `URL(string:)` wouldn't treat as a file URL — the fallback must still find it.
+        let state: [String: Any] = ["updateBundleURL": scene.stagedBundle.path]
+        try JSONSerialization.data(withJSONObject: state)
+            .write(to: URL(fileURLWithPath: scene.shipItStatePath))
+
+        let staged = try #require(probe(scene).probe())
+        #expect(staged.stagedVersion == "9.9.10")
+        #expect(staged.stagedBundleURL.path == scene.stagedBundle.path)
+    }
+
+    @Test
     func noStateFileYieldsNil() throws {
         let scene = try makeScene()
         defer { try? fm.removeItem(at: scene.root) }
