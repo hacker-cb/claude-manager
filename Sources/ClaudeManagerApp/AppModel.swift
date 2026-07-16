@@ -206,6 +206,11 @@ final class AppModel: ObservableObject {
         locate()
         guard realClaude != nil else { return }
         await refresh()
+        // A first launch with Claude missing skipped the broker apply (`perform` bailed, so
+        // `reconcileAllManagedConfigs` never ran and the `claude://` handler was never grabbed).
+        // Re-run it now that Claude is found, so clone overlays and the handler are consistent
+        // without needing an app restart or a manual broker toggle. Idempotent.
+        await applyDeepLinkBroker()
     }
 
     private func currentConfiguration() -> ProfileStoreConfiguration? {

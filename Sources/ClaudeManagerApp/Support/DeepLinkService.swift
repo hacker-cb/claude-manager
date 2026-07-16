@@ -98,6 +98,14 @@ final class DeepLinkService {
     /// A `CFNotificationCenter` Darwin-notification observer registrar (pure CoreFoundation,
     /// no bridging header). Delivers on the thread's run loop — the main run loop here —
     /// matching the guard's main-queue expectation. Returns a cancel closure.
+    ///
+    /// Lifetime safety: registration and `cancel` both run on the main queue, and the Darwin
+    /// center delivers on the main run loop, so a callback and `cancel` never run concurrently;
+    /// `CFNotificationCenterRemoveObserver` also drops the registration before `release`, so no
+    /// callback fires (touching the box) after cancel. `notify_register_dispatch` would express
+    /// this more directly, but the macOS SDK doesn't vend `<notify.h>` through the `Darwin`
+    /// module (it's absent from the umbrella modulemap), so it isn't reachable without adding a
+    /// bridging header — not worth it here.
     private static let darwinRegistrar: LaunchServicesHandlerGuard.ObserverRegistrar = { name, onChange in
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let box = ObserverBox(onChange)
@@ -118,9 +126,8 @@ final class DeepLinkService {
 }
 
 /// Retains a `@Sendable` callback so it can ride through a `CFNotificationCenter`
-/// C-callback's opaque context pointer. The Darwin notify center can invoke the callback
-/// on an arbitrary thread, so `fire()` hops to the main queue — the guard's state and its
-/// `MainActor.assumeIsolated` lookups are main-only, so running them off-main would be UB.
+/// C-callback's opaque context pointer. `fire()` hops to the main queue defensively — the
+/// guard's state and its `MainActor.assumeIsolated` lookups are main-only.
 private final class ObserverBox: @unchecked Sendable {
     private let onChange: @Sendable () -> Void
     init(_ onChange: @escaping @Sendable () -> Void) {

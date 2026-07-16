@@ -111,13 +111,30 @@ public extension ProfileStore {
     /// but is skipped for symmetry.
     private func relaunchSnapshot(clones: [Profile], defaultWasRunning: Bool) -> [String] {
         var relaunched: [String] = []
-        if defaultWasRunning, runningDefaultPID() == nil, (try? openReal()) != nil {
+        if defaultWasRunning, runningDefaultPID() == nil, relaunchDefaultAccount() {
             relaunched.append("default account")
         }
         for clone in clones where runningPID(for: clone) == nil && (try? open(clone)) != nil {
             relaunched.append(clone.displayName)
         }
         return relaunched
+    }
+
+    /// Reopen the default account, returning whether it launched. A plain `open` (which
+    /// de-dups) is safe unless a **non-default** real-Claude instance is running: if nothing
+    /// runs it launches the default, and if only the default itself is up — e.g. ShipIt
+    /// relaunched it in the race window between `relaunchSnapshot`'s `runningDefaultPID()`
+    /// guard and here — it *activates* that instance rather than forcing a duplicate onto its
+    /// user-data-dir (LevelDB corruption). `-n` is required only when a clone or an external
+    /// `--user-data-dir` instance is running, since there a plain `open` would merely activate
+    /// *that* instance (all share the one bundle id) instead of starting the default. The
+    /// default's own instance carries no `--user-data-dir`, so it has a `nil` profile path.
+    private func relaunchDefaultAccount() -> Bool {
+        let nonDefaultRunning = blockingInstances().contains { $0.profilePath != nil }
+        if nonDefaultRunning {
+            return (try? openReal()) != nil
+        }
+        return (try? runner.runChecked(CoreConstants.openPath, [realClaude.appURL.path])) != nil
     }
 
     private func pollUntilNoBlockingInstances(interval: TimeInterval, maxPolls: Int) async -> Bool {

@@ -103,6 +103,9 @@ final class HandlerState: @unchecked Sendable {
     }
 }
 
+// `@MainActor`: the guard now asserts `dispatchPrecondition(.onQueue(.main))`, matching how
+// the app drives it — so its tests must run on the main queue too.
+@MainActor
 struct LaunchServicesHandlerGuardTests {
     let ourID = "io.github.hacker-cb.claude-manager"
 
