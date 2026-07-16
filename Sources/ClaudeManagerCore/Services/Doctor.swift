@@ -241,8 +241,10 @@ public struct Doctor {
                 return isDirectory.boolValue
                     && !known.contains(entry.path)
                     && !entry.lastPathComponent.hasPrefix("_")
-                    // `<name>-3p` is our managed-config tier, not a user profile dir.
-                    && !entry.lastPathComponent.hasSuffix("-3p")
+                    // Skip our managed-config tier (`<userData>-3p`) — identified by its
+                    // `configLibrary/_meta.json`, not the name suffix, so a profile a user
+                    // happens to name `…-3p` is still orphan-scanned.
+                    && !isManagedConfigTier(entry)
             }
             .map {
                 Diagnostic(
@@ -251,6 +253,16 @@ public struct Doctor {
                     detail: PathUtils.abbreviatingHome($0.path)
                 )
             }
+    }
+
+    /// Whether `dir` is a Claude-Manager managed-config tier (`<userData>-3p`), identified
+    /// by its `configLibrary/_meta.json` sentinel rather than the `-3p` name suffix alone
+    /// (a user may legitimately name a profile ending in `-3p`).
+    private func isManagedConfigTier(_ dir: URL) -> Bool {
+        dir.lastPathComponent.hasSuffix("-3p")
+            && fileManager.fileExists(
+                atPath: dir.appendingPathComponent("configLibrary/_meta.json").path
+            )
     }
 
     private func duplicateInstanceDiagnostics() -> [Diagnostic] {

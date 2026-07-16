@@ -43,11 +43,17 @@ public struct StagedUpdateProbe {
               let object = try? JSONSerialization.jsonObject(with: data),
               let dict = object as? [String: Any],
               let urlString = dict["updateBundleURL"] as? String,
-              let url = URL(string: urlString),
-              url.isFileURL,
+              let url = Self.fileURL(from: urlString),
               fileManager.fileExists(atPath: url.path)
         else { return nil }
         return url
+    }
+
+    /// Resolve `updateBundleURL` to a file URL. ShipIt writes a `file://` URL, but accept a
+    /// plain absolute path too, so a wire-format change can't make a staged bundle invisible.
+    private static func fileURL(from string: String) -> URL? {
+        if let url = URL(string: string), url.isFileURL { return url }
+        return string.hasPrefix("/") ? URL(fileURLWithPath: string) : nil
     }
 
     /// `CFBundleShortVersionString` of the bundle at `bundleURL`, if readable.
