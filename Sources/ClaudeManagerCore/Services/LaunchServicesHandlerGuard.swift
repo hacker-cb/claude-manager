@@ -63,6 +63,7 @@ public final class LaunchServicesHandlerGuard: @unchecked Sendable {
     /// the handler us, so the resulting DB-change re-entry finds nothing to do.
     @discardableResult
     public func reassertIfNeeded() -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard currentHandler() != ourBundleID else { return false }
         reassert()
         return true
@@ -70,6 +71,7 @@ public final class LaunchServicesHandlerGuard: @unchecked Sendable {
 
     /// Take the handler now, then observe DB changes and re-assert on each. Idempotent.
     public func start() {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard cancelObserver == nil else { return }
         reassertIfNeeded()
         cancelObserver = registrar(notificationName) { [weak self] in
@@ -79,6 +81,7 @@ public final class LaunchServicesHandlerGuard: @unchecked Sendable {
 
     /// Stop observing. Idempotent.
     public func stop() {
+        dispatchPrecondition(condition: .onQueue(.main))
         cancelObserver?()
         cancelObserver = nil
     }

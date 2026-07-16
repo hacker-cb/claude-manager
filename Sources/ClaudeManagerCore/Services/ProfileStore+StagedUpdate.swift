@@ -111,13 +111,26 @@ public extension ProfileStore {
     /// but is skipped for symmetry.
     private func relaunchSnapshot(clones: [Profile], defaultWasRunning: Bool) -> [String] {
         var relaunched: [String] = []
-        if defaultWasRunning, runningDefaultPID() == nil, (try? openReal()) != nil {
+        if defaultWasRunning, runningDefaultPID() == nil, relaunchDefaultAccount() {
             relaunched.append("default account")
         }
         for clone in clones where runningPID(for: clone) == nil && (try? open(clone)) != nil {
             relaunched.append(clone.displayName)
         }
         return relaunched
+    }
+
+    /// Reopen the default account, returning whether it launched. Uses a plain `open` (which
+    /// de-dups) when **no** real-Claude instance is running, so a default that ShipIt may have
+    /// relaunched between the `runningDefaultPID()` check and here is *activated*, not forced
+    /// into a duplicate on its user-data-dir (LevelDB corruption). Only when another real-Claude
+    /// instance is running is `-n` required — there a plain `open` would merely activate that
+    /// instance (they share the one bundle id) instead of starting the default.
+    private func relaunchDefaultAccount() -> Bool {
+        if blockingInstances().isEmpty {
+            return (try? runner.runChecked(CoreConstants.openPath, [realClaude.appURL.path])) != nil
+        }
+        return (try? openReal()) != nil
     }
 
     private func pollUntilNoBlockingInstances(interval: TimeInterval, maxPolls: Int) async -> Bool {
