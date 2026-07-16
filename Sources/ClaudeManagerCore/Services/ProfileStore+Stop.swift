@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Process-lifecycle timing primitives shared by every stop path: send a signal and
