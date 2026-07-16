@@ -84,7 +84,7 @@ public extension ProfileStore {
     /// so this is exactly the set ShipIt gates on. Excludes Claude Manager's own process,
     /// whose path also contains "Claude" and would otherwise keep the gate from ever passing.
     private func blockingInstances() -> [ClaudeInstance] {
-        runningInstances().filter { $0.executablePath == realClaude.binaryURL.path }
+        runningInstances().filter { $0.isRealClaudeBinary(realClaude) }
     }
 
     /// Friendly names for the still-running blockers — a clone's display name where the
@@ -131,21 +131,5 @@ public extension ProfileStore {
             guard let current = realClaude.version(fileManager: fileManager) else { return false }
             return current == version || VersionOrder.isNewer(current, than: version)
         }
-    }
-
-    /// Poll `condition` up to `maxPolls` times, suspending `interval` between checks (never
-    /// blocking a thread). Returns true as soon as it holds; a cancelled sleep stops early.
-    private func poll(interval: TimeInterval, maxPolls: Int, _ condition: () -> Bool) async -> Bool {
-        if condition() { return true }
-        let duration = Duration.seconds(max(0, interval))
-        for _ in 0 ..< maxPolls {
-            do {
-                try await Task.sleep(for: duration)
-            } catch {
-                break
-            }
-            if condition() { return true }
-        }
-        return condition()
     }
 }

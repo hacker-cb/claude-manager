@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
@@ -125,6 +126,33 @@ struct ProcessProbeTests {
         #expect(call?.arguments.first == "-f")
         #expect(call?.arguments
             .last == #"^/Applications/Claude\.app/Contents/MacOS/Claude --user-data-dir=/data/p( |$)"#)
+    }
+
+    @Test
+    func isRealClaudeBinaryMatchesOnlyTheRealBinary() {
+        let real = RealClaude(appURL: URL(fileURLWithPath: "/Applications/Claude.app"))
+        // The default account and every clone exec the real binary — all count as blockers.
+        let defaultMain = ClaudeInstance(pid: 1, executablePath: realBinary, profilePath: nil)
+        let clone = ClaudeInstance(pid: 2, executablePath: realBinary, profilePath: "/data/work")
+        #expect(defaultMain.isRealClaudeBinary(real))
+        #expect(clone.isRealClaudeBinary(real))
+
+        // Claude Manager's own main also has "Claude" in its path (so `parseMains` matches it),
+        // but it is not the real binary and must never gate the swap.
+        let manager = ClaudeInstance(
+            pid: 3,
+            executablePath: "/Applications/Claude Manager.app/Contents/MacOS/Claude Manager",
+            profilePath: nil
+        )
+        #expect(!manager.isRealClaudeBinary(real))
+
+        // A different Claude edition (e.g. a Beta install) is likewise not this store's binary.
+        let beta = ClaudeInstance(
+            pid: 4,
+            executablePath: "/Applications/Claude Beta.app/Contents/MacOS/Claude",
+            profilePath: nil
+        )
+        #expect(!beta.isRealClaudeBinary(real))
     }
 }
 

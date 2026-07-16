@@ -60,7 +60,7 @@ public struct Doctor {
         // Count only real-Claude instances (default + clones exec the real binary) — not
         // Claude Manager's own process, whose path also contains "Claude".
         let running = processProbe.allClaudeMains()
-            .count(where: { $0.executablePath == realClaude.binaryURL.path })
+            .count(where: { $0.isRealClaudeBinary(realClaude) })
 
         let blockers = running == 0
             ? ""

@@ -29,14 +29,15 @@ public extension ProfileStore {
     /// `openReal` is never asked to spawn a duplicate on the same dir.
     func runningDefaultPID() -> Int32? {
         processProbe.allClaudeMains()
-            .first { $0.profilePath == nil && $0.executablePath == realClaude.binaryURL.path }?
+            .first { $0.profilePath == nil && $0.isRealClaudeBinary(realClaude) }?
             .pid
     }
 
     /// Gracefully stop the running default-account instance, polling until it exits or the
-    /// timeout elapses. Mirrors `stop(_:force:)` but keys on the default's pid, since the
-    /// untouched default account has no `Profile`. Graceful (SIGTERM) by default — never
-    /// SIGKILL a possibly-active conversation unless `force` is explicitly requested.
+    /// timeout elapses. Delegates to `stopProcess` like `stop(_:force:)`, differing only in
+    /// keying on the default's pid, since the untouched default account has no `Profile`.
+    /// Graceful (SIGTERM) by default — never SIGKILL a possibly-active conversation unless
+    /// `force` is explicitly requested.
     @discardableResult
     func stopDefault(
         force: Bool = false,
@@ -44,16 +45,8 @@ public extension ProfileStore {
         maxPolls: Int = 20
     ) async -> StopOutcome {
         guard let pid = runningDefaultPID() else { return .notRunning }
-        _ = signalSender(pid, force ? SIGKILL : SIGTERM)
-        let interval = Duration.seconds(max(0, pollInterval))
-        for _ in 0 ..< maxPolls {
-            do {
-                try await Task.sleep(for: interval)
-            } catch {
-                break // cancelled — stop waiting
-            }
-            if runningDefaultPID() == nil { return .stopped }
+        return await stopProcess(pid: pid, force: force, pollInterval: pollInterval, maxPolls: maxPolls) {
+            runningDefaultPID() == nil
         }
-        return .stillRunning(pid: pid)
     }
 }
