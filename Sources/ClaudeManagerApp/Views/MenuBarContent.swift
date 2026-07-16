@@ -24,17 +24,24 @@ struct MenuBarContent: View {
             .disabled(model.isApplyingStagedUpdate)
 
             if let staged = model.stagedUpdate {
-                Button {
-                    Task { await model.applyStagedUpdate() }
-                } label: {
-                    Label(
-                        model.isApplyingStagedUpdate
-                            ? "Applying Claude \(staged.stagedVersion)…"
-                            : "Apply Claude \(staged.stagedVersion) to all accounts",
-                        systemImage: "arrow.down.circle.fill"
-                    )
+                if model.isApplyingStagedUpdate {
+                    Label("Applying Claude \(staged.stagedVersion)…", systemImage: "arrow.down.circle.fill")
+                } else {
+                    // A submenu, not a one-click button: applying quits and relaunches every
+                    // open account (interrupting live sessions), so it must never fire from a
+                    // single click. Opening the submenu and clicking the explicit item is the
+                    // menu-bar's confirmation (a `.confirmationDialog` can't present from a menu).
+                    Menu {
+                        Button("Quit & Update All Accounts") {
+                            Task { await model.applyStagedUpdate() }
+                        }
+                    } label: {
+                        Label(
+                            "Apply Claude \(staged.stagedVersion) to all accounts…",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                    }
                 }
-                .disabled(model.isApplyingStagedUpdate)
             }
 
             if model.profiles.isEmpty {

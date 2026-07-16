@@ -6,6 +6,11 @@ struct RootView: View {
     @State private var selection: ManagedProfile.ID?
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
+    /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
+    /// banner button sets it and only SwiftUI resets it (on dismiss), so nothing external
+    /// can toggle the binding while the dialog is up (a programmatic dismiss of a live
+    /// `confirmationDialog` crashes AppKit's dialog bridge).
+    @State private var confirmingStagedApply = false
 
     var body: some View {
         // App-global banners sit in their own full-width strip *above* the split view,
@@ -62,6 +67,22 @@ struct RootView: View {
         } message: { error in
             Text(error.message)
         }
+        .confirmationDialog(
+            model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all accounts?" }
+                ?? "Apply the staged Claude update?",
+            isPresented: $confirmingStagedApply,
+            titleVisibility: .visible
+        ) {
+            Button("Quit & Update All Accounts") {
+                Task { await model.applyStagedUpdate() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Every open account is quit and reopened to install the update — "
+                    + "any active session is interrupted, so save your work first."
+            )
+        }
     }
 
     private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
@@ -71,7 +92,7 @@ struct RootView: View {
                 .font(.callout)
             Spacer()
             Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all accounts") {
-                Task { await model.applyStagedUpdate() }
+                confirmingStagedApply = true
             }
             .disabled(model.isApplyingStagedUpdate)
         }
