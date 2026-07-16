@@ -5,10 +5,13 @@ import UserNotifications
 /// notification that surfaces it. See `ProfileStore.applyStagedUpdateToAll`.
 extension AppModel {
     /// Quit every account, let ShipIt swap `/Applications/Claude.app`, and relaunch the
-    /// set that was open. Single-flight (the button and the guard both key on
-    /// `isApplyingStagedUpdate`); a non-success outcome is surfaced as a notice.
+    /// set that was open. Single-flight (guarded on `isApplyingStagedUpdate`); a non-success
+    /// outcome is surfaced as a notice. Deliberately does *not* pre-guard on `stagedUpdate`:
+    /// if it cleared while the confirmation was open (probe blip, or applied elsewhere),
+    /// `applyStagedUpdateToAll` re-reads it and returns `.noStagedUpdate`, so the user gets
+    /// the "no staged update" notice instead of a silent no-op.
     func applyStagedUpdate() async {
-        guard !isApplyingStagedUpdate, stagedUpdate != nil else { return }
+        guard !isApplyingStagedUpdate else { return }
         setApplyingStagedUpdate(true)
         let result = await perform { store in await store.applyStagedUpdateToAll() }
         if let result, let notice = Self.notice(for: result) {

@@ -25,7 +25,15 @@ struct MenuBarContent: View {
 
             if let staged = model.stagedUpdate {
                 if model.isApplyingStagedUpdate {
-                    Label("Applying Claude \(staged.stagedVersion)…", systemImage: "arrow.down.circle.fill")
+                    // A disabled Button, not a bare Label: an item with no action can still
+                    // look selectable in a menu, so mark it clearly non-interactive.
+                    Button {} label: {
+                        Label(
+                            "Applying Claude \(staged.stagedVersion)…",
+                            systemImage: "arrow.down.circle.fill"
+                        )
+                    }
+                    .disabled(true)
                 } else {
                     // A submenu, not a one-click button: applying quits and relaunches every
                     // open account (interrupting live sessions), so it must never fire from a
