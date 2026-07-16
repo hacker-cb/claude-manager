@@ -225,13 +225,12 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let sizes = measureSizes
-        guard let listed = await perform({ store in store.list(measuringSizes: sizes) }) else { return }
-        profiles = listed
-        // The default account's own live state (running pid + on-disk version), so it can be
-        // shown as the first row of the account lists alongside the clones.
-        primaryAccount = await perform { store in store.primaryAccountStatus() }
-        // Probe the staged update directly (not via `listed`, which is empty when there
-        // are no clones — the default account can still have one staged).
+        // One process sweep yields both the launcher list and the default-account status.
+        guard let snapshot = await perform({ store in store.snapshot(measuringSizes: sizes) }) else { return }
+        profiles = snapshot.profiles
+        primaryAccount = snapshot.primaryAccount
+        // Probe the staged update directly (not via `snapshot`, which is empty of clones when
+        // there are none — the default account can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()

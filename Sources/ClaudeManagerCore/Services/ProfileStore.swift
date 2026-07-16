@@ -109,12 +109,29 @@ public struct ProfileStore {
 
     // MARK: - Read
 
+    /// The launcher list *and* the default-account status from a single `ps` sweep, so a
+    /// refresh pays for one process scan instead of two (`list` and the default-pid probe
+    /// each swept the table independently). The one read the app's `refresh` uses.
+    public func snapshot(measuringSizes: Bool = false) -> StoreSnapshot {
+        let mains = processProbe.allClaudeMains()
+        return StoreSnapshot(
+            profiles: list(measuringSizes: measuringSizes, mains: mains),
+            primaryAccount: PrimaryAccountStatus(pid: defaultPID(in: mains))
+        )
+    }
+
     /// All managed launchers with live running state (and optional disk usage). Also
     /// stamps each with the Claude version it's running vs the one on disk, so a
     /// launcher left on an older build surfaces as "restart to update".
     public func list(measuringSizes: Bool = false) -> [ManagedProfile] {
+        list(measuringSizes: measuringSizes, mains: processProbe.allClaudeMains())
+    }
+
+    /// `list`, but reusing an already-fetched process sweep for the running-version map — so
+    /// `snapshot` can share one `ps` across the launcher list and the default-account status.
+    func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
-        let runningVersions = processProbe.runningVersionsByProfilePath()
+        let runningVersions = processProbe.runningVersionsByProfilePath(from: mains)
         return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
             let profile = discovered.profile
             let pid = runningPID(for: profile)
