@@ -129,7 +129,8 @@ public struct ProfileStore {
 
     /// `list`, but reusing an already-fetched process sweep for the running-version map — so
     /// `snapshot` can share one `ps` across the launcher list and the default-account status.
-    func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
+    /// `private`: an implementation detail shared only by `snapshot` and the no-arg `list`.
+    private func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
         let runningVersions = processProbe.runningVersionsByProfilePath(from: mains)
         return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
