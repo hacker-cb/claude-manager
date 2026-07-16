@@ -19,7 +19,7 @@ struct SettingsView: View {
                     value: model.realClaude.map { PathUtils.abbreviatingHome($0.appURL.path) } ?? "Not found"
                 )
                 LabeledContent("Version", value: model.realClaudeVersion ?? "—")
-                Button("Re-detect") { model.locate() }
+                Button("Re-detect") { Task { await model.relocate() } }
             }
 
             Section("Launcher install location") {

@@ -124,7 +124,8 @@ extension AppModel {
     private func presentPicker(for url: URL) async {
         // Always refresh so a since-deleted profile is never offered as a target.
         await refresh()
-        let targets: [DeepLinkTarget] = profiles.map { .profile($0.profile) } + [.defaultAccount]
+        // Default account first, matching the sidebar and menu-bar ordering.
+        let targets: [DeepLinkTarget] = [.defaultAccount] + profiles.map { .profile($0.profile) }
         deepLinkPresenter.present(url: url, targets: targets) { [weak self] target in
             Task { await self?.forwardDeepLink(url, to: target) }
         } onDismiss: { [weak self] in

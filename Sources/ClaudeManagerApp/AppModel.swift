@@ -33,8 +33,23 @@ struct MessageError: LocalizedError {
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var profiles: [ManagedProfile] = []
+    /// Observable state of the default account (the untouched real app), shown as the first
+    /// row of the account lists. `nil` when Claude.app can't be located.
+    @Published private(set) var primaryAccount: PrimaryAccountStatus?
     @Published private(set) var realClaude: RealClaude?
     @Published private(set) var realClaudeVersion: String?
+
+    /// The sidebar's account rows: the default account first (whenever Claude is located —
+    /// provisionally "stopped" until the next status probe fills `primaryAccount` in), then
+    /// each managed clone. Keyed off `realClaude`, not `primaryAccount`, so a Retry that
+    /// re-finds Claude shows the default row at once instead of waiting for a refresh. The
+    /// menu bar renders the same ordering directly, since its per-item affordances differ.
+    var accounts: [Account] {
+        guard realClaude != nil else { return profiles.map(Account.clone) }
+        let primary = primaryAccount ?? PrimaryAccountStatus(pid: nil)
+        return [.primary(primary)] + profiles.map(Account.clone)
+    }
+
     @Published var locateError: String?
     @Published private(set) var isBusy = false
     @Published var currentError: AppError?
@@ -174,8 +189,20 @@ final class AppModel: ObservableObject {
         } catch {
             realClaude = nil
             realClaudeVersion = nil
+            primaryAccount = nil
             locateError = Self.describe(error)
         }
+    }
+
+    /// User-driven re-detect (the missing-Claude banner's Retry and Settings' Re-detect):
+    /// locate synchronously, then — only if Claude was found — refresh so it repopulates the
+    /// account list (the default-account row included) without waiting for the next poll.
+    /// Skipping refresh when locate still fails avoids `perform` surfacing a redundant
+    /// "Claude not found" alert on top of the banner that already says so.
+    func relocate() async {
+        locate()
+        guard realClaude != nil else { return }
+        await refresh()
     }
 
     private func currentConfiguration() -> ProfileStoreConfiguration? {
@@ -200,6 +227,9 @@ final class AppModel: ObservableObject {
         let sizes = measureSizes
         guard let listed = await perform({ store in store.list(measuringSizes: sizes) }) else { return }
         profiles = listed
+        // The default account's own live state (running pid + on-disk version), so it can be
+        // shown as the first row of the account lists alongside the clones.
+        primaryAccount = await perform { store in store.primaryAccountStatus() }
         // Probe the staged update directly (not via `listed`, which is empty when there
         // are no clones — the default account can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
@@ -328,6 +358,13 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([profile.appURL])
     }
 
+    /// Reveal the real Claude.app (the default account's bundle) in Finder. No-op if it
+    /// isn't located — the missing-Claude banner covers that case.
+    func revealRealClaude() {
+        guard let real = realClaude else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([real.appURL])
+    }
+
     // MARK: - Claude update monitoring
 
     /// Start watching for the real Claude.app updating out from under running
@@ -407,6 +444,9 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
+        // A vanished Claude leaves no default account; `reconcile` returns before `refresh`
+        // could recompute it, so clear the stale row here.
+        if located.real == nil { primaryAccount = nil }
         locateError = located.error
     }
 
