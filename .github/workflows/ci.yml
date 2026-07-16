@@ -16,6 +16,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pin the formatter so a Homebrew stable bump can't silently change lint rules under
+  # us (0.62 enabled wrapIfStatementBodies by default). Bump this deliberately, in step
+  # with the Brewfile note and a local `brew upgrade swiftformat`.
+  SWIFTFORMAT_VERSION: "0.62.1"
+  # SHA-256 of that version's `swiftformat.zip` release asset — verified before the
+  # binary runs, so a swapped/tampered asset fails the build. Update alongside the version.
+  SWIFTFORMAT_SHA256: "7cb1cb1fae04932047c7015441c543848e8e60e1572d808d080e0a1f1661114a"
+
 jobs:
   build-test-lint:
     runs-on: macos-15
@@ -35,7 +44,17 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       - name: Install tooling
-        run: brew install xcodegen swiftformat swiftlint
+        run: brew install xcodegen swiftlint
+
+      - name: Install SwiftFormat (pinned)
+        run: |
+          curl -fsSL --retry 3 --retry-delay 2 -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
+          echo "${SWIFTFORMAT_SHA256}  $RUNNER_TEMP/swiftformat.zip" | shasum -a 256 -c -
+          unzip -oq "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          chmod +x "$RUNNER_TEMP/swiftformat/swiftformat"
+          echo "$RUNNER_TEMP/swiftformat" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/swiftformat/swiftformat" --version
 
       - name: Format check
         run: swiftformat --lint .

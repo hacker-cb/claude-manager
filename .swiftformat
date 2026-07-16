@@ -1,5 +1,9 @@
 # SwiftFormat configuration — see https://github.com/nicklockwood/SwiftFormat
 --swiftversion 6.0
+# Keep single-line conditional bodies compact (`if x { return }`). SwiftFormat 0.62
+# turned this rule on by default (it was `wrapConditionalBodies`, disabled, in 0.61);
+# we deliberately keep the compact style, so disable it explicitly.
+--disable wrapIfStatementBodies
 --self remove
 --importgrouping testable-bottom
 --commas inline
