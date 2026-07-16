@@ -21,12 +21,28 @@ extension AppModel {
         defer { isOpeningReal = false }
 
         if let pid = await runningDefaultPID() {
-            if activateApp(pid: pid) { return }
+            // Refresh either way: the row's running state may have been stale (the default was
+            // started outside the manager), so after focusing it the dot and the Stop action
+            // should reflect that it's running instead of waiting for the next poll.
+            if activateApp(pid: pid) { await refresh(); return }
             // Found a pid but it won't resolve (just quit, or not yet registered) —
             // re-probe and only launch when nothing is running, never racing a duplicate.
-            if await runningDefaultPID() != nil { return }
+            if await runningDefaultPID() != nil { await refresh(); return }
         }
         _ = await perform { store in try store.openReal() }
+        await refresh()
+    }
+
+    /// Gracefully stop the running default account (SIGTERM), surfacing a notice if it
+    /// refuses to quit — mirroring `stop(_:force:)` for a managed profile. `force` escalates
+    /// to SIGKILL for a wedged instance.
+    func stopDefaultAccount(force: Bool) async {
+        let outcome = await perform { store in await store.stopDefault(force: force) }
+        if case let .stillRunning(pid)? = outcome {
+            currentError = AppError(
+                message: "The default account is still running (pid \(pid)). Try Force Stop."
+            )
+        }
         await refresh()
     }
 

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var selection: ManagedProfile.ID?
+    @State private var selection: Account.ID?
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
     /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
@@ -101,14 +101,19 @@ struct RootView: View {
     }
 
     @ViewBuilder private var detail: some View {
-        if let id = selection, let managed = model.profiles.first(where: { $0.id == id }) {
+        // Gate on `realClaude` too (mirrors `accounts`): if Claude vanished while the default
+        // row was selected, the row is gone from the sidebar, so fall through to the empty
+        // state rather than stranding a hollow default-account pane.
+        if selection == Account.primaryID, model.realClaude != nil {
+            PrimaryAccountDetailView()
+        } else if let id = selection, let managed = model.profiles.first(where: { $0.id == id }) {
             ProfileDetailView(managed: managed, editor: $editor)
                 .id(managed.id)
         } else {
             ContentUnavailableView {
-                Label("No profile selected", systemImage: "square.stack.3d.up")
+                Label("No account selected", systemImage: "square.stack.3d.up")
             } description: {
-                Text("Select a launcher on the left, or create one.")
+                Text("Select an account on the left, or create a launcher.")
             } actions: {
                 Button("New Profile…") { editor = .add }
             }
@@ -158,7 +163,7 @@ struct RootView: View {
             Text(model.locateError ?? "Real Claude.app was not found.")
                 .font(.callout)
             Spacer()
-            Button("Retry") { model.locate() }
+            Button("Retry") { Task { await model.relocate() } }
         }
         .padding(8)
         .background(.orange.opacity(0.12))

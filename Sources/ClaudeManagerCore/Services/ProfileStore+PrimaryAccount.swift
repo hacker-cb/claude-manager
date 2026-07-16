@@ -33,6 +33,14 @@ public extension ProfileStore {
             .pid
     }
 
+    /// The default account's observable state for the account lists — currently just its
+    /// running pid (via `runningDefaultPID`). A named entry point so the app publishes one
+    /// value instead of special-casing the default across call sites, with room to grow
+    /// (e.g. the running instance's own version for a later "restart to update" affordance).
+    func primaryAccountStatus() -> PrimaryAccountStatus {
+        PrimaryAccountStatus(pid: runningDefaultPID())
+    }
+
     /// Gracefully stop the running default-account instance, polling until it exits or the
     /// timeout elapses. Delegates to `stopProcess` like `stop(_:force:)`, differing only in
     /// keying on the default's pid, since the untouched default account has no `Profile`.

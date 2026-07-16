@@ -53,4 +53,40 @@ struct ProfileStorePrimaryAccountTests {
         }
         #expect(env.store.runningDefaultPID() == nil)
     }
+
+    @Test
+    func primaryAccountStatusReportsRunningPID() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let real = env.real.binaryURL.path
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                return CommandOutput(
+                    exitCode: 0, standardOutput: "  501     1 \(real)\n", standardError: ""
+                )
+            }
+            return idleStub(executable, args)
+        }
+        let status = env.store.primaryAccountStatus()
+        #expect(status.pid == 501)
+        #expect(status.isRunning)
+    }
+
+    @Test
+    func primaryAccountStatusIsNotRunningWithoutADefault() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let real = env.real.binaryURL.path
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.psPath {
+                // Only a clone runs → there is no default-account instance.
+                let ps = "  777     1 \(real) --user-data-dir=/data/clone\n"
+                return CommandOutput(exitCode: 0, standardOutput: ps, standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        let status = env.store.primaryAccountStatus()
+        #expect(status.pid == nil)
+        #expect(!status.isRunning)
+    }
 }

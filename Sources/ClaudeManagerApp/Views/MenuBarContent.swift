@@ -14,15 +14,6 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
-            // The primary (default-account) Claude — launched separately from any
-            // launcher. Reliable even while clones run, unlike the raw Dock icon.
-            Button {
-                Task { await model.openReal() }
-            } label: {
-                Label("Open Claude (default account)", systemImage: "person.crop.circle")
-            }
-            .disabled(model.isApplyingStagedUpdate)
-
             if let staged = model.stagedUpdate {
                 if model.isApplyingStagedUpdate {
                     // A disabled Button, not a bare Label: an item with no action can still
@@ -50,12 +41,26 @@ struct MenuBarContent: View {
                         )
                     }
                 }
+                Divider()
             }
+
+            // Accounts — the default account first, then each clone, as one uniform list.
+            // The default keeps its own person glyph (filled when running, mirroring the
+            // clones' filled/empty circle) so it reads as a peer, not a special case.
+            Button {
+                Task { await model.openReal() }
+            } label: {
+                Label(
+                    "Default account\(model.primaryAccount?.isRunning == true ? " — running" : "")",
+                    systemImage: model.primaryAccount?.isRunning == true
+                        ? "person.crop.circle.fill" : "person.crop.circle"
+                )
+            }
+            .disabled(model.isApplyingStagedUpdate)
 
             if model.profiles.isEmpty {
                 Text("No launchers yet")
             } else {
-                Divider()
                 ForEach(model.profiles) { managed in
                     Button {
                         Task { await model.open(managed.profile) }
@@ -67,32 +72,39 @@ struct MenuBarContent: View {
                     }
                     .disabled(model.isApplyingStagedUpdate)
                 }
+            }
 
-                let running = model.profiles.filter(\.isRunning)
-                if !running.isEmpty {
-                    Divider()
-                    Menu("Stop") {
-                        ForEach(running) { managed in
-                            Button(managed.profile.displayName) {
-                                Task { await model.stop(managed.profile, force: false) }
-                            }
+            // Stop — every running account, the default account included.
+            let runningClones = model.profiles.filter(\.isRunning)
+            let defaultRunning = model.primaryAccount?.isRunning == true
+            if defaultRunning || !runningClones.isEmpty {
+                Divider()
+                Menu("Stop") {
+                    if defaultRunning {
+                        Button("Default account") {
+                            Task { await model.stopDefaultAccount(force: false) }
+                        }
+                    }
+                    ForEach(runningClones) { managed in
+                        Button(managed.profile.displayName) {
+                            Task { await model.stop(managed.profile, force: false) }
                         }
                     }
                 }
+            }
 
-                let behind = model.profiles.filter(\.claudeUpdateAvailable)
-                if !behind.isEmpty {
-                    Menu("Restart to Update") {
-                        ForEach(behind) { managed in
-                            Button(
-                                "\(managed.profile.displayName) — v\(managed.availableClaudeVersion ?? "")"
-                            ) {
-                                Task { await model.restart(managed.profile) }
-                            }
+            let behind = model.profiles.filter(\.claudeUpdateAvailable)
+            if !behind.isEmpty {
+                Menu("Restart to Update") {
+                    ForEach(behind) { managed in
+                        Button(
+                            "\(managed.profile.displayName) — v\(managed.availableClaudeVersion ?? "")"
+                        ) {
+                            Task { await model.restart(managed.profile) }
                         }
                     }
-                    .disabled(model.isApplyingStagedUpdate)
                 }
+                .disabled(model.isApplyingStagedUpdate)
             }
         }
 

@@ -3,23 +3,81 @@ import SwiftUI
 
 struct ProfileListView: View {
     @EnvironmentObject private var model: AppModel
-    @Binding var selection: ManagedProfile.ID?
+    @Binding var selection: Account.ID?
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(model.profiles) { managed in
-                ProfileRow(managed: managed)
-                    .tag(managed.id)
+            ForEach(model.accounts) { account in
+                AccountRow(account: account)
+                    .tag(account.id)
+            }
+            // The default-account row keeps the list from ever being empty, so the
+            // "create a launcher" nudge is an inline, non-selectable hint below it rather
+            // than a full-list overlay that would float over the default row.
+            if model.profiles.isEmpty, model.realClaude != nil {
+                Text("Create a launcher to run another Claude account side by side.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+                    .listRowBackground(Color.clear)
             }
         }
-        .overlay {
-            if model.profiles.isEmpty, model.realClaude != nil {
-                ContentUnavailableView {
-                    Label("No launchers yet", systemImage: "square.stack.3d.up.slash")
-                } description: {
-                    Text("Create one to run another Claude account side by side.")
-                }
+    }
+}
+
+/// Dispatches an `Account` row to its presentation: the default account gets a reduced,
+/// non-editable row; a clone keeps the full `ProfileRow`.
+struct AccountRow: View {
+    let account: Account
+
+    var body: some View {
+        switch account {
+        case let .primary(status):
+            PrimaryAccountRow(status: status)
+        case let .clone(managed):
+            ProfileRow(managed: managed)
+        }
+    }
+}
+
+/// The default account as a sidebar row — a peer of `ProfileRow` but without a badge, disk
+/// size, or edit/rebuild affordances, since the untouched real app has no launcher to manage.
+struct PrimaryAccountRow: View {
+    @EnvironmentObject private var model: AppModel
+    let status: PrimaryAccountStatus
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Sized to the clone rows' BadgeChip (22pt tall, 44pt-wide column) so every
+            // account row is the same height and the leading marks line up vertically.
+            Image(systemName: "person.crop.circle")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 22, height: 22)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .center)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Default account")
+                    .font(.body)
+                    .lineLimit(1)
+                Text("Your primary Claude — no launcher")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
+            Spacer(minLength: 4)
+            StatusDot(isRunning: status.isRunning)
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button(status.isRunning ? "Activate" : "Open") { Task { await model.openReal() } }
+                .disabled(model.isApplyingStagedUpdate)
+            if status.isRunning {
+                Button("Stop") { Task { await model.stopDefaultAccount(force: false) } }
+            }
+            Divider()
+            Button("Reveal Claude.app in Finder") { model.revealRealClaude() }
         }
     }
 }
