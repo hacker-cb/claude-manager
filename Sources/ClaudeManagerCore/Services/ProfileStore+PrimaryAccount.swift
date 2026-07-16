@@ -28,17 +28,16 @@ public extension ProfileStore {
     /// default) from being mistaken for it, and reliably detects our own default so
     /// `openReal` is never asked to spawn a duplicate on the same dir.
     func runningDefaultPID() -> Int32? {
-        processProbe.allClaudeMains()
-            .first { $0.profilePath == nil && $0.isRealClaudeBinary(realClaude) }?
-            .pid
+        defaultPID(in: processProbe.allClaudeMains())
     }
 
-    /// The default account's observable state for the account lists — currently just its
-    /// running pid (via `runningDefaultPID`). A named entry point so the app publishes one
-    /// value instead of special-casing the default across call sites, with room to grow
-    /// (e.g. the running instance's own version for a later "restart to update" affordance).
-    func primaryAccountStatus() -> PrimaryAccountStatus {
-        PrimaryAccountStatus(pid: runningDefaultPID())
+    /// The default-account pid within an already-fetched process sweep. Split from
+    /// `runningDefaultPID` so `snapshot` can reuse one `ps` for both the launcher list and the
+    /// default status instead of scanning the process table twice per refresh. Module-internal
+    /// (`internal`, overriding the `public extension` default): it takes raw `ClaudeInstance`s
+    /// and is only ever called from within `ClaudeManagerCore`.
+    internal func defaultPID(in mains: [ClaudeInstance]) -> Int32? {
+        mains.first { $0.profilePath == nil && $0.isRealClaudeBinary(realClaude) }?.pid
     }
 
     /// Gracefully stop the running default-account instance, polling until it exits or the

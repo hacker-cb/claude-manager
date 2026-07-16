@@ -73,14 +73,14 @@ public struct ProcessProbe {
         return Self.parseMains(psOutput: output.standardOutput)
     }
 
-    /// Profile dir → the version its live instance is running, from one `ps` sweep.
-    /// Only mains that reported a version and carry a `--user-data-dir` are included.
-    /// If duplicate instances share one profile, keeps the OLDEST version, so a lagging
-    /// instance still surfaces "restart to update" instead of being masked by a newer
-    /// sibling (a duplicate is itself flagged separately by `Doctor`).
-    public func runningVersionsByProfilePath() -> [String: String] {
+    /// Profile dir → the version its live instance is running, from an already-fetched sweep.
+    /// Only mains that reported a version and carry a `--user-data-dir` are included. If
+    /// duplicate instances share one profile, keeps the OLDEST version, so a lagging instance
+    /// still surfaces "restart to update" instead of being masked by a newer sibling (a
+    /// duplicate is itself flagged separately by `Doctor`).
+    public func runningVersionsByProfilePath(from mains: [ClaudeInstance]) -> [String: String] {
         var versions: [String: String] = [:]
-        for instance in allClaudeMains() {
+        for instance in mains {
             guard let profile = instance.profilePath, let version = instance.runningVersion else { continue }
             if let existing = versions[profile], !VersionOrder.isNewer(existing, than: version) { continue }
             versions[profile] = version
