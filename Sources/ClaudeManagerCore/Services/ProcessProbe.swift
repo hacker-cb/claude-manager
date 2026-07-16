@@ -20,6 +20,17 @@ public struct ClaudeInstance: Equatable, Sendable {
         self.profilePath = profilePath
         self.runningVersion = runningVersion
     }
+
+    /// True when this instance runs the real Claude binary at `realClaude`'s path —
+    /// exactly the set ShipIt's swap gates on (the default account and every clone
+    /// `exec` that one binary). Excludes Claude Manager's own "Claude Manager" main,
+    /// which `ProcessProbe` also matches (its path contains "Claude" too) and which
+    /// must never count as a swap blocker. The single definition of "real-Claude
+    /// instance"; change the match (bundle id, a second binary path, symlink
+    /// resolution) here and every gate stays in lockstep.
+    public func isRealClaudeBinary(_ realClaude: RealClaude) -> Bool {
+        executablePath == realClaude.binaryURL.path
+    }
 }
 
 /// Detects running Claude instances. All process listing goes through the injected

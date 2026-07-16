@@ -250,9 +250,10 @@ struct ProfileStoreTests {
         let outcome = await task.value
 
         #expect(outcome == .stillRunning(pid: 777))
-        // The initial guard probes once; cancellation must not spin the remaining
-        // budget doing hundreds more probes.
-        #expect(env.runner.invocations(of: CoreConstants.pgrepPath).count <= 3)
+        // A cancelled stop must not spin the remaining budget doing hundreds of probes:
+        // it settles in a bounded handful (guard + `poll`'s pre-check and post-break
+        // recheck), not `maxPolls`.
+        #expect(env.runner.invocations(of: CoreConstants.pgrepPath).count <= 4)
     }
 
     @Test
