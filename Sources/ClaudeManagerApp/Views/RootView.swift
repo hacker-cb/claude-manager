@@ -8,6 +8,26 @@ struct RootView: View {
     @State private var showDoctor = false
 
     var body: some View {
+        // App-global banners sit in their own full-width strip *above* the split view,
+        // not as a `.safeAreaInset` on the `NavigationSplitView`: on macOS that inset
+        // isn't propagated into the sidebar's `List`, so the banner floats over the
+        // first row and the unified toolbar instead of reserving its own space.
+        VStack(spacing: 0) {
+            banners
+            splitView
+        }
+    }
+
+    @ViewBuilder private var banners: some View {
+        if model.realClaude == nil {
+            missingClaudeBanner
+        }
+        if let staged = model.stagedUpdate {
+            stagedUpdateBanner(staged)
+        }
+    }
+
+    private var splitView: some View {
         NavigationSplitView {
             ProfileListView(selection: $selection)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300)
@@ -41,16 +61,6 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: { error in
             Text(error.message)
-        }
-        .safeAreaInset(edge: .top) {
-            VStack(spacing: 0) {
-                if model.realClaude == nil {
-                    missingClaudeBanner
-                }
-                if let staged = model.stagedUpdate {
-                    stagedUpdateBanner(staged)
-                }
-            }
         }
     }
 
