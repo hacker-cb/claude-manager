@@ -125,18 +125,10 @@ struct RootView: View {
             Button { editor = .add } label: { Label("New Profile", systemImage: "plus") }
                 .help("Create a new launcher profile")
         }
-        ToolbarItem {
-            Button { Task { await model.openReal() } } label: {
-                Label("Open Claude", systemImage: "person.crop.circle")
-            }
-            .help(
-                "Launch or focus your primary Claude account (the default profile). "
-                    + "Use this instead of the Dock icon while clones are running."
-            )
-            // Disabled during a staged-update apply too, matching every other Open affordance —
-            // a launch mid-swap is refused by `launchBlockedByStagedApply` anyway.
-            .disabled(model.realClaude == nil || model.isApplyingStagedUpdate)
-        }
+        // No dedicated "Open Claude" toolbar button: the default account is now the first
+        // sidebar row and is opened like any other account (select → Open, or right-click →
+        // Open), with the menu-bar extra's "Default account" item as the windowless quick
+        // launch. A per-account toolbar shortcut only for the default broke that symmetry.
         ToolbarItem {
             Button { Task { await model.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
