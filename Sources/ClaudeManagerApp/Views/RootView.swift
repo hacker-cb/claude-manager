@@ -11,34 +11,36 @@ struct RootView: View {
     /// can toggle the binding while the dialog is up (a programmatic dismiss of a live
     /// `confirmationDialog` crashes AppKit's dialog bridge).
     @State private var confirmingStagedApply = false
+    /// Measured height of the app-global banner strip, used to reserve matching top space in the
+    /// sidebar's `List` (see `body`). Zero when no banner is showing.
+    @State private var bannerHeight: CGFloat = 0
 
     var body: some View {
-        // App-global banners sit in their own full-width strip *above* the split view,
-        // not as a `.safeAreaInset` on the `NavigationSplitView`: on macOS that inset
-        // isn't propagated into the sidebar's `List`, so the banner floats over the
-        // first row and the unified toolbar instead of reserving its own space.
-        VStack(spacing: 0) {
-            banners
-            splitView
-        }
-    }
-
-    @ViewBuilder private var banners: some View {
-        if model.realClaude == nil {
-            missingClaudeBanner
-        }
-        if let staged = model.stagedUpdate {
-            stagedUpdateBanner(staged)
-        }
-    }
-
-    private var splitView: some View {
+        // App-global banners (missing-Claude, staged-update) are a full-width strip at the top of
+        // the window. Getting this right on macOS took two tries — both single-structure approaches
+        // break one column:
+        //   • `.safeAreaInset(.top)` on the split view (pre-#59): reserves space in the *detail*
+        //     column but not in the sidebar's `List`, so the banner floats over the first row.
+        //   • wrapping the split view in a `VStack` below the banner (#59): the sidebar is fine, but
+        //     the detail column's material underlaps the window toolbar and, on the first layout
+        //     with a banner already present, bleeds *up* over the banner as a white plate (only a
+        //     sidebar toggle — i.e. a relayout — cleared it).
+        // So use both: keep the split view as the window root (detail material stays correct) and
+        // hang the full-width banner off a split-view `.safeAreaInset`, then reserve the same space
+        // in the sidebar `List` explicitly via `bannerHeight` (which the inset doesn't propagate to).
         NavigationSplitView {
             ProfileListView(selection: $selection)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300)
+                // The split-view-level banner inset below doesn't reach the sidebar's `List`, so its
+                // first row would sit under the banner — reserve the measured banner height here.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color.clear.frame(height: bannerHeight)
+                }
         } detail: {
             detail
         }
+        .safeAreaInset(edge: .top, spacing: 0) { banners }
+        .onPreferenceChange(BannerHeightKey.self) { bannerHeight = $0 }
         .toolbar { toolbar }
         .task {
             // Idempotent — `init` also kicks this off window-independently (a login /
@@ -83,6 +85,25 @@ struct RootView: View {
                     + "any active session is interrupted, so save your work first."
             )
         }
+    }
+
+    /// The full-width banner strip, with its height reported up via `BannerHeightKey` so the
+    /// sidebar can reserve matching space. Always rendered (0-height when neither banner shows) so
+    /// the measurement collapses cleanly back to zero once a banner clears.
+    private var banners: some View {
+        VStack(spacing: 0) {
+            if model.realClaude == nil {
+                missingClaudeBanner
+            }
+            if let staged = model.stagedUpdate {
+                stagedUpdateBanner(staged)
+            }
+        }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: BannerHeightKey.self, value: proxy.size.height)
+            }
+        )
     }
 
     private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
@@ -168,6 +189,15 @@ struct RootView: View {
             get: { model.currentError != nil },
             set: { if !$0 { model.currentError = nil } }
         )
+    }
+}
+
+/// Carries the measured banner-strip height up the view tree so the sidebar `List` can reserve
+/// matching top space (a split-view-level `.safeAreaInset` doesn't reach the sidebar on macOS).
+private struct BannerHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
