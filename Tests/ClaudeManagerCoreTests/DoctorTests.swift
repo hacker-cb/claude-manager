@@ -294,6 +294,28 @@ struct DoctorTests {
     }
 
     @Test
+    func warnsWhenCloneHasStaleDeepLinkKey() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
+        // Satisfies `.clone()` (updater disabled) yet also carries a stale
+        // disableDeepLinkRegistration from an older build — invisible to `isSatisfied`, but it
+        // drops forwarded links, so Doctor must still warn.
+        try seedRawOverlay(
+            ["disableAutoUpdates": true, "disableDeepLinkRegistration": true],
+            userDataPath: profileDir.path,
+            fileManager: fm
+        )
+
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(diags.contains {
+            $0.severity == .warning && $0.title.contains("deep-link registration is suppressed")
+        })
+    }
+
+    @Test
     func warnsOnDuplicateInstances() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }

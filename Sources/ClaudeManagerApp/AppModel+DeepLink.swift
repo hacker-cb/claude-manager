@@ -241,7 +241,9 @@ extension AppModel {
             .info(
                 "forwardToProfile(\(profile.displayName, privacy: .public)): not running → cold-launch then GURL"
             )
-        _ = await perform { store in try store.open(profile) }
+        // Only poll + deliver if the launch actually started; a failed launch already
+        // surfaced its own error via `perform`, so don't stack a 12s "couldn't reach" on top.
+        guard await perform({ store in try store.open(profile) }) != nil else { return }
         await launchThenDeliver(url, targetName: profile.displayName) { [weak self] in
             await self?.pid(for: profile)
         }
@@ -270,7 +272,8 @@ extension AppModel {
         isOpeningReal = true
         defer { isOpeningReal = false }
         Log.deepLink.info("forwardToDefaultAccount: not running → cold-launch then GURL")
-        _ = await perform { store in try store.openReal() }
+        // Only poll + deliver if the launch actually started (see `forwardToProfile`).
+        guard await perform({ store in try store.openReal() }) != nil else { return }
         await launchThenDeliver(url, targetName: Self.defaultAccountName) { [weak self] in
             await self?.defaultPID()
         }

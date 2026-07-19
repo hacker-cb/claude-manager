@@ -188,21 +188,36 @@ public struct Doctor {
         return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
     }
 
-    /// Warn once per distinct clone user-data-dir whose overlay does not match what a clone
-    /// expects (its Squirrel updater disabled, and no stale `disableDeepLinkRegistration`).
+    /// Warn once per distinct clone user-data-dir whose overlay is wrong: the updater not
+    /// disabled, **or** a stale `disableDeepLinkRegistration` still present. The second case
+    /// is invisible to `isSatisfied(.clone())` — that only checks the keys we *want* — yet it
+    /// makes Claude drop every forwarded deep link, so it needs its own `hasFlag` check.
     private func cloneOverlayDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
         let expected = ProfileManagedConfig.clone()
         var seen = Set<String>()
-        return discovered.compactMap { launcher in
+        return discovered.compactMap { launcher -> Diagnostic? in
             let profilePath = launcher.marker.profile
-            guard seen.insert(profilePath).inserted,
-                  !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath)
-            else { return nil }
-            return Diagnostic(
-                severity: .warning,
-                title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
-                detail: PathUtils.abbreviatingHome(profilePath)
-            )
+            guard seen.insert(profilePath).inserted else { return nil }
+            if !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath) {
+                return Diagnostic(
+                    severity: .warning,
+                    title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
+                    detail: PathUtils.abbreviatingHome(profilePath)
+                )
+            }
+            // Satisfies `.clone()` (updater disabled) but an older build also left the deep-link
+            // key — Claude drops forwarded links until this account is restarted. Reopening CM
+            // reconciles the file; the running instance still needs a restart to pick it up.
+            if managedConfigWriter.hasFlag(
+                ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: profilePath
+            ) {
+                return Diagnostic(
+                    severity: .warning,
+                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this account",
+                    detail: PathUtils.abbreviatingHome(profilePath)
+                )
+            }
+            return nil
         }
     }
 
