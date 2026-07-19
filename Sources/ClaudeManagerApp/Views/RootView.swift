@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var launchAtLogin: LaunchAtLogin
     @State private var selection: Account.ID?
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
@@ -59,7 +60,9 @@ struct RootView: View {
         .sheet(isPresented: $showDoctor) {
             DoctorView()
                 .environmentObject(model)
+                .environmentObject(launchAtLogin)
         }
+        .modifier(DeepLinkResidencyNudge())
         .alert(
             "Something went wrong",
             isPresented: errorBinding,

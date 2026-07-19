@@ -316,6 +316,17 @@ struct DoctorTests {
     }
 
     @Test
+    func deepLinkResidencyDiagnosticFiresOnlyWhenBrokerOnAndLaunchAtLoginOff() {
+        // Off unless the broker is on *and* the app won't launch at login.
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: false, launchAtLoginEnabled: false) == nil)
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: false, launchAtLoginEnabled: true) == nil)
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: true, launchAtLoginEnabled: true) == nil)
+        let diagnostic = Doctor.deepLinkResidencyDiagnostic(brokerEnabled: true, launchAtLoginEnabled: false)
+        #expect(diagnostic?.severity == .warning)
+        #expect(diagnostic?.title.contains("Launch at login") == true)
+    }
+
+    @Test
     func warnsOnDuplicateInstances() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }

@@ -46,6 +46,25 @@ public struct Doctor {
         return diagnostics
     }
 
+    /// A warning the **app** appends when the deep-link broker is on but the app isn't set to
+    /// launch at login. It can't live in `run()` — both inputs are app-layer, not core state.
+    /// The broker's `claude://` hold is held only while Claude Manager runs, so with it closed
+    /// an account you open can take the scheme over and its links stop routing through the
+    /// picker; keeping the app resident (launch at login) closes that gap. `nil` when the
+    /// broker is off or launch-at-login is already on.
+    public static func deepLinkResidencyDiagnostic(
+        brokerEnabled: Bool,
+        launchAtLoginEnabled: Bool
+    ) -> Diagnostic? {
+        guard brokerEnabled, !launchAtLoginEnabled else { return nil }
+        return Diagnostic(
+            severity: .warning,
+            title: "Deep links need Claude Manager running — turn on Launch at login",
+            detail: "While Claude Manager is closed, an account you open can take over claude:// "
+                + "and its links stop going through the account picker."
+        )
+    }
+
     /// A warning when a Claude update is staged but not applied — ShipIt can't swap
     /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
     /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
