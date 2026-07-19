@@ -111,57 +111,54 @@ struct ProfileStoreManagedConfigTests {
         #expect(fm.fileExists(atPath: tier(profile).path))
     }
 
-    // MARK: - Deep-link broker
+    // MARK: - Deep-link overlay hygiene
 
     @Test
-    func brokerOffLeavesDefaultAccountUntouched() throws {
-        let env = try makeStoreEnv(deepLinkBrokerEnabled: false)
-        defer { try? fm.removeItem(at: env.root) }
-        _ = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        _ = env.store.reconcileAllManagedConfigs()
-        // With the broker off, the default account gets no overlay at all.
-        #expect(!probe(env).overlayExists(userDataPath: env.defaultAccountUserDataPath))
-    }
-
-    @Test
-    func brokerOnWritesDeepLinkToClonesButNeverTheDefault() throws {
-        let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
+    func cloneOverlayDisablesUpdaterWithoutTheDeepLinkKey() throws {
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         _ = env.store.reconcileAllManagedConfigs()
 
-        // The clone gets the deep-link key (it's CM-managed)...
-        #expect(probe(env).isSatisfied(
-            .clone(deepLinkBrokerEnabled: true), userDataPath: profile.profilePath
-        ))
-        // ...but the default account is never written — the guard holds its handler, so
-        // removing CM can't leave it broken.
+        // The clone disables its own updater...
+        let overlay = try #require(rawOverlay(profile.profilePath))
+        #expect(overlay["disableAutoUpdates"] as? Bool == true)
+        // ...and never carries disableDeepLinkRegistration, which would make Claude drop the
+        // deep links the broker forwards to it.
+        #expect(overlay["disableDeepLinkRegistration"] == nil)
+        // The default account is never written — its handler is held by the guard.
         #expect(!probe(env).overlayExists(userDataPath: env.defaultAccountUserDataPath))
-        #expect(!probe(env).isSatisfied(
-            ProfileManagedConfig(disableDeepLinkRegistration: true),
-            userDataPath: env.defaultAccountUserDataPath
-        ))
     }
 
     @Test
-    func leftoverDefaultAccountSuppressionIsCleanedUp() throws {
-        // An earlier build (or a manual edit) left disableDeepLinkRegistration in the
-        // default account; reconcile must remove it (never leave the default suppressed).
-        let env = try makeStoreEnv(deepLinkBrokerEnabled: true)
+    func reconcileStripsStaleDeepLinkKeyFromAClone() throws {
+        // An earlier build wrote disableDeepLinkRegistration into a clone; reconcile must
+        // remove it — else Claude drops every forwarded non-auth deep link.
+        let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
-        try probe(env).reconcile(
-            ProfileManagedConfig(disableDeepLinkRegistration: true),
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        try seedRawOverlay(
+            ["disableAutoUpdates": true, "disableDeepLinkRegistration": true],
+            userDataPath: profile.profilePath
+        )
+        #expect(rawOverlay(profile.profilePath)?["disableDeepLinkRegistration"] as? Bool == true)
+
+        _ = try env.store.reconcileManagedConfig(for: profile)
+        let overlay = try #require(rawOverlay(profile.profilePath))
+        #expect(overlay["disableDeepLinkRegistration"] == nil)
+        #expect(overlay["disableAutoUpdates"] as? Bool == true) // the key we own stays enforced
+    }
+
+    @Test
+    func reconcileStripsStaleDeepLinkKeyFromTheDefaultAccount() throws {
+        // Same cleanup for the default account — its handler is held by the guard, never a key.
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try seedRawOverlay(
+            ["disableDeepLinkRegistration": true],
             userDataPath: env.defaultAccountUserDataPath
         )
-        #expect(probe(env).isSatisfied(
-            ProfileManagedConfig(disableDeepLinkRegistration: true),
-            userDataPath: env.defaultAccountUserDataPath
-        ))
-
         _ = try env.store.reconcileDefaultAccountConfig()
-        #expect(!probe(env).isSatisfied(
-            ProfileManagedConfig(disableDeepLinkRegistration: true),
-            userDataPath: env.defaultAccountUserDataPath
-        ))
+        #expect(rawOverlay(env.defaultAccountUserDataPath)?["disableDeepLinkRegistration"] == nil)
     }
 }

@@ -54,21 +54,21 @@ keeps there and never churns a file it may be reading.
 
 ## Owning `claude://` without a config footgun
 
-The broker makes Claude Manager the default `claude://` handler. Keeping the **default
-account** from re-grabbing it had two options:
+The broker makes Claude Manager the default `claude://` handler. Keeping accounts from
+re-grabbing it had two options:
 
-- Write `disableDeepLinkRegistration` into the default account's overlay (the key used
-  for clones).
-- Hold the handler at runtime with an event-driven guard and **never touch the default
-  account**.
+- Write `disableDeepLinkRegistration` into each account's overlay.
+- Hold the handler at runtime with an event-driven guard and **never write that key**.
 
-The overlay key is a footgun: if Claude Manager is removed (or crashes) **without first
-disabling the broker**, the key persists with nothing to take over, silently breaking
-the default account's deep links. So the default account is never written —
-`ProfileManagedConfig.defaultAccount` is empty, and its reconcile only *removes* a stray
-key an older build may have left. The guard degrades gracefully: it stops re-asserting
-the moment CM isn't running, and LaunchServices falls back to Claude. Clones keep the
-overlay key — they're CM-managed, so nothing is orphaned.
+The overlay key is a footgun in two ways. For the **default account**: if Claude Manager
+is removed (or crashes) **without first disabling the broker**, the key persists with
+nothing to take over, silently breaking the default's deep links. For **clones**: the
+same key makes Claude *drop* every forwarded non-auth link
+(`dropping deep link (disableDeepLinkRegistration)`) — defeating the very hand-off the
+broker exists to perform. So **no account carries it**: `ProfileManagedConfig` writes only
+`disableAutoUpdates` (on clones), and keeps `disableDeepLinkRegistration` in `managedKeys`
+only so a reconcile *removes* one an older build wrote. The guard degrades gracefully: it
+stops re-asserting the moment CM isn't running, and LaunchServices falls back to Claude.
 
 Three smaller calls followed:
 
@@ -80,8 +80,11 @@ Three smaller calls followed:
 - **On by default.** Claude Manager should be fully functional out of the box, and the
   guard-based hold makes on-by-default uninstall-safe.
 - **Always a picker.** A `claude://` URL carries no account identity, so auto-forwarding
-  would only guess; the user picks. Forwarding uses `open -n --args` (not the native
-  Apple-event path, which can't address a *specific not-running* launcher).
+  would only guess; the user picks. Forwarding sends the URL as a `GURL` Apple event to the
+  target's **pid** (`DeepLinkDelivery`): Claude reads deep links only from `open-url`, never
+  `argv`, and every account shares one bundle id, so a pid is the only way to address a
+  *specific* instance — a running target gets it directly, a stopped one is launched first.
+  (One-time TCC Automation grant, "Claude Manager" → "Claude", covers all accounts.)
 
 ## Coordinating a Claude update across accounts
 

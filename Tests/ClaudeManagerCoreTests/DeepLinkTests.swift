@@ -19,54 +19,6 @@ struct DeepLinkURLTests {
     }
 }
 
-struct ForwardingTests {
-    let fm = FileManager.default
-
-    @Test
-    func forwardsClaudeURLToLauncherWithArgs() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-
-        let url = "claude://oauth/callback?code=abc123"
-        try env.store.openForwarding(profile, url: url)
-        let call = try #require(env.runner.invocations(of: CoreConstants.openPath).last)
-        #expect(call.arguments == ["-n", profile.appPath, "--args", url])
-    }
-
-    @Test
-    func rejectsNonClaudeURL() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.openForwarding(profile, url: "https://evil.example/steal")
-        }
-        // Nothing was launched for the rejected URL.
-        #expect(env.runner.invocations(of: CoreConstants.openPath).isEmpty)
-    }
-
-    @Test
-    func forwardsToDefaultAccountViaRealApp() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        let url = "claude://magic-link#token"
-        try env.store.openRealForwarding(url: url)
-        let call = try #require(env.runner.invocations(of: CoreConstants.openPath).last)
-        #expect(call.arguments == ["-n", env.real.appURL.path, "--args", url])
-    }
-
-    @Test
-    func realForwardingRejectsNonClaudeURL() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.openRealForwarding(url: "ftp://nope")
-        }
-    }
-}
-
 /// A stub OS-observer registrar: captures the `onChange` callback so a test can fire the
 /// "database changed" event on demand, and records cancellation.
 final class StubObserver: @unchecked Sendable {

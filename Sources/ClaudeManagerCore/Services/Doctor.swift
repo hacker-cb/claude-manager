@@ -188,13 +188,10 @@ public struct Doctor {
         return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
     }
 
-    /// Warn once per distinct clone user-data-dir whose overlay does not match what the
-    /// current broker setting expects (updater not disabled, or — with the broker on —
-    /// deep-link registration not suppressed).
+    /// Warn once per distinct clone user-data-dir whose overlay does not match what a clone
+    /// expects (its Squirrel updater disabled, and no stale `disableDeepLinkRegistration`).
     private func cloneOverlayDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        let expected = ProfileManagedConfig.clone(
-            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
-        )
+        let expected = ProfileManagedConfig.clone()
         var seen = Set<String>()
         return discovered.compactMap { launcher in
             let profilePath = launcher.marker.profile
@@ -226,8 +223,8 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }
-        if managedConfigWriter.isSatisfied(
-            ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
+        if managedConfigWriter.hasFlag(
+            ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: defaultPath
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,

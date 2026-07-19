@@ -224,7 +224,6 @@ struct StoreEnv {
 /// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
 /// stubbed, so no process is killed and the Dock is never restarted for real.
 func makeStoreEnv(
-    deepLinkBrokerEnabled: Bool = false,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -244,7 +243,6 @@ func makeStoreEnv(
             defaultProfilesDirectory: profilesDir,
             managedPreferencesURLs: managedPreferencesURLs,
             defaultAccountUserDataPath: defaultAccountUserDataPath,
-            deepLinkBrokerEnabled: deepLinkBrokerEnabled,
             shipItStatePath: shipItStatePath
         ),
         runner: runner,
@@ -258,4 +256,35 @@ func makeStoreEnv(
         defaultAccountUserDataPath: defaultAccountUserDataPath,
         shipItStatePath: shipItStatePath
     )
+}
+
+// MARK: - Managed-config overlay test helpers
+
+/// Seed a raw managed-config overlay the way an earlier build would have — arbitrary flat
+/// keys, including ones the current model no longer writes (so their cleanup can be tested).
+func seedRawOverlay(
+    _ entries: [String: Bool],
+    userDataPath: String,
+    fileManager: FileManager = .default
+) throws {
+    let library = ManagedConfigWriter.configLibraryURL(forUserDataPath: userDataPath)
+    try fileManager.createDirectory(at: library, withIntermediateDirectories: true)
+    let appliedID = "00000000-0000-4000-8000-000000000000" // valid per isValidAppliedID
+    try JSONSerialization.data(withJSONObject: ["appliedId": appliedID])
+        .write(to: library.appendingPathComponent("_meta.json"))
+    try JSONSerialization.data(withJSONObject: entries)
+        .write(to: library.appendingPathComponent("\(appliedID).json"))
+}
+
+/// Read the raw flat overlay dict for a user-data dir (`nil` if none). Lets a test assert a
+/// specific key's presence/absence, not just that a `ProfileManagedConfig` is satisfied.
+func rawOverlay(_ userDataPath: String, fileManager: FileManager = .default) -> [String: Any]? {
+    let library = ManagedConfigWriter.configLibraryURL(forUserDataPath: userDataPath)
+    guard let metaData = fileManager.contents(atPath: library.appendingPathComponent("_meta.json").path),
+          let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
+          let appliedID = meta["appliedId"] as? String,
+          let data = fileManager.contents(atPath: library.appendingPathComponent("\(appliedID).json").path),
+          let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return dict
 }

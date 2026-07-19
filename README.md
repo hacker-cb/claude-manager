@@ -107,24 +107,26 @@ inspect the link's contents.
 
 ## Deep links
 
-Claude Desktop registers itself as the handler for `claude://` links — the URLs an
-in-browser **login, SSO, or "magic link"** sends back to the app. With several
-accounts that's a problem: the link lands in whichever Claude the system opens, not
-the account you're actually signing into.
+Claude Desktop registers itself as the handler for `claude://` links — a shared **Cowork
+artifact**, a session **resume**, or an in-browser **login / SSO / MCP-auth** callback.
+With several accounts that's a problem: the link lands in whichever Claude the system
+opens, not the account you meant.
 
 **Claude Manager becomes the `claude://` handler (on by default)**, and when a link
-arrives it shows a small picker so you choose which account receives it — any profile
-or your default account.
+arrives it shows a small picker so you choose which account receives it — any profile or
+your default account. That account then opens the link itself.
 
+- **Delivery works whether or not the target is already open** — Claude Manager hands the
+  link to the chosen account directly. The first time it does, macOS asks you to allow
+  "Claude Manager" to control "Claude"; approve it once and it covers every account.
 - **Your default account is never modified.** Claude Manager only *holds* the handler
-  while it's running. Quitting it lets a link relaunch it to route; turning the broker
-  off — or removing Claude Manager — hands `claude://` straight back to Claude.
-- Toggle it under **Settings → Deep links** ("Route claude:// links to a chosen
-  account").
-- **Delivery needs the target account closed.** macOS only hands a deep link to Claude
-  at launch, so quit the target account first, then reopen the link. (A forwarded
-  *non-login* link to a clone may be dropped while the broker is on — login callbacks,
-  the case that matters, are delivered.)
+  while it's running, so keep it running (e.g. **launch at login**) for links to be
+  routed. Turning the broker off — or removing Claude Manager — hands `claude://` straight
+  back to Claude.
+- Toggle it under **Settings → Deep links** ("Route claude:// links to a chosen account").
+- **After updating to this version, restart any accounts you already had open** once, so
+  they pick up the fix that lets forwarded links through; newly opened accounts need
+  nothing.
 
 ## Updates
 

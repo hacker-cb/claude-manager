@@ -78,6 +78,19 @@ public struct ManagedConfigWriter {
         return fileManager.fileExists(atPath: meta.path)
     }
 
+    /// Whether a specific flat key is present and `true` in the on-disk overlay. Lets
+    /// `Doctor` flag a *stray* key (e.g. a `disableDeepLinkRegistration` an earlier build
+    /// wrote) without modeling it as desired state. MDM presence → `false` (our tier is
+    /// overridden, so nothing we wrote is in effect).
+    public func hasFlag(_ key: String, userDataPath: String) -> Bool {
+        if mdmPresent { return false }
+        let configLibrary = Self.configLibraryURL(forUserDataPath: userDataPath)
+        guard let appliedID = readAppliedID(at: configLibrary.appendingPathComponent("_meta.json")),
+              let current = readJSONObject(at: configLibrary.appendingPathComponent("\(appliedID).json"))
+        else { return false }
+        return (current[key] as? Bool) == true
+    }
+
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
     /// present with the wanted value. Used by `Doctor` to spot a clone whose overlay
     /// is missing (e.g. a best-effort write that silently failed). MDM presence counts

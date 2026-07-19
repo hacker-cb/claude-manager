@@ -14,11 +14,11 @@ struct DoctorDefaultAccountTests {
         defer { try? fm.removeItem(at: scene.root) }
         // The default account should never carry disableDeepLinkRegistration (guard-based).
         // A leftover key (e.g. from an earlier build) must be flagged.
-        try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
-            .reconcile(
-                ProfileManagedConfig(disableDeepLinkRegistration: true),
-                userDataPath: scene.defaultAccountPath
-            )
+        try seedRawOverlay(
+            ["disableDeepLinkRegistration": true],
+            userDataPath: scene.defaultAccountPath,
+            fileManager: fm
+        )
 
         let diags = Doctor(
             realClaude: scene.real,

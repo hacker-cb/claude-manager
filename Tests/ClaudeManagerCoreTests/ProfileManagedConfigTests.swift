@@ -6,27 +6,23 @@ struct ProfileManagedConfigTests {
     func flatEntriesOmitFalseFlags() {
         #expect(ProfileManagedConfig().flatEntries.isEmpty)
         #expect(ProfileManagedConfig(disableAutoUpdates: true).flatEntries == ["disableAutoUpdates": true])
-        let both = ProfileManagedConfig(disableAutoUpdates: true, disableDeepLinkRegistration: true)
-        #expect(both.flatEntries == ["disableAutoUpdates": true, "disableDeepLinkRegistration": true])
     }
 
     @Test
-    func managedKeysCoverEveryFlag() {
-        // Every key flatEntries can emit must be in managedKeys, or a toggled-off flag
-        // would never be cleaned up on reconcile.
-        let all = ProfileManagedConfig(disableAutoUpdates: true, disableDeepLinkRegistration: true)
-        #expect(Set(all.flatEntries.keys).isSubset(of: ProfileManagedConfig.managedKeys))
+    func managedKeysCoverEmittableFlagsPlusTheCleanupKey() {
+        // Every key flatEntries can emit must be in managedKeys, or a toggled-off flag would
+        // never be cleaned up on reconcile. managedKeys also retains disableDeepLinkRegistration
+        // — no longer emitted, but still stripped from a clone an earlier build wrote it into.
+        let emitted = ProfileManagedConfig(disableAutoUpdates: true).flatEntries
+        #expect(Set(emitted.keys).isSubset(of: ProfileManagedConfig.managedKeys))
         #expect(ProfileManagedConfig.managedKeys == ["disableAutoUpdates", "disableDeepLinkRegistration"])
     }
 
     @Test
-    func cloneAlwaysDisablesUpdaterDeepLinkFollowsBroker() {
-        // A clone always disables its own updater; deep-link registration only when the
-        // broker owns the handler.
-        #expect(ProfileManagedConfig.clone(deepLinkBrokerEnabled: false).flatEntries
-            == ["disableAutoUpdates": true])
-        #expect(ProfileManagedConfig.clone(deepLinkBrokerEnabled: true).flatEntries
-            == ["disableAutoUpdates": true, "disableDeepLinkRegistration": true])
+    func cloneDisablesUpdaterAndNeverWritesDeepLinkKey() {
+        // A clone only disables its own updater; the claude:// handler is held by the guard,
+        // never by a written disableDeepLinkRegistration (which would drop forwarded links).
+        #expect(ProfileManagedConfig.clone().flatEntries == ["disableAutoUpdates": true])
     }
 
     @Test

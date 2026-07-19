@@ -1,10 +1,11 @@
 import Foundation
 
 /// Reconciling the Claude-Manager-owned managed-config overlay — the local config tier
-/// (`<userData>-3p/configLibrary`) that disables a clone's Squirrel updater and, when
-/// the `claude://` broker is on, suppresses deep-link registration on the **clones**. The
-/// default account is kept overlay-free — its handler is held by the guard, never a
-/// written key. Split out of `ProfileStore` to keep that file within budget.
+/// (`<userData>-3p/configLibrary`) that disables a clone's Squirrel updater. The `claude://`
+/// handler is held by the event-driven guard, not written here (on any account) — so the
+/// default *and* the clones stay free of `disableDeepLinkRegistration`, which would make
+/// Claude drop the forwarded links the broker routes. Split out of `ProfileStore` to keep
+/// that file within budget.
 public extension ProfileStore {
     /// Writer for the CM-owned per-profile overlay. A plain value over this store's
     /// `fileManager`; MDM detection uses the configuration's managed-preferences paths.
@@ -15,16 +16,16 @@ public extension ProfileStore {
         )
     }
 
-    /// The overlay a cloned profile should hold, given the current broker setting.
+    /// The overlay a cloned profile should hold: just its Squirrel updater disabled.
     var cloneOverlay: ProfileManagedConfig {
-        .clone(deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled)
+        .clone()
     }
 
     /// Reconcile the overlay for one clone: pre-seed its local config tier so Claude's
-    /// updater is disabled (and, with the broker on, its deep-link registration) on the
-    /// clone's next launch. No-op when Claude is MDM-managed. Best-effort at the create /
-    /// rebuild call sites (never blocks the primary operation); exposed as throwing so
-    /// the startup reconcile and tests can observe failures.
+    /// updater is disabled on the clone's next launch (and strip a stale
+    /// `disableDeepLinkRegistration` an earlier build wrote). No-op when Claude is
+    /// MDM-managed. Best-effort at the create / rebuild call sites (never blocks the primary
+    /// operation); exposed as throwing so the startup reconcile and tests can observe failures.
     @discardableResult
     func reconcileManagedConfig(for profile: Profile) throws -> ManagedConfigWriter.Outcome {
         try managedConfigWriter.reconcile(cloneOverlay, userDataPath: profile.profilePath)
