@@ -74,8 +74,13 @@ extension AppModel {
     /// the (never-wired) delegate and was dropped (window opened, but no picker and no
     /// forward). We reach the real instance through `AppDelegate.shared` (set in its `init`)
     /// instead, retrying on the main queue until the adaptor has created it. This works for
-    /// every launch mode, including window-less logins where `RootView.task` never fires;
-    /// bounded so a pathological launch can't loop forever.
+    /// every launch mode, including window-less logins where `RootView.task` never fires.
+    ///
+    /// Each retry is spaced by `retryInterval` (`asyncAfter`, not a tight `async` re-enqueue)
+    /// so the bounded budget spans *real time* — otherwise 200 back-to-back main-queue blocks
+    /// could drain in a single runloop servicing and exhaust before the adaptor constructs the
+    /// delegate. In practice attempt 0 already succeeds (the delegate's `init` runs before the
+    /// queue is serviced); the interval only matters for a pathologically late construction.
     func wireDeepLinkHandler(attempt: Int = 0) {
         guard let delegate = AppDelegate.shared else {
             guard attempt < 200 else {
@@ -85,12 +90,18 @@ extension AppModel {
                     )
                 return
             }
-            DispatchQueue.main.async { [weak self] in self?.wireDeepLinkHandler(attempt: attempt + 1) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.wireRetryInterval) { [weak self] in
+                self?.wireDeepLinkHandler(attempt: attempt + 1)
+            }
             return
         }
         delegate.deepLinkHandler = { [weak self] urls in self?.handleDeepLinks(urls) }
         Log.deepLink.info("deepLinkHandler wired after \(attempt, privacy: .public) retry(ies)")
     }
+
+    /// Delay between `wireDeepLinkHandler` retries. 200 attempts × 50 ms bounds the wait at
+    /// ~10 s — ample for the adaptor to construct the delegate, without a busy main-queue spin.
+    private static let wireRetryInterval: TimeInterval = 0.05
 
     /// Idempotent launch work: start monitoring, paint the list, and apply the deep-link
     /// broker (grab the `claude://` handler). Runs once — from `init` on every launch
