@@ -1,4 +1,5 @@
-import AppKit
+import CoreServices // AE* Apple-event types/constants + AEDeterminePermissionToAutomateTarget
+import Foundation
 
 /// Delivers a `claude://` deep link to a **specific** Claude instance by sending it the
 /// same Apple event macOS/LaunchServices uses to open a URL — a `GURL`/`GURL`
