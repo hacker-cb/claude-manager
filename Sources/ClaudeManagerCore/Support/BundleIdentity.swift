@@ -5,7 +5,8 @@ import Foundation
 ///
 /// The app ships two identities: the released one (bundle id
 /// `io.github.hacker-cb.claude-manager`, declares `claude://`) and the local dev one built
-/// by `make run` (`….claude-manager.dev`, declares only the private `claude-cmdev://`).
+/// by `make run` (`io.github.hacker-cb.claude-manager.dev`, declaring only the private
+/// `claude-cmdev://`).
 /// They are separated at build time by the Xcode configuration — see project.yml
 /// `settings.configs` — so macOS's bundle-id-keyed registries (LaunchServices, Login Items,
 /// TCC, UserDefaults) can never confuse a working copy in `build/` for the installed app.
