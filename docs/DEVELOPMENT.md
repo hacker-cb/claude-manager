@@ -62,9 +62,11 @@ So the two identities are split by Xcode **build configuration** (see
 
 The private scheme is what makes the split airtight: a bundle that never declares
 `claude://` cannot be registered as its handler, whatever the runtime attempts. The app
-mirrors this at runtime — `BundleIdentity.declaresURLScheme` gates the broker and the
-"Launch at login" toggle on facts read off the bundle itself, so the build-time and
-runtime halves can't drift. A dev build therefore never brokers deep links and never
+mirrors this at runtime, keyed on facts read off the bundle itself so the build-time and
+runtime halves can't drift: `BundleIdentity.declaresURLScheme` gates the **deep-link
+broker** (does this bundle declare `claude://`?), while `AppBuild.isDistribution` gates
+**"Launch at login"** (is this a signed, notarized release, the only build macOS
+registers a login item for?). A dev build therefore never brokers deep links and never
 registers a login item; both are surfaced as disabled in Settings with an explanation.
 
 To exercise the **real** broker against `claude://`, build the shipping identity locally
