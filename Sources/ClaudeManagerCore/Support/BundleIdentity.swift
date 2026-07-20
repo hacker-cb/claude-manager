@@ -21,14 +21,17 @@ public enum BundleIdentity {
     /// case-insensitive because URL schemes are (RFC 3986 §3.1), so a plist that spells
     /// the scheme `Claude` still counts.
     ///
-    /// A missing, malformed, or partially-typed `CFBundleURLTypes` reads as "not
-    /// declared": every entry that isn't a dictionary of string schemes is skipped rather
-    /// than failing the whole lookup, so one bad entry can't mask a good one.
+    /// A missing or non-array `CFBundleURLTypes` reads as "not declared". Within the
+    /// array, any element that isn't a dictionary of string schemes is skipped per-entry —
+    /// the top level is cast to `[Any]`, not `[[String: Any]]`, precisely so one stray
+    /// non-dictionary element can't fail the whole lookup and mask a valid scheme in a
+    /// well-formed sibling entry.
     public static func declaresURLScheme(_ scheme: String, in infoDictionary: [String: Any]?) -> Bool {
-        guard let types = infoDictionary?["CFBundleURLTypes"] as? [[String: Any]] else { return false }
+        guard let types = infoDictionary?["CFBundleURLTypes"] as? [Any] else { return false }
         let wanted = scheme.lowercased()
         return types.contains { entry in
-            guard let schemes = entry["CFBundleURLSchemes"] as? [String] else { return false }
+            guard let entry = entry as? [String: Any],
+                  let schemes = entry["CFBundleURLSchemes"] as? [String] else { return false }
             return schemes.contains { $0.lowercased() == wanted }
         }
     }

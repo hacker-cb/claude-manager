@@ -43,12 +43,25 @@ struct BundleIdentityTests {
         #expect(!BundleIdentity.declaresURLScheme("claude", in: info(schemes: [])))
     }
 
-    /// One malformed entry must not mask a well-formed one that follows it.
+    /// One malformed *entry* must not mask a well-formed one that follows it.
     @Test
     func skipsMalformedEntriesWithoutMaskingGoodOnes() {
         let mixed: [String: Any] = ["CFBundleURLTypes": [
             ["CFBundleURLSchemes": "claude"], // a string where an array belongs
             ["CFBundleURLName": "no schemes key"],
+            ["CFBundleURLSchemes": ["claude"]]
+        ]]
+        #expect(BundleIdentity.declaresURLScheme("claude", in: mixed))
+    }
+
+    /// A stray *non-dictionary* element in the array must not fail the whole lookup and
+    /// hide a valid scheme in a well-formed sibling (the top-level `[Any]` cast, per-entry
+    /// skip — regression guard for the earlier `[[String: Any]]` cast that failed closed).
+    @Test
+    func skipsNonDictionaryEntriesWithoutMaskingGoodOnes() {
+        let mixed: [String: Any] = ["CFBundleURLTypes": [
+            42, // a stray number
+            "not a dict", // a stray string
             ["CFBundleURLSchemes": ["claude"]]
         ]]
         #expect(BundleIdentity.declaresURLScheme("claude", in: mixed))
