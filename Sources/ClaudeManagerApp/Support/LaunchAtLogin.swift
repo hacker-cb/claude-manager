@@ -19,10 +19,29 @@ final class LaunchAtLogin: ObservableObject {
     /// succeeded or none has run.
     @Published private(set) var lastError: String?
 
+    /// Present in the login-item database — enabled *or* still pending the user's approval.
+    /// The single spelling of "there is a registration to act on", so the toggle, the Doctor
+    /// residency check and the nudge can't drift on what counts as registered.
+    var isRegistered: Bool {
+        isEnabled || requiresApproval
+    }
+
+    /// Whether registering a login item is meaningful for this build. macOS only honours
+    /// `SMAppService` registration for a Developer ID **signed + notarized** app, so a local
+    /// build can't reliably register one — and must not: a dev build that lands in Login
+    /// Items is exactly the symptom the separate dev identity exists to prevent
+    /// (docs/DEVELOPMENT.md § Dev builds carry a separate identity).
+    ///
+    /// This type owns the answer so the rule is enforced at the choke point rather than at
+    /// each call site: ``setEnabled`` refuses to register when false, and the views read
+    /// this instead of re-deriving it, so a new caller can't bypass the invariant.
+    let isSupported: Bool
+
     private let service: SMAppService
 
-    init(service: SMAppService = .mainApp) {
+    init(service: SMAppService = .mainApp, isSupported: Bool = AppBuild.isDistribution) {
         self.service = service
+        self.isSupported = isSupported
         isEnabled = service.status == .enabled
         requiresApproval = service.status == .requiresApproval
     }
@@ -32,6 +51,15 @@ final class LaunchAtLogin: ObservableObject {
     /// user block in System Settings — so we never assume it took; the status read is
     /// authoritative.
     func setEnabled(_ enabled: Bool) {
+        // Registering is refused in an unsupported build (see `isSupported`), but
+        // *unregistering* never is: a login item left by an earlier run — or by a build
+        // that shared the release's bundle id before the identity split — must always be
+        // removable, so the escape hatch can't be locked behind the same gate.
+        guard enabled == false || isSupported else {
+            lastError = "Launch at login is available in released builds only."
+            syncStatus()
+            return
+        }
         do {
             if enabled {
                 try service.register()

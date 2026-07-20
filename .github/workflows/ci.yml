@@ -68,11 +68,29 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build app (unsigned)
+      # Both configurations are built: Release is what ships, Debug is what `make run`
+      # produces, and the two must keep SEPARATE macOS identities. That invariant lives in
+      # per-config build settings rather than in code, so `swift test` cannot see it — the
+      # assert step below is its only regression guard (see scripts/assert-build-identities.sh).
+      - name: Build app (unsigned, Release — shipping identity)
         run: |
           xcodebuild build \
             -project ClaudeManager.xcodeproj \
             -scheme ClaudeManager \
             -configuration Release \
             -destination 'generic/platform=macOS' \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Build app (unsigned, Debug — dev identity)
+        run: |
+          xcodebuild build \
+            -project ClaudeManager.xcodeproj \
+            -scheme ClaudeManager \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Assert dev and release identities stay isolated
+        run: bash scripts/assert-build-identities.sh

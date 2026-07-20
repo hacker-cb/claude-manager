@@ -54,8 +54,8 @@ short form:
   placeholders). Don't bump the placeholders to release — push a `vX.Y.Z` tag. See
   [docs/RELEASING.md](docs/RELEASING.md).
 - **Local/dev builds carry a separate identity** — the Debug config uses bundle id
-  `…​.claude-manager.dev`, name "Claude Manager (Dev)", and a private `claude-cmdev://`
-  scheme instead of `claude` (`project.yml` `settings.configs`). macOS keys
+  `io.github.hacker-cb.claude-manager.dev`, name "Claude Manager (Dev)", and a private
+  `claude-cmdev://` scheme instead of `claude` (`project.yml` `settings.configs`). macOS keys
   LaunchServices / Login Items / TCC / `UserDefaults` on the bundle id, so a shared id
   lets a build in `build/` hijack the installed release's login item and `claude://`
   handler. Don't collapse the two identities; see
