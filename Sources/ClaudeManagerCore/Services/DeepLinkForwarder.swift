@@ -59,6 +59,14 @@ public struct DeepLinkForwarder: Sendable {
         case deliveryFailed(DeepLinkDeliveryFailure)
     }
 
+    /// Default cold-launch pid-poll budget: how many probes, and the gap between them, to
+    /// wait for a freshly `open -n`'d default-account instance to become visible to `ps`.
+    /// Exposed and shared so the toolbar `openReal` launch and this forwarder's cold path
+    /// hold the identical window before giving up (#38). ~40 × 300 ms ≈ 12 s.
+    public static let coldLaunchPollAttempts = 40
+    /// Delay between the cold-launch pid probes (see `coldLaunchPollAttempts`).
+    public static let coldLaunchPollInterval: Duration = .milliseconds(300)
+
     /// Number of pid probes after a cold launch before giving up.
     public let pollAttempts: Int
     /// Delay between pid probes.
@@ -87,8 +95,8 @@ public struct DeepLinkForwarder: Sendable {
     private let log: @Sendable (String) -> Void
 
     public init(
-        pollAttempts: Int = 40,
-        pollInterval: Duration = .milliseconds(300),
+        pollAttempts: Int = DeepLinkForwarder.coldLaunchPollAttempts,
+        pollInterval: Duration = DeepLinkForwarder.coldLaunchPollInterval,
         settle: Duration = .milliseconds(700),
         probePID: @escaping @Sendable () async -> Int32?,
         launch: @escaping @Sendable () async -> LaunchResult,

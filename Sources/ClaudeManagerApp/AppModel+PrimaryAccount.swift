@@ -7,9 +7,11 @@ extension AppModel {
     /// from any managed launcher. A running default is focused by exact pid (a plain
     /// relaunch de-dupes onto a *clone*, since all instances share Claude's bundle id);
     /// otherwise `open -n` forces a fresh one — the only reliable way to reach it while
-    /// clones run. Duplicate-avoidance is best-effort (the untouched app has no `shlock`
-    /// like a clone's launcher): `isOpeningReal` blocks concurrent runs and we `open -n`
-    /// only when a probe says nothing runs. A `ps`-lag re-click residual can't be closed.
+    /// clones run. The untouched app has no `shlock` like a clone's launcher, so
+    /// duplicate-avoidance is ours to enforce: `isOpeningReal` blocks concurrent runs, we
+    /// `open -n` only when a probe says nothing runs, and — crucially — the guard is held
+    /// across a poll until the launched instance is ps-visible, closing the cold-start lag
+    /// window a re-click or deep-link forward could otherwise slip a duplicate through (#38).
     func openReal() async {
         guard !launchBlockedByStagedApply() else { return }
         guard realClaude != nil else {
@@ -29,8 +31,26 @@ extension AppModel {
             // re-probe and only launch when nothing is running, never racing a duplicate.
             if await runningDefaultPID() != nil { await refresh(); return }
         }
-        _ = await perform { store in try store.openReal() }
+        let launched = await perform { store in try store.openReal() } != nil
+        // Hold `isOpeningReal` (via the `defer`) until the launched instance is ps-visible,
+        // not merely until `open -n` returns. The untouched default has no `shlock` guard, so a
+        // second launch — another click, or a deep-link forward — landing in the cold-start lag
+        // window would `open -n` a duplicate on its one user-data-dir and corrupt the LevelDB
+        // (#38). Polling until the pid is observable makes the guard release on observation,
+        // mirroring the deep-link forwarder's launch → poll → release. Skip the wait when the
+        // launch didn't fire, so a genuinely failed launch stays immediately retryable.
+        if launched { await awaitDefaultVisible() }
         await refresh()
+    }
+
+    /// Poll (bounded) until the default-account instance is visible to `ps`, letting
+    /// `openReal` hold its launch guard across the cold-start lag. Shares the deep-link
+    /// forwarder's cold-launch budget so both launch paths wait the identical window (#38).
+    private func awaitDefaultVisible() async {
+        for _ in 0 ..< DeepLinkForwarder.coldLaunchPollAttempts {
+            if await runningDefaultPID() != nil { return }
+            try? await Task.sleep(for: DeepLinkForwarder.coldLaunchPollInterval)
+        }
     }
 
     /// Gracefully stop the running default account (SIGTERM), surfacing a notice if it
