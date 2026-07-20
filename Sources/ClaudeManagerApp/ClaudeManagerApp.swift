@@ -1,5 +1,4 @@
 import AppKit
-import ClaudeManagerCore
 import Sparkle
 import SwiftUI
 
@@ -21,7 +20,7 @@ struct ClaudeManagerApp: App {
     /// their own working build. `startingUpdater: false` leaves the updater dormant (checks
     /// disabled) for those.
     private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: Self.updatesEnabled,
+        startingUpdater: AppBuild.isDistribution,
         updaterDelegate: nil,
         userDriverDelegate: nil
     )
@@ -56,17 +55,6 @@ struct ClaudeManagerApp: App {
                 .environmentObject(launchAtLogin)
                 .modifier(DockFollowsWindow(delegate: appDelegate))
         }
-    }
-
-    /// Whether Sparkle should run in this build. False for local/dev builds, which carry
-    /// the `MARKETING_VERSION` placeholder `0.0.0` (CI injects the tag version for a real
-    /// release — see scripts/build-app.sh). Keyed on the marketing version rather than
-    /// `CFBundleVersion` because the build number is the CI run number, which is `1` on a
-    /// repo's first release run and must not disable the inaugural release's updater.
-    private static var updatesEnabled: Bool {
-        let marketingVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-            ?? CoreConstants.devMarketingVersion
-        return CoreConstants.isDistributionBuild(marketingVersion: marketingVersion)
     }
 }
 
