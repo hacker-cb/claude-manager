@@ -162,11 +162,11 @@ struct SettingsView: View {
     private var startupSection: some View {
         Section("Startup") {
             Toggle("Launch at login", isOn: launchAtLoginBinding)
-                .disabled(!AppBuild.isDistribution)
+                .disabled(!launchAtLogin.isSupported)
             // The approval / error hints describe an *active* toggle, so show them only in a
             // distribution build; a dev build (toggle disabled) shows just the explanatory
             // caption, never a stale `requiresApproval` / `lastError` from `SMAppService`.
-            if AppBuild.isDistribution {
+            if launchAtLogin.isSupported {
                 if launchAtLogin.requiresApproval {
                     Text(
                         "Approve Claude Manager in System Settings › General › Login Items "
