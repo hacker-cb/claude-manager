@@ -9,8 +9,12 @@ struct DoctorView: View {
     /// The core diagnostics plus the app-layer deep-link residency warning (broker on but the
     /// app won't launch at login) that `Doctor.run()` can't see — both its inputs are app state.
     private var diagnostics: [Diagnostic] {
+        // Fold `isDistribution` into the broker input, mirroring `DeepLinkResidencyNudge`:
+        // the warning's only remedy is Launch at login, which a non-distribution build can't
+        // register — and such a build doesn't broker `claude://` at all — so a dev build must
+        // not surface "turn on Launch at login" for a feature it can't provide.
         let residency = Doctor.deepLinkResidencyDiagnostic(
-            brokerEnabled: model.deepLinkBrokerEnabled,
+            brokerEnabled: model.deepLinkBrokerEnabled && AppBuild.isDistribution,
             launchAtLoginEnabled: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
         )
         return (residency.map { [$0] } ?? []) + model.diagnostics

@@ -24,10 +24,13 @@ struct DeepLinkResidencyNudge: ViewModifier {
     private var shouldNudge: Bool {
         DeepLinkResidency.shouldNudge(
             nudged: nudged,
-            // A dev build can't broker (it doesn't declare `claude://`) or register a login
-            // item, so its broker is effectively off — never nudge toward a feature this
-            // build can't provide. `canBrokerDeepLinks` folds that in at the input.
-            brokerEnabled: model.deepLinkBrokerEnabled && AppBuild.canBrokerDeepLinks,
+            // The nudge's only remedy is Launch at login, which macOS honours solely for a
+            // signed + notarized (distribution) build — so gate on `isDistribution`, not
+            // merely on whether the broker runs. This suppresses the nudge in every local
+            // build, including `make run CONFIG=Release` (it brokers, but its login item
+            // can't register). A distribution build always declares `claude`, so the broker
+            // is live there whenever this is true.
+            brokerEnabled: model.deepLinkBrokerEnabled && AppBuild.isDistribution,
             launchAtLoginActive: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
         )
     }
