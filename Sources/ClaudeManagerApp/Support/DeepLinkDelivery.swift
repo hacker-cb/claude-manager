@@ -1,3 +1,4 @@
+import ClaudeManagerCore // DeepLinkDeliveryFailure
 import CoreServices // AE* Apple-event types/constants + AEDeterminePermissionToAutomateTarget
 import Foundation
 
@@ -24,17 +25,9 @@ enum DeepLinkDelivery {
     /// FourCharCode `'----'` — `keyDirectObject`, where the URL string rides.
     private static let directObject = AEKeyword(0x2D2D_2D2D)
 
-    enum Failure: Error, Equatable {
-        /// The user hasn't granted (or has denied) Automation control of Claude.
-        case notPermitted
-        /// The target process is gone (quit between the pid probe and the send).
-        case targetGone
-        /// Any other Apple-event failure (`OSStatus`).
-        case sendFailed(code: Int)
-    }
-
-    /// Deliver `url` to the Claude instance with process id `pid`. Throws `Failure` so the
-    /// caller can distinguish a TCC denial (actionable) from a transient failure.
+    /// Deliver `url` to the Claude instance with process id `pid`. Throws
+    /// `DeepLinkDeliveryFailure` (owned by core) so the caller can distinguish a TCC denial
+    /// (actionable) from a transient failure.
     static func send(_ url: URL, toPID pid: pid_t) throws {
         let target = NSAppleEventDescriptor(processIdentifier: pid)
 
@@ -55,15 +48,15 @@ enum DeepLinkDelivery {
             break
         case OSStatus(errAEEventNotPermitted):
             Log.deepLink.error("automation to pid \(pid, privacy: .public) not permitted (TCC)")
-            throw Failure.notPermitted
+            throw DeepLinkDeliveryFailure.notPermitted
         case OSStatus(procNotFound):
-            throw Failure.targetGone
+            throw DeepLinkDeliveryFailure.targetGone
         default:
             Log.deepLink
                 .error(
                     "automation check for pid \(pid, privacy: .public) failed: OSStatus \(permission, privacy: .public)"
                 )
-            throw Failure.sendFailed(code: Int(permission))
+            throw DeepLinkDeliveryFailure.sendFailed(code: Int(permission))
         }
 
         let event = NSAppleEventDescriptor.appleEvent(
@@ -83,9 +76,9 @@ enum DeepLinkDelivery {
                     "GURL delivered to pid \(pid, privacy: .public): \(url.logDescription, privacy: .public)"
                 )
         } catch let error as NSError {
-            if error.code == -1743 { throw Failure.notPermitted } // errAEEventNotPermitted
+            if error.code == -1743 { throw DeepLinkDeliveryFailure.notPermitted } // errAEEventNotPermitted
             Log.deepLink.error("GURL to pid \(pid, privacy: .public) failed: \(error.code, privacy: .public)")
-            throw Failure.sendFailed(code: error.code)
+            throw DeepLinkDeliveryFailure.sendFailed(code: error.code)
         }
     }
 }

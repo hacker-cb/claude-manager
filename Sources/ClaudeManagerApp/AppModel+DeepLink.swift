@@ -237,108 +237,101 @@ extension AppModel {
                 .error("forwardToProfile(\(profile.displayName, privacy: .public)): blocked by staged apply")
             return
         }
-        // Running → hand the link straight to that instance via a GURL Apple event. A clone's
-        // launcher is `shlock`-guarded, so a not-running clone is safe to just cold-launch,
-        // then deliver once it registers.
-        if let pid = await pid(for: profile) {
-            Log.deepLink
-                .info(
-                    "forwardToProfile(\(profile.displayName, privacy: .public)): running (pid \(pid, privacy: .public)) → GURL"
-                )
-            await deliverGURL(url, toPID: pid, targetName: profile.displayName)
-            return
-        }
-        Log.deepLink
-            .info(
-                "forwardToProfile(\(profile.displayName, privacy: .public)): not running → cold-launch then GURL"
-            )
-        // Only poll + deliver if the launch actually started; a failed launch already
-        // surfaced its own error via `perform`, so don't stack a 12s "couldn't reach" on top.
-        guard await perform({ store in try store.open(profile) }) != nil else { return }
-        await launchThenDeliver(url, targetName: profile.displayName) { [weak self] in
-            await self?.pid(for: profile)
-        }
+        // Clones are `shlock`-guarded, so a not-running clone is safe to just cold-launch —
+        // no duplicate-instance serialization is needed (hence the default no-op `release`).
+        let name = profile.displayName
+        let forwarder = DeepLinkForwarder(
+            probePID: { [weak self] in await self?.pid(for: profile) },
+            launch: { [weak self] in
+                guard let self else { return .failed }
+                return await perform { try $0.open(profile) } != nil ? .started : .failed
+            },
+            deliver: { [weak self] url, pid in
+                guard let self else { return .targetGone }
+                return await sendGURL(url, toPID: pid)
+            },
+            sleep: { try? await Task.sleep(for: $0) },
+            log: { Log.deepLink.info("forwardToProfile(\(name, privacy: .public)): \($0, privacy: .public)") }
+        )
+        await applyOutcome(forwarder.forward(url), targetName: name)
     }
 
     /// Forward to the default account (the untouched real app). Running → GURL to its pid;
-    /// not running → cold-launch, then deliver once it's up. The launch is serialized through
-    /// `isOpeningReal` so two near-simultaneous forwards can't both `open -n` a duplicate
-    /// default (which shares no `shlock` and would corrupt its LevelDB).
+    /// not running → cold-launch, then deliver once it's up. `acquireDefaultLaunchSlot`
+    /// serializes the launch through `isOpeningReal` so two near-simultaneous forwards — or a
+    /// forward and the `openReal` button — can't both `open -n` a duplicate default (which
+    /// shares no `shlock` and would corrupt its LevelDB); the slot is held across the poll +
+    /// deliver and released via the forwarder's `release` once the instance is reachable.
     private func forwardToDefaultAccount(url: URL) async {
         guard !launchBlockedByStagedApply() else { return }
-        if let pid = await defaultPID() {
-            Log.deepLink.info("forwardToDefaultAccount: running (pid \(pid, privacy: .public)) → GURL")
-            await deliverGURL(url, toPID: pid, targetName: Self.defaultAccountName)
-            return
-        }
-        // A launch is already in flight (a prior forward or `openReal`) — don't start another;
-        // just wait for that instance to come up and deliver to it.
-        guard !isOpeningReal else {
-            Log.deepLink.info("forwardToDefaultAccount: launch already in flight → wait then GURL")
-            await launchThenDeliver(url, targetName: Self.defaultAccountName) { [weak self] in
-                await self?.defaultPID()
-            }
-            return
-        }
-        isOpeningReal = true
-        defer { isOpeningReal = false }
-        Log.deepLink.info("forwardToDefaultAccount: not running → cold-launch then GURL")
-        // Only poll + deliver if the launch actually started (see `forwardToProfile`).
-        guard await perform({ store in try store.openReal() }) != nil else { return }
-        await launchThenDeliver(url, targetName: Self.defaultAccountName) { [weak self] in
-            await self?.defaultPID()
-        }
-    }
-
-    /// Poll for a just-launched instance's pid (bounded), then deliver the link to it. A
-    /// launch that never registers surfaces a notice rather than hanging.
-    private func launchThenDeliver(
-        _ url: URL, targetName: String, pidProbe: @escaping () async -> Int32?
-    ) async {
-        for _ in 0 ..< 40 { // ~12s at 300ms between probes
-            guard let pid = await pidProbe() else {
-                try? await Task.sleep(for: .milliseconds(300))
-                continue
-            }
-            // Give Electron a moment to install its `open-url` handler. Claude stashes a
-            // cold-start URL that arrives before its window is ready, so this settle need
-            // only be approximate, not exact.
-            try? await Task.sleep(for: .milliseconds(700))
-            await deliverGURL(url, toPID: pid, targetName: targetName)
-            return
-        }
-        Log.deepLink
-            .error(
-                "launchThenDeliver(\(targetName, privacy: .public)): instance never came up — not delivered"
-            )
-        currentError = AppError(
-            message: "Couldn't reach \(targetName) after launching it. Reopen the link once it's up."
+        let forwarder = DeepLinkForwarder(
+            probePID: { [weak self] in await self?.defaultPID() },
+            launch: { [weak self] in await self?.acquireDefaultLaunchSlot() ?? .failed },
+            release: { [weak self] in await self?.releaseDefaultLaunchSlot() },
+            deliver: { [weak self] url, pid in
+                guard let self else { return .targetGone }
+                return await sendGURL(url, toPID: pid)
+            },
+            sleep: { try? await Task.sleep(for: $0) },
+            log: { Log.deepLink.info("forwardToDefaultAccount: \($0, privacy: .public)") }
         )
+        await applyOutcome(forwarder.forward(url), targetName: Self.defaultAccountName)
     }
 
-    /// Send the GURL off the main actor (the first send blocks on the TCC prompt), mapping a
-    /// denial to actionable guidance instead of a silent drop.
-    private func deliverGURL(_ url: URL, toPID pid: Int32, targetName: String) async {
-        let failure: DeepLinkDelivery.Failure? = await Task.detached {
+    /// Acquire the default-account launch slot and `open -n` a fresh instance. The
+    /// `isOpeningReal` check-and-set is a single synchronous main-actor step (no `await`
+    /// between the read and the write), so two forwards — or a forward and the `openReal`
+    /// button — can't both launch. `.started` means this call holds the slot; the forwarder
+    /// releases it (via `releaseDefaultLaunchSlot`) after the poll + deliver. A failed
+    /// `open -n` releases it here, since there is nothing to poll for.
+    private func acquireDefaultLaunchSlot() async -> DeepLinkForwarder.LaunchResult {
+        guard !isOpeningReal else { return .alreadyInFlight }
+        isOpeningReal = true
+        if await perform({ try $0.openReal() }) != nil { return .started }
+        isOpeningReal = false
+        return .failed
+    }
+
+    private func releaseDefaultLaunchSlot() {
+        isOpeningReal = false
+    }
+
+    /// Send the GURL off the main actor (the first send blocks on the TCC prompt), returning
+    /// the failure — or `nil` on success — for the forwarder to fold into its `Outcome`.
+    private func sendGURL(_ url: URL, toPID pid: Int32) async -> DeepLinkDeliveryFailure? {
+        await Task.detached {
             do {
                 try DeepLinkDelivery.send(url, toPID: pid_t(pid))
                 return nil
-            } catch let failure as DeepLinkDelivery.Failure {
+            } catch let failure as DeepLinkDeliveryFailure {
                 return failure
             } catch {
                 return .sendFailed(code: (error as NSError).code)
             }
         }.value
-        switch failure {
-        case .none:
+    }
+
+    /// Map a forward `Outcome` to user-facing state. `.launchFailed` is silent on purpose —
+    /// the failed launch already surfaced its own error via `perform`, so don't stack a
+    /// "couldn't reach" notice on top.
+    private func applyOutcome(_ outcome: DeepLinkForwarder.Outcome, targetName: String) {
+        switch outcome {
+        case .delivered, .launchFailed:
             break // delivered — Claude routes it to the right window itself
-        case .notPermitted:
+        case .neverAppeared:
+            // Log at error (the forwarder's info-level trace mirrors this, but a genuine
+            // delivery failure belongs in an error-level Console filter).
+            Log.deepLink.error("delivery to \(targetName, privacy: .public) failed: instance never came up")
+            currentError = AppError(
+                message: "Couldn't reach \(targetName) after launching it. Reopen the link once it's up."
+            )
+        case .deliveryFailed(.notPermitted):
             currentError = AppError(message: Self.automationDeniedMessage)
-        case .targetGone:
+        case .deliveryFailed(.targetGone):
             currentError = AppError(
                 message: "Couldn't deliver the link — \(targetName) quit first. Reopen it to retry."
             )
-        case let .sendFailed(code):
+        case let .deliveryFailed(.sendFailed(code)):
             currentError = AppError(
                 message: "Couldn't deliver the link to \(targetName) (error \(code)). Reopen it to retry."
             )

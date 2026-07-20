@@ -1,3 +1,4 @@
+import ClaudeManagerCore
 import SwiftUI
 
 /// A one-time nudge toward "Launch at login" when the deep-link broker is on but the app
@@ -5,18 +6,46 @@ import SwiftUI
 /// app can let an account you open take over the scheme and stop links routing through the
 /// picker. Shown at most once (a persisted flag); `Doctor`'s residency warning is the standing
 /// reminder afterward, and Settings › Startup is always available.
+///
+/// Every input folds into one derived `shouldNudge` (`DeepLinkResidency.shouldNudge`) that a
+/// single `.onChange` tracks, so no input can be silently un-observed — the earlier
+/// per-`onChange`-per-property shape forgot `requiresApproval` (issue #73). The single
+/// observation is inherently bidirectional: opting into launch-at-login elsewhere (or an
+/// approval landing) while the alert is open recomputes `shouldNudge` to `false` and
+/// auto-dismisses it, rather than leaving a stale prompt up.
 struct DeepLinkResidencyNudge: ViewModifier {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
     @AppStorage("deepLinkResidencyNudged") private var nudged = false
     @State private var showNudge = false
 
+    /// `requiresApproval` counts as opted in — the user already chose launch-at-login and
+    /// just needs to approve it in System Settings.
+    private var shouldNudge: Bool {
+        DeepLinkResidency.shouldNudge(
+            nudged: nudged,
+            brokerEnabled: model.deepLinkBrokerEnabled,
+            launchAtLoginActive: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
+        )
+    }
+
     func body(content: Content) -> some View {
         content
-            .task { evaluate() }
-            .onChange(of: model.deepLinkBrokerEnabled) { _, _ in evaluate() }
-            .onChange(of: launchAtLogin.isEnabled) { _, _ in evaluate() }
+            // Seed once — `onChange` doesn't fire for the value present on the first render —
+            // then track the folded predicate in both directions.
+            .task { showNudge = shouldNudge }
+            .onChange(of: shouldNudge) { _, show in
+                // Auto-dismiss path: if the nudge was on screen and the condition just cleared
+                // (the user opted into launch-at-login elsewhere, or turned the broker off),
+                // persist `nudged` too — otherwise this "at most once" nudge would reappear if
+                // they later opted back out. The alert buttons still set it for a tap-dismiss.
+                if showNudge, !show { nudged = true }
+                showNudge = show
+            }
             .alert("Keep deep links routing to the right account?", isPresented: $showNudge) {
+                // `nudged = true` is load-bearing under the bidirectional binding: it's what
+                // stops a just-dismissed alert from immediately re-raising while conditions
+                // still hold. Keep it in every button.
                 Button("Enable Launch at Login") {
                     launchAtLogin.setEnabled(true)
                     nudged = true
@@ -29,16 +58,5 @@ struct DeepLinkResidencyNudge: ViewModifier {
                         + "this anytime in Settings › Startup."
                 )
             }
-    }
-
-    /// Show the nudge once when the broker is on and the app is neither enabled nor pending
-    /// approval for launch-at-login. `requiresApproval` counts as handled — the user already
-    /// opted in and just needs to approve in System Settings.
-    private func evaluate() {
-        guard !nudged,
-              model.deepLinkBrokerEnabled,
-              !(launchAtLogin.isEnabled || launchAtLogin.requiresApproval)
-        else { return }
-        showNudge = true
     }
 }
