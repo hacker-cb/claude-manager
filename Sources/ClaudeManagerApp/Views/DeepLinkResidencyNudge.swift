@@ -24,7 +24,10 @@ struct DeepLinkResidencyNudge: ViewModifier {
     private var shouldNudge: Bool {
         DeepLinkResidency.shouldNudge(
             nudged: nudged,
-            brokerEnabled: model.deepLinkBrokerEnabled,
+            // A dev build can't broker (it doesn't declare `claude://`) or register a login
+            // item, so its broker is effectively off — never nudge toward a feature this
+            // build can't provide. `canBrokerDeepLinks` folds that in at the input.
+            brokerEnabled: model.deepLinkBrokerEnabled && AppBuild.canBrokerDeepLinks,
             launchAtLoginActive: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
         )
     }

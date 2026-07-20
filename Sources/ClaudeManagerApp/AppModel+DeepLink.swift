@@ -142,6 +142,20 @@ extension AppModel {
         if !storeReconciled {
             await reconcileDefaultAccountOverlayDirectly()
         }
+        // A build that doesn't declare `claude://` (the dev identity — project.yml
+        // `settings.configs`) must not touch the system handler at all: neither grab it
+        // (it isn't an eligible handler) nor restore it (it never held it). Only the
+        // overlay reconcile above runs — that is ordinary managed-config hygiene
+        // (`disableAutoUpdates` on clones), not handler ownership. Skipping the whole
+        // hold/restore is what keeps a working copy in `build/` from ever contending for
+        // real login links.
+        guard AppBuild.canBrokerDeepLinks else {
+            Log.broker
+                .info(
+                    "applyDeepLinkBroker: build declares no claude:// scheme → broker inert, leaving the handler untouched"
+                )
+            return
+        }
         if deepLinkBrokerEnabled {
             Log.broker
                 .info(

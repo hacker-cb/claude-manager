@@ -133,6 +133,14 @@ struct SettingsView: View {
     private var deepLinkSection: some View {
         Section("Deep links") {
             Toggle("Route claude:// links to a chosen account", isOn: $model.deepLinkBrokerEnabled)
+                .disabled(!AppBuild.canBrokerDeepLinks)
+            if !AppBuild.canBrokerDeepLinks {
+                Text(
+                    "This local build doesn't register claude:// (it's isolated from your "
+                        + "installed Claude Manager). Routing works in released builds."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
             Text(
                 "On by default: Claude Manager is the default handler for claude:// links "
                     + "and shows a picker so a login or SSO callback opens in the account you "
@@ -154,6 +162,14 @@ struct SettingsView: View {
     private var startupSection: some View {
         Section("Startup") {
             Toggle("Launch at login", isOn: launchAtLoginBinding)
+                .disabled(!AppBuild.isDistribution)
+            if !AppBuild.isDistribution {
+                Text(
+                    "Launch at login is available in released builds only — macOS registers a "
+                        + "login item for a signed, notarized app, not a local dev build."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
             if launchAtLogin.requiresApproval {
                 Text(
                     "Approve Claude Manager in System Settings › General › Login Items "

@@ -5,7 +5,13 @@
 SHELL       := /bin/bash
 SCHEME      := ClaudeManager
 PROJECT     := ClaudeManager.xcodeproj
-CONFIG      := Release
+# Debug carries the isolated dev app identity — its own bundle id, "Claude Manager (Dev)"
+# name, and a private URL scheme instead of `claude` — so a local build can never take the
+# installed release's login item or `claude://` handler (see project.yml `settings.configs`).
+# Override to exercise the real broker: `make run CONFIG=Release` builds the SHIPPING
+# identity and will contend for `claude://`, so `make clean` when done. Releases are cut by
+# scripts/build-app.sh, which archives Release regardless of this variable.
+CONFIG      := Debug
 DIST        := dist
 DERIVED     := build
 APP         := $(DERIVED)/Build/Products/$(CONFIG)/Claude Manager.app

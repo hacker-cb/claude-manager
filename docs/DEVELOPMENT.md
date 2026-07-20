@@ -29,8 +29,8 @@ regenerate it as needed.
 | `make setup` | Install git hooks and dev tooling (`brew bundle`). |
 | `make test` | Run the headless core test suite (`swift test`). |
 | `make gen` | Regenerate `ClaudeManager.xcodeproj` from `project.yml`. |
-| `make build-app` | Build the app **unsigned** into `build/` to verify it compiles. |
-| `make run` | Build (unsigned) and launch the app. |
+| `make build-app` | Build the app **unsigned** (Debug — dev identity) into `build/` to verify it compiles. |
+| `make run` | Build (unsigned, Debug — dev identity) and launch the app. |
 | `make xcode` | Generate and open the project in Xcode. |
 | `make lint` | `swiftformat --lint .` and `swiftlint --strict`. |
 | `make format` | Auto-format the tree with SwiftFormat. |
@@ -39,6 +39,37 @@ regenerate it as needed.
 | `make clean` | Remove the generated project and build artifacts. |
 
 Run `make` with no target (or `make help`) to list them.
+
+## Dev builds carry a separate identity
+
+A locally built app must never impersonate the installed release. macOS keys its
+system-wide registries — LaunchServices, the Login Items database, TCC, the
+`UserDefaults` domain — on the **bundle identifier**, so two copies sharing one id are
+indistinguishable to the OS. When they did, the symptoms were intermittent and
+confusing: the release's login item resolved onto the dev build sitting in `build/`, a
+dev build won and *held* the `claude://` handler (the handler guard re-asserts on every
+LaunchServices change), and a later `make clean` left the system pointing `claude://` at
+a deleted bundle — silently breaking real login/SSO links.
+
+So the two identities are split by Xcode **build configuration** (see
+[`project.yml`](../project.yml) `settings.configs`):
+
+| | Debug (`make build-app` / `make run`) | Release (`scripts/build-app.sh`, CI) |
+|---|---|---|
+| Bundle id | `io.github.hacker-cb.claude-manager.dev` | `io.github.hacker-cb.claude-manager` |
+| Visible name | Claude Manager (Dev) | Claude Manager |
+| URL scheme | `claude-cmdev` (private) | `claude` |
+
+The private scheme is what makes the split airtight: a bundle that never declares
+`claude://` cannot be registered as its handler, whatever the runtime attempts. The app
+mirrors this at runtime — `BundleIdentity.declaresURLScheme` gates the broker and the
+"Launch at login" toggle on facts read off the bundle itself, so the build-time and
+runtime halves can't drift. A dev build therefore never brokers deep links and never
+registers a login item; both are surfaced as disabled in Settings with an explanation.
+
+To exercise the **real** broker against `claude://`, build the shipping identity locally
+with `make run CONFIG=Release` — then `make clean` when done, since that build will
+contend for the system handler like the released app.
 
 ## Testing
 

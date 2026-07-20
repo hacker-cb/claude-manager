@@ -47,7 +47,6 @@ targets:
         product: Sparkle
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.hacker-cb.claude-manager
         PRODUCT_NAME: Claude Manager
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -56,11 +55,36 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Pavel Sokolov. MIT-licensed."
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+      # A locally built app must NEVER share the shipped app's identity. macOS keys its
+      # system registries — LaunchServices, the Login Items database, TCC, the UserDefaults
+      # domain — on the bundle id, so two copies under one id are indistinguishable to the
+      # OS: the release's login item resolves onto the dev build's path in `build/`, the dev
+      # build wins the `claude://` handler and keeps it (LaunchServicesHandlerGuard
+      # re-asserts on every LaunchServices change), and a later `make clean` leaves the
+      # system handler pointing at a deleted bundle — silently breaking real login/SSO links.
+      #
+      # So Debug (what `make build-app` / `make run` build) is a SEPARATE app: its own
+      # bundle id, its own visible name, and a private URL scheme instead of `claude`. The
+      # scheme is what makes the split airtight — a bundle that never declares `claude://`
+      # cannot be registered as its handler, whatever the runtime tries. Release keeps the
+      # shipped identity and is what `scripts/build-app.sh` archives.
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: io.github.hacker-cb.claude-manager.dev
+          CLAUDE_APP_DISPLAY_NAME: Claude Manager (Dev)
+          CLAUDE_URL_SCHEME: claude-cmdev
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: io.github.hacker-cb.claude-manager
+          CLAUDE_APP_DISPLAY_NAME: Claude Manager
+          CLAUDE_URL_SCHEME: claude
     info:
       path: Sources/ClaudeManagerApp/Resources/Info.plist
       properties:
-        CFBundleName: Claude Manager
-        CFBundleDisplayName: Claude Manager
+        # Name follows the per-config identity (see `settings.configs`) so a dev build is
+        # visibly "Claude Manager (Dev)" in Finder, the Dock, and Login Items — never
+        # mistakable for the installed release.
+        CFBundleName: "$(CLAUDE_APP_DISPLAY_NAME)"
+        CFBundleDisplayName: "$(CLAUDE_APP_DISPLAY_NAME)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
@@ -83,9 +107,15 @@ targets:
         # eligible default handler. The broker is ON by default, so CM becomes the default
         # handler and forwards links to a chosen account; disabling it in Settings hands
         # claude:// back to Claude.
+        #
+        # Only the Release identity declares `claude` — a Debug build declares the private
+        # `claude-cmdev` instead, so it is not an eligible `claude://` handler at all and
+        # can never take the scheme from the installed app (see `settings.configs`). The
+        # app mirrors this at runtime: `BundleIdentity.declaresURLScheme` gates the broker
+        # on what the bundle actually declares, so the two can't disagree.
         CFBundleURLTypes:
-          - CFBundleURLName: io.github.hacker-cb.claude-manager.claude
-            CFBundleURLSchemes: [claude]
+          - CFBundleURLName: "$(PRODUCT_BUNDLE_IDENTIFIER).claude"
+            CFBundleURLSchemes: ["$(CLAUDE_URL_SCHEME)"]
     entitlements:
       path: Sources/ClaudeManagerApp/Resources/ClaudeManager.entitlements
       properties:
