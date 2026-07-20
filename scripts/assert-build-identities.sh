@@ -77,22 +77,28 @@ sys.exit(1)
 PY
 }
 
+# `declares_scheme` exits 2 when the plist can't be read at all, which must never be
+# conflated with a clean "does not declare" (1) — otherwise an unreadable Info.plist would
+# print a green tick on the negative check, i.e. the guard attesting isolation it never
+# verified. Both wrappers treat 2 as a hard failure.
 check_declares() { # <label> <app> <scheme>
-  if declares_scheme "$2" "$3"; then
-    echo "  ✓ $1 declares '$3'"
-  else
-    echo "  ✗ $1 does NOT declare '$3'"
-    fail=1
-  fi
+  local status=0
+  declares_scheme "$2" "$3" || status=$?
+  case "$status" in
+    0) echo "  ✓ $1 declares '$3'" ;;
+    1) echo "  ✗ $1 does NOT declare '$3'"; fail=1 ;;
+    *) echo "  ✗ $1: could not read Info.plist — '$3' unverifiable"; fail=1 ;;
+  esac
 }
 
 check_not_declares() { # <label> <app> <scheme>
-  if declares_scheme "$2" "$3"; then
-    echo "  ✗ $1 declares '$3' — it can take the handler from the release"
-    fail=1
-  else
-    echo "  ✓ $1 does not declare '$3'"
-  fi
+  local status=0
+  declares_scheme "$2" "$3" || status=$?
+  case "$status" in
+    0) echo "  ✗ $1 declares '$3' — it can take the handler from the release"; fail=1 ;;
+    1) echo "  ✓ $1 does not declare '$3'" ;;
+    *) echo "  ✗ $1: could not read Info.plist — '$3' unverifiable"; fail=1 ;;
+  esac
 }
 
 check() { # <label> <expected> <actual>
@@ -104,8 +110,16 @@ check() { # <label> <expected> <actual>
   fi
 }
 
+# Preflight both inputs before asserting anything. A bundle that exists but whose
+# Info.plist is missing or unreadable would otherwise surface downstream as a confusing
+# "does NOT declare …" line, blaming the identity split for what is really a broken or
+# mis-pathed build product.
 for app in "$RELEASE_APP" "$DEBUG_APP"; do
   [ -d "$app" ] || { echo "✗ missing build product: $app" >&2; exit 1; }
+  [ -r "$app/Contents/Info.plist" ] || {
+    echo "✗ missing or unreadable Info.plist: $app/Contents/Info.plist" >&2
+    exit 1
+  }
 done
 
 echo "Release identity ($RELEASE_APP):"
