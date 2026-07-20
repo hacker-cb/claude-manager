@@ -19,6 +19,13 @@ final class LaunchAtLogin: ObservableObject {
     /// succeeded or none has run.
     @Published private(set) var lastError: String?
 
+    /// Present in the login-item database — enabled *or* still pending the user's approval.
+    /// The single spelling of "there is a registration to act on", so the toggle, the Doctor
+    /// residency check and the nudge can't drift on what counts as registered.
+    var isRegistered: Bool {
+        isEnabled || requiresApproval
+    }
+
     /// Whether registering a login item is meaningful for this build. macOS only honours
     /// `SMAppService` registration for a Developer ID **signed + notarized** app, so a local
     /// build can't reliably register one — and must not: a dev build that lands in Login

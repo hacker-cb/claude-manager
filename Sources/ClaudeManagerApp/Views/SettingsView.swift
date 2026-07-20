@@ -161,12 +161,17 @@ struct SettingsView: View {
 
     private var startupSection: some View {
         Section("Startup") {
+            // An unsupported build can't *register* (`LaunchAtLogin.isSupported`) but may
+            // still find itself registered — `make run CONFIG=Release` carries the shipping
+            // bundle id, so it reads the installed release's login item. `setEnabled` keeps
+            // unregistering ungated for exactly that case, so the toggle must stay live
+            // whenever there is something to switch off; lock it only when there isn't.
             Toggle("Launch at login", isOn: launchAtLoginBinding)
-                .disabled(!launchAtLogin.isSupported)
-            // The approval / error hints describe an *active* toggle, so show them only in a
-            // distribution build; a dev build (toggle disabled) shows just the explanatory
-            // caption, never a stale `requiresApproval` / `lastError` from `SMAppService`.
-            if launchAtLogin.isSupported {
+                .disabled(!launchAtLogin.isSupported && !launchAtLogin.isRegistered)
+            // The approval / error hints describe a live registration, so show them whenever
+            // one exists or could be created — never a stale `SMAppService` hint on a dev
+            // build that has nothing registered.
+            if launchAtLogin.isSupported || launchAtLogin.isRegistered {
                 if launchAtLogin.requiresApproval {
                     Text(
                         "Approve Claude Manager in System Settings › General › Login Items "
@@ -177,9 +182,13 @@ struct SettingsView: View {
                 if let error = launchAtLogin.lastError {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
-            } else {
+            }
+            if !launchAtLogin.isSupported {
                 Text(
-                    "Launch at login is available in released builds only — macOS registers a "
+                    launchAtLogin.isRegistered
+                        ? "This local build can't register a login item — but one is registered "
+                        + "under this bundle id, so you can still switch it off here."
+                        : "Launch at login is available in released builds only — macOS registers a "
                         + "login item for a signed, notarized app, not a local dev build."
                 )
                 .font(.caption).foregroundStyle(.secondary)
@@ -198,7 +207,7 @@ struct SettingsView: View {
             // freshly-registered item that macOS routed to `requiresApproval` doesn't
             // snap the toggle back to OFF, and flipping it OFF actually unregisters the
             // pending item (the only path to `setEnabled(false)`).
-            get: { launchAtLogin.isEnabled || launchAtLogin.requiresApproval },
+            get: { launchAtLogin.isRegistered },
             set: { launchAtLogin.setEnabled($0) }
         )
     }

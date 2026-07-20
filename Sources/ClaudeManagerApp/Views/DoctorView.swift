@@ -15,7 +15,7 @@ struct DoctorView: View {
         // that toggle is itself disabled and can't be acted on.
         let residency = Doctor.deepLinkResidencyDiagnostic(
             brokerEnabled: model.deepLinkBrokerEnabled && launchAtLogin.isSupported,
-            launchAtLoginEnabled: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
+            launchAtLoginEnabled: launchAtLogin.isRegistered
         )
         return (residency.map { [$0] } ?? []) + model.diagnostics
     }

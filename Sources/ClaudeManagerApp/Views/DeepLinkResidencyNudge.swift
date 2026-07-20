@@ -31,7 +31,7 @@ struct DeepLinkResidencyNudge: ViewModifier {
             // can't register. A supported build always declares `claude`, so the broker is
             // live there whenever this is true.
             brokerEnabled: model.deepLinkBrokerEnabled && launchAtLogin.isSupported,
-            launchAtLoginActive: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
+            launchAtLoginActive: launchAtLogin.isRegistered
         )
     }
 
