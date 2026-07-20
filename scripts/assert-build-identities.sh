@@ -35,8 +35,12 @@ DEBUG_SCHEME="claude-cmdev"
 
 fail=0
 
+# Reports `<missing>` for an absent key rather than letting PlistBuddy's non-zero exit
+# abort the run under `set -e` — a missing key is a real regression (someone dropped the
+# URL type), and it should surface as a legible "expected X, got <missing>" line instead
+# of an opaque failure.
 plist_value() { # <app> <plist path expression>
-  /usr/libexec/PlistBuddy -c "Print $2" "$1/Contents/Info.plist" 2>/dev/null
+  /usr/libexec/PlistBuddy -c "Print $2" "$1/Contents/Info.plist" 2>/dev/null || echo '<missing>'
 }
 
 check() { # <label> <expected> <actual>
