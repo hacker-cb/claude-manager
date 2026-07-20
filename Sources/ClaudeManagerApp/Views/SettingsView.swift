@@ -142,9 +142,10 @@ struct SettingsView: View {
             Text(
                 "Your default account is never modified — Claude Manager just holds the "
                     + "handler while it runs, and hands it straight back to Claude when you turn "
-                    + "this off (or when Claude Manager is removed). While it isn't running, a "
-                    + "claude:// link opens (or relaunches) Claude Manager to route it. Links to "
-                    + "an already-running account can't be delivered — quit it first."
+                    + "this off (or when Claude Manager is removed). It delivers the link to the "
+                    + "account you pick whether or not it's already open (macOS asks once to allow "
+                    + "controlling Claude). Keep Claude Manager running — e.g. Launch at login — so "
+                    + "links always route through the picker."
             )
             .font(.caption).foregroundStyle(.secondary)
         }

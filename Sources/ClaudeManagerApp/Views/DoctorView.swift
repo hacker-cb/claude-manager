@@ -3,7 +3,18 @@ import SwiftUI
 
 struct DoctorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var launchAtLogin: LaunchAtLogin
     @Environment(\.dismiss) private var dismiss
+
+    /// The core diagnostics plus the app-layer deep-link residency warning (broker on but the
+    /// app won't launch at login) that `Doctor.run()` can't see — both its inputs are app state.
+    private var diagnostics: [Diagnostic] {
+        let residency = Doctor.deepLinkResidencyDiagnostic(
+            brokerEnabled: model.deepLinkBrokerEnabled,
+            launchAtLoginEnabled: launchAtLogin.isEnabled || launchAtLogin.requiresApproval
+        )
+        return (residency.map { [$0] } ?? []) + model.diagnostics
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,11 +26,13 @@ struct DoctorView: View {
             .padding()
             Divider()
 
+            // Gate the spinner on the *core* checks: the residency warning is derived from live
+            // app state and shouldn't suppress "Running checks…" while the scan is still in flight.
             if model.diagnostics.isEmpty {
                 ProgressView("Running checks…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(model.diagnostics) { diagnostic in
+                List(diagnostics) { diagnostic in
                     DiagnosticRow(diagnostic: diagnostic)
                 }
             }
@@ -39,9 +52,9 @@ struct DoctorView: View {
     @ViewBuilder private var summaryBadge: some View {
         if model.diagnostics.isEmpty {
             EmptyView()
-        } else if !model.diagnostics.allHealthy {
+        } else if !diagnostics.allHealthy {
             Label("Issues found", systemImage: "xmark.octagon.fill").foregroundStyle(.red)
-        } else if model.diagnostics.hasWarnings {
+        } else if diagnostics.hasWarnings {
             Label("Warnings", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         } else {
             Label("All good", systemImage: "checkmark.seal.fill").foregroundStyle(.green)

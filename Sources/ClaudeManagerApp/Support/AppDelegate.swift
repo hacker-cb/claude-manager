@@ -44,6 +44,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var pendingDeepLinks: [URL] = []
 
+    /// The live delegate instance. SwiftUI's `@NSApplicationDelegateAdaptor` keeps its own
+    /// internal object as `NSApp.delegate` and only *forwards* delegate callbacks to this
+    /// one, so `NSApp.delegate as? AppDelegate` is always nil — code that needs the real
+    /// delegate (to wire the deep-link sink from `AppModel`) reaches it through here instead.
+    /// Weak: SwiftUI owns the lifetime; there is exactly one for the life of the process.
+    private(set) weak static var shared: AppDelegate?
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         false
     }
@@ -51,10 +63,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// macOS delivers `claude://` opens here (reliable for a menu-bar app, unlike a
     /// scene `.onOpenURL` that needs a live window). Buffer until the model is wired.
     func application(_: NSApplication, open urls: [URL]) {
+        let rendered = urls.map(\.logDescription).joined(separator: ", ")
         guard let deepLinkHandler else {
+            Log.deepLink
+                .info(
+                    "open(urls:) received \(urls.count, privacy: .public) URL(s), handler not wired yet — buffering: [\(rendered, privacy: .public)]"
+                )
             pendingDeepLinks.append(contentsOf: urls)
             return
         }
+        Log.deepLink
+            .info(
+                "open(urls:) received \(urls.count, privacy: .public) URL(s), handler wired — dispatching: [\(rendered, privacy: .public)]"
+            )
         deepLinkHandler(urls)
     }
 
@@ -62,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let deepLinkHandler, !pendingDeepLinks.isEmpty else { return }
         let urls = pendingDeepLinks
         pendingDeepLinks = []
+        Log.deepLink.info("draining \(urls.count, privacy: .public) buffered URL(s) to the now-wired handler")
         deepLinkHandler(urls)
     }
 

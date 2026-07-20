@@ -30,6 +30,7 @@ struct ClaudeManagerApp: App {
         Window("Claude Manager", id: WindowID.main) {
             RootView()
                 .environmentObject(model)
+                .environmentObject(launchAtLogin)
                 .frame(minWidth: 760, minHeight: 480)
                 .modifier(MainWindowLaunchBinder(delegate: appDelegate))
         }
