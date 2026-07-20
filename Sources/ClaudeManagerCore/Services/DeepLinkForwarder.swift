@@ -59,6 +59,14 @@ public struct DeepLinkForwarder: Sendable {
         case deliveryFailed(DeepLinkDeliveryFailure)
     }
 
+    /// Default cold-launch pid-poll budget: how many probes, and the gap between them, to
+    /// wait for a freshly `open -n`'d default-account instance to become visible to `ps`.
+    /// Exposed and shared so the toolbar `openReal` launch and this forwarder's cold path
+    /// hold the identical window before giving up (#38). ~40 × 300 ms ≈ 12 s.
+    public static let coldLaunchPollAttempts = 40
+    /// Delay between the cold-launch pid probes (see `coldLaunchPollAttempts`).
+    public static let coldLaunchPollInterval: Duration = .milliseconds(300)
+
     /// Number of pid probes after a cold launch before giving up.
     public let pollAttempts: Int
     /// Delay between pid probes.
@@ -87,8 +95,8 @@ public struct DeepLinkForwarder: Sendable {
     private let log: @Sendable (String) -> Void
 
     public init(
-        pollAttempts: Int = 40,
-        pollInterval: Duration = .milliseconds(300),
+        pollAttempts: Int = DeepLinkForwarder.coldLaunchPollAttempts,
+        pollInterval: Duration = DeepLinkForwarder.coldLaunchPollInterval,
         settle: Duration = .milliseconds(700),
         probePID: @escaping @Sendable () async -> Int32?,
         launch: @escaping @Sendable () async -> LaunchResult,
@@ -132,16 +140,14 @@ public struct DeepLinkForwarder: Sendable {
 
     /// Poll for the just-launched instance's pid (bounded), then settle and deliver.
     private func pollThenDeliver(_ url: URL) async -> Outcome {
-        for _ in 0 ..< pollAttempts {
-            guard let pid = await probePID() else {
-                await sleep(pollInterval)
-                continue
-            }
-            await sleep(settle)
-            return await outcome(of: deliver(url, pid))
+        guard let pid = await AsyncPoll.firstNonNil(
+            attempts: pollAttempts, interval: pollInterval, sleep: sleep, probe: probePID
+        ) else {
+            log("instance never came up after \(pollAttempts) probes — not delivered")
+            return .neverAppeared
         }
-        log("instance never came up after \(pollAttempts) probes — not delivered")
-        return .neverAppeared
+        await sleep(settle)
+        return await outcome(of: deliver(url, pid))
     }
 
     private func outcome(of failure: DeepLinkDeliveryFailure?) -> Outcome {
