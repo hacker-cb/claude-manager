@@ -1,8 +1,9 @@
 import Foundation
 
-/// Bounded async polling: call `probe` up to `attempts` times, sleeping `interval` between
-/// misses, and return its first non-nil result — or `nil` once the budget is spent. `sleep`
-/// is injected so tests drive it instantly and each caller keeps its own clock.
+/// Bounded async polling: call `probe` up to `attempts` times, sleeping `interval` after each
+/// miss (including the last, before giving up), and return its first non-nil result — or `nil`
+/// once the budget is spent. `sleep` is injected so tests drive it instantly and each caller
+/// keeps its own clock.
 ///
 /// The single home for the "wait until a freshly `open -n`'d Claude instance is observable"
 /// loop shared by the deep-link forwarder's pid poll and the toolbar `openReal` launch guard
