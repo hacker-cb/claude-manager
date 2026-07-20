@@ -87,36 +87,59 @@ nil/skip on anything unexpected, never a crash.
 
 ## The `claude://` deep-link broker
 
-A login / SSO / magic-link callback returns as a `claude://` URL, which macOS hands to
-whichever Claude owns the scheme — not the account you're signing into. Claude Manager
-registers itself as the **default `claude://` handler** (on by default) and, on each
-inbound link, shows an account picker (`DeepLinkPresenter` — its own floating window,
-since a menu-bar app may have none) to route it to a chosen profile or the default
-account. The URL carries no account identity, so routing is **always** a user choice;
-there is no auto-forward.
+A `claude://` URL — a Cowork shared-artifact, a session `resume`, a login / SSO /
+MCP-auth callback — is handed by macOS to whichever Claude owns the scheme, not the
+account you meant. Claude Manager registers itself as the **default `claude://` handler**
+(on by default) and, on each inbound link, shows an account picker (`DeepLinkPresenter` —
+its own floating window, since a menu-bar app may have none) to route it to a chosen
+profile or the default account. The URL carries no account identity, so routing is
+**always** a user choice; the account then resolves the link's contents itself.
 
-Claude re-grabs the scheme on every launch (`setAsDefaultProtocolClient`), so a
-one-time registration isn't enough — CM **holds** it. Clones are muted by the
-`disableDeepLinkRegistration` overlay; for anything that still registers,
+**Holding the scheme.** Claude re-grabs it on every launch
+(`setAsDefaultProtocolClient`), so a one-time registration isn't enough.
 `LaunchServicesHandlerGuard` re-asserts CM whenever LaunchServices fires its per-user
-`user.uid.<uid>.com.apple.LaunchServices.database` Darwin notification (event-driven,
-no polling — the notification fires *after* the change, so the re-assert lands last).
-Claiming a **custom** scheme raises no consent prompt, which is what makes a silent
-hold/restore viable.
+`user.uid.<uid>.com.apple.LaunchServices.database` Darwin notification (event-driven, no
+polling — it fires *after* the change, so the re-assert lands last), plus a cheap
+re-check on `didBecomeActive`. Claiming a **custom** scheme raises no consent prompt,
+which is what makes a silent hold/restore viable. This guard is the *sole* hold
+mechanism, so CM must be running to intercept; while it's down a freshly-launched clone
+can grab the scheme, and its own links then land there directly (no picker).
 
-Forwarding is `open -n <app> --args <url>` — a direct `execve` (no shell) with the URL
-as a single argv element that Electron scans at launch. It's the only way to deliver a
-link to a **specific not-running** launcher (the native Apple-event path can't address
-one), and only a `DeepLink.isClaudeURL`-validated string (scheme + non-empty
-authority) is ever passed, so it can't be re-split or read as a flag. Residual: a
-cold-start callback's OAuth `code` is briefly on the command line — readable only by a
-pre-existing same-user process.
+**Delivery is a `GURL` Apple event addressed by pid** (`DeepLinkDelivery`), *not* argv.
+After a launcher `exec`s the real binary, every account's Claude shares bundle id
+`com.anthropic.claudefordesktop`, so `open`/bundle-id addressing can't disambiguate two
+running instances — but a pid can. And Claude reads deep links **only** from the
+`open-url` event (it does *not* scan `argv` for the scheme), so the old
+`open -n … --args <url>` silently dropped the link. So a **running** target gets the
+`GURL` straight to its pid; a **not-running** one is cold-launched, its pid polled for,
+then sent the `GURL`. Sending an Apple event to another app needs a one-time TCC
+Automation grant ("Claude Manager" → "Claude"); the app ships the
+`com.apple.security.automation.apple-events` entitlement, and all accounts share the
+target bundle id so one grant covers them all.
+`AEDeterminePermissionToAutomateTarget` is checked *first* so a denied hand-off surfaces
+actionable guidance rather than vanishing — a `.noReply` `GURL` send reports success even
+when TCC has silently blocked it.
+
+**No account is muted with `disableDeepLinkRegistration`.** That key (Claude's "disable
+`claude://` handling") makes Claude *drop* every forwarded non-auth link
+(`dropping deep link (disableDeepLinkRegistration)`) — exactly the hand-off the broker
+performs — so writing it would defeat forwarding. `ProfileManagedConfig` keeps it only in
+`managedKeys`, so a reconcile *strips* one an earlier build wrote. Claude reads this
+managed config **at launch**, so a clone already running when the key is stripped keeps
+dropping until it is restarted once; fresh launches are clean.
 
 **The default account is never written.** Its handler is held only by the guard, which
 stops the moment CM isn't running — so removing Claude Manager (or toggling the broker
 off) hands `claude://` straight back to Claude and can't leave the default's links
 broken. `stopHoldingAndRestore` re-asserts Claude both while actively holding *and*
 whenever CM currently owns the handler (recovering a crash that left it owning).
+
+**Wiring the sink.** SwiftUI's `@NSApplicationDelegateAdaptor` keeps its *own* object as
+`NSApp.delegate` and only forwards callbacks to our `AppDelegate`, so
+`NSApp.delegate as? AppDelegate` is always nil. `AppModel` reaches the real delegate
+through `AppDelegate.shared` (set in its `init`), retrying on the main queue until the
+adaptor has created it — otherwise the inbound-link sink is never wired and every link is
+buffered and silently dropped.
 
 ## Applying a staged Claude update
 

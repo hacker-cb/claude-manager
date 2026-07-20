@@ -141,14 +141,13 @@ final class AppModel: ObservableObject {
         deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
-        // On the next runloop (delegate installed), wire the AppKit deep-link sink and run
-        // the launch tasks — window-independently, since a login/menu-bar-only launch shows
-        // no window (so `RootView.task` may never run) yet must still grab the handler.
+        // Wire the AppKit deep-link sink and run the launch tasks. Both are deferred to the
+        // main runloop (not done inline in `init`) because `NSApp` isn't fully set up yet, and
+        // window-independently — a login/menu-bar-only launch shows no window (so
+        // `RootView.task` may never run) yet must still grab the handler.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            (NSApp.delegate as? AppDelegate)?.deepLinkHandler = { [weak self] urls in
-                self?.handleDeepLinks(urls)
-            }
+            wireDeepLinkHandler()
             Task { @MainActor in await self.performLaunchTasks() }
         }
     }
@@ -219,7 +218,6 @@ final class AppModel: ObservableObject {
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
         config.defaultProfilesDirectory = effectiveProfilesDirectory
         config.badgeStyle = badgeStyle
-        config.deepLinkBrokerEnabled = deepLinkBrokerEnabled
         return config
     }
 

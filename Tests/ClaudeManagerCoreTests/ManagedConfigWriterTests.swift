@@ -234,15 +234,15 @@ struct ManagedConfigWriterTests {
             managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
         // A prior overlay with a managed key exists...
-        let suppressed = ProfileManagedConfig(disableDeepLinkRegistration: true)
-        _ = try writer.reconcile(suppressed, userDataPath: scene.userDataPath)
-        #expect(writer.isSatisfied(suppressed, userDataPath: scene.userDataPath))
+        let priorOverlay = ProfileManagedConfig(disableAutoUpdates: true)
+        _ = try writer.reconcile(priorOverlay, userDataPath: scene.userDataPath)
+        #expect(writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))
         // ...an empty overlay still runs on it, dropping our keys (the restore).
         let outcome = try writer.reconcilePreservingUntouched(
             .defaultAccount, userDataPath: scene.userDataPath
         )
         #expect(outcome != nil)
-        #expect(!writer.isSatisfied(suppressed, userDataPath: scene.userDataPath))
+        #expect(!writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))
     }
 
     // MARK: - MDM guard

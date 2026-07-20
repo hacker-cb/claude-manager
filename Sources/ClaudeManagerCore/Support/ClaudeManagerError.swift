@@ -17,7 +17,6 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case iconGenerationFailed(String)
     case installDirectoryNotWritable(path: String)
     case markerMissing(path: String)
-    case invalidDeepLink(String)
 
     public var errorDescription: String? {
         switch self {
@@ -50,8 +49,6 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "Cannot write launchers to \(path). Check permissions or choose another location."
         case let .markerMissing(path):
             return "\(path) is not a Claude Manager launcher (no marker in Info.plist)."
-        case let .invalidDeepLink(value):
-            return "Not a claude:// deep link: \"\(value)\"."
         }
     }
 }

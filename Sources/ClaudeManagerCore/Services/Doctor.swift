@@ -46,6 +46,25 @@ public struct Doctor {
         return diagnostics
     }
 
+    /// A warning the **app** appends when the deep-link broker is on but the app isn't set to
+    /// launch at login. It can't live in `run()` — both inputs are app-layer, not core state.
+    /// The broker's `claude://` hold is held only while Claude Manager runs, so with it closed
+    /// an account you open can take the scheme over and its links stop routing through the
+    /// picker; keeping the app resident (launch at login) closes that gap. `nil` when the
+    /// broker is off or launch-at-login is already on.
+    public static func deepLinkResidencyDiagnostic(
+        brokerEnabled: Bool,
+        launchAtLoginEnabled: Bool
+    ) -> Diagnostic? {
+        guard brokerEnabled, !launchAtLoginEnabled else { return nil }
+        return Diagnostic(
+            severity: .warning,
+            title: "Deep links need Claude Manager running — turn on Launch at login",
+            detail: "While Claude Manager is closed, an account you open can take over claude:// "
+                + "and its links stop going through the account picker."
+        )
+    }
+
     /// A warning when a Claude update is staged but not applied — ShipIt can't swap
     /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
     /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
@@ -188,24 +207,36 @@ public struct Doctor {
         return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
     }
 
-    /// Warn once per distinct clone user-data-dir whose overlay does not match what the
-    /// current broker setting expects (updater not disabled, or — with the broker on —
-    /// deep-link registration not suppressed).
+    /// Warn once per distinct clone user-data-dir whose overlay is wrong: the updater not
+    /// disabled, **or** a stale `disableDeepLinkRegistration` still present. The second case
+    /// is invisible to `isSatisfied(.clone())` — that only checks the keys we *want* — yet it
+    /// makes Claude drop every forwarded deep link, so it needs its own `hasFlag` check.
     private func cloneOverlayDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        let expected = ProfileManagedConfig.clone(
-            deepLinkBrokerEnabled: configuration.deepLinkBrokerEnabled
-        )
+        let expected = ProfileManagedConfig.clone()
         var seen = Set<String>()
-        return discovered.compactMap { launcher in
+        return discovered.compactMap { launcher -> Diagnostic? in
             let profilePath = launcher.marker.profile
-            guard seen.insert(profilePath).inserted,
-                  !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath)
-            else { return nil }
-            return Diagnostic(
-                severity: .warning,
-                title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
-                detail: PathUtils.abbreviatingHome(profilePath)
-            )
+            guard seen.insert(profilePath).inserted else { return nil }
+            if !managedConfigWriter.isSatisfied(expected, userDataPath: profilePath) {
+                return Diagnostic(
+                    severity: .warning,
+                    title: "\(launcher.displayName): managed config not applied — reopen Claude Manager or rebuild",
+                    detail: PathUtils.abbreviatingHome(profilePath)
+                )
+            }
+            // Satisfies `.clone()` (updater disabled) but an older build also left the deep-link
+            // key — Claude drops forwarded links until this account is restarted. Reopening CM
+            // reconciles the file; the running instance still needs a restart to pick it up.
+            if managedConfigWriter.hasFlag(
+                ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: profilePath
+            ) {
+                return Diagnostic(
+                    severity: .warning,
+                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this account",
+                    detail: PathUtils.abbreviatingHome(profilePath)
+                )
+            }
+            return nil
         }
     }
 
@@ -226,8 +257,8 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }
-        if managedConfigWriter.isSatisfied(
-            ProfileManagedConfig(disableDeepLinkRegistration: true), userDataPath: defaultPath
+        if managedConfigWriter.hasFlag(
+            ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: defaultPath
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,

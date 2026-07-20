@@ -263,37 +263,6 @@ struct DoctorTests {
     }
 
     @Test
-    func warnsWhenBrokerOnButCloneMissesDeepLinkKey() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        let profileDir = scene.profilesDir.appendingPathComponent("work")
-        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
-        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
-        let noMDM = [scene.root.appendingPathComponent("no-mdm.plist")]
-        // Seed only the broker-OFF overlay (disableAutoUpdates), missing the deep-link key.
-        try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
-            .reconcile(.clone(deepLinkBrokerEnabled: false), userDataPath: profileDir.path)
-
-        // Doctor with the broker ON expects disableDeepLinkRegistration too → warns.
-        let diags = Doctor(
-            realClaude: scene.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir,
-                defaultProfilesDirectory: scene.profilesDir,
-                managedPreferencesURLs: noMDM,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
-                deepLinkBrokerEnabled: true,
-                shipItStatePath: scene.shipItStatePath
-            ),
-            processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
-            managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: noMDM)
-        ).run()
-        #expect(diags.contains {
-            $0.severity == .warning && $0.title.contains("managed config not applied")
-        })
-    }
-
-    @Test
     func warnsWhenCloneOverlayMissing() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
@@ -314,15 +283,47 @@ struct DoctorTests {
         let profileDir = scene.profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
         try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
-        // Seed the full broker-on clone overlay (runDoctor's config has the broker on by
-        // default, matching production), so the clone check is satisfied.
+        // Seed the clone overlay Doctor expects, so the clone check is satisfied.
         try ManagedConfigWriter(
             fileManager: fm,
             managedPreferencesURLs: [scene.root.appendingPathComponent("no-mdm.plist")]
-        ).reconcile(.clone(deepLinkBrokerEnabled: true), userDataPath: profileDir.path)
+        ).reconcile(.clone(), userDataPath: profileDir.path)
 
         let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains { $0.title.contains("managed config not applied") })
+    }
+
+    @Test
+    func warnsWhenCloneHasStaleDeepLinkKey() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let profileDir = scene.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
+        // Satisfies `.clone()` (updater disabled) yet also carries a stale
+        // disableDeepLinkRegistration from an older build — invisible to `isSatisfied`, but it
+        // drops forwarded links, so Doctor must still warn.
+        try seedRawOverlay(
+            ["disableAutoUpdates": true, "disableDeepLinkRegistration": true],
+            userDataPath: profileDir.path,
+            fileManager: fm
+        )
+
+        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
+        #expect(diags.contains {
+            $0.severity == .warning && $0.title.contains("deep-link registration is suppressed")
+        })
+    }
+
+    @Test
+    func deepLinkResidencyDiagnosticFiresOnlyWhenBrokerOnAndLaunchAtLoginOff() {
+        // Off unless the broker is on *and* the app won't launch at login.
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: false, launchAtLoginEnabled: false) == nil)
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: false, launchAtLoginEnabled: true) == nil)
+        #expect(Doctor.deepLinkResidencyDiagnostic(brokerEnabled: true, launchAtLoginEnabled: true) == nil)
+        let diagnostic = Doctor.deepLinkResidencyDiagnostic(brokerEnabled: true, launchAtLoginEnabled: false)
+        #expect(diagnostic?.severity == .warning)
+        #expect(diagnostic?.title.contains("Launch at login") == true)
     }
 
     @Test

@@ -34,6 +34,8 @@ final class DeepLinkService {
     /// Register Claude Manager as the default `claude://` handler and start holding it.
     /// Idempotent. Call when the broker is enabled.
     func startHolding() {
+        let current = currentClaudeHandlerBundleID() ?? "none"
+        Log.broker.info("startHolding: handler was \(current, privacy: .public), asserting self")
         let register = makeReassert(to: ourBundleURL)
         let handlerGuard = handlerGuard ?? LaunchServicesHandlerGuard(
             ourBundleID: ourBundleID,
@@ -87,6 +89,10 @@ final class DeepLinkService {
     private func makeReassert(to appURL: URL) -> @Sendable () -> Void {
         { @Sendable in
             MainActor.assumeIsolated {
+                Log.broker
+                    .info(
+                        "reassert: setting claude:// default app to \(appURL.lastPathComponent, privacy: .public)"
+                    )
                 NSWorkspace.shared.setDefaultApplication(
                     at: appURL,
                     toOpenURLsWithScheme: CoreConstants.claudeURLScheme

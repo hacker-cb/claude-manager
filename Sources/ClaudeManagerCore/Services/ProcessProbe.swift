@@ -160,9 +160,9 @@ public struct ProcessProbe {
     /// profiles dir lives under "Application Support/Claude Manager/…"), stopping
     /// before the next `--flag`, a positional URL argument, or end of line. `ps`
     /// space-joins argv, so a greedy `\S+` would truncate any path containing a
-    /// space. The URL stop matters because a forwarded deep link arrives as a
-    /// positional `claude://…` arg *after* `--user-data-dir` (see `openForwarding`);
-    /// without it the value would swallow the URL as part of the profile path.
+    /// space. The URL stop is defensive: deep links are delivered by Apple event
+    /// (not appended to argv), but should any positional `scheme://…` arg ever follow
+    /// `--user-data-dir`, this keeps it out of the captured profile path.
     private static let profileRegex =
         makeRegex(#"--user-data-dir=(.+?)(?=\s--|\s[a-zA-Z][a-zA-Z0-9+.\-]*://|$)"#)
 
