@@ -10,9 +10,9 @@ struct DoctorView: View {
     /// app won't launch at login) that `Doctor.run()` can't see — both its inputs are app state.
     private var diagnostics: [Diagnostic] {
         // Fold `isDistribution` into the broker input, mirroring `DeepLinkResidencyNudge`:
-        // the warning's only remedy is Launch at login, which a non-distribution build can't
-        // register — and such a build doesn't broker `claude://` at all — so a dev build must
-        // not surface "turn on Launch at login" for a feature it can't provide.
+        // the warning's only remedy is Launch at login, which macOS honours only for a
+        // signed + notarized build — so a non-distribution build must not surface "turn on
+        // Launch at login" when that toggle is itself disabled and can't be acted on.
         let residency = Doctor.deepLinkResidencyDiagnostic(
             brokerEnabled: model.deepLinkBrokerEnabled && AppBuild.isDistribution,
             launchAtLoginEnabled: launchAtLogin.isEnabled || launchAtLogin.requiresApproval

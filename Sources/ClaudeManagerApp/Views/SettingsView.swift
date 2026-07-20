@@ -163,22 +163,26 @@ struct SettingsView: View {
         Section("Startup") {
             Toggle("Launch at login", isOn: launchAtLoginBinding)
                 .disabled(!AppBuild.isDistribution)
-            if !AppBuild.isDistribution {
+            // The approval / error hints describe an *active* toggle, so show them only in a
+            // distribution build; a dev build (toggle disabled) shows just the explanatory
+            // caption, never a stale `requiresApproval` / `lastError` from `SMAppService`.
+            if AppBuild.isDistribution {
+                if launchAtLogin.requiresApproval {
+                    Text(
+                        "Approve Claude Manager in System Settings › General › Login Items "
+                            + "for this to take effect."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                if let error = launchAtLogin.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            } else {
                 Text(
                     "Launch at login is available in released builds only — macOS registers a "
                         + "login item for a signed, notarized app, not a local dev build."
                 )
                 .font(.caption).foregroundStyle(.secondary)
-            }
-            if launchAtLogin.requiresApproval {
-                Text(
-                    "Approve Claude Manager in System Settings › General › Login Items "
-                        + "for this to take effect."
-                )
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            if let error = launchAtLogin.lastError {
-                Text(error).font(.caption).foregroundStyle(.red)
             }
             Text(
                 "Closing the window keeps Claude Manager in the menu bar; its Dock icon shows "
