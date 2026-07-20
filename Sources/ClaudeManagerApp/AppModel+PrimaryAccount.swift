@@ -47,10 +47,12 @@ extension AppModel {
     /// `openReal` hold its launch guard across the cold-start lag. Shares the deep-link
     /// forwarder's cold-launch budget so both launch paths wait the identical window (#38).
     private func awaitDefaultVisible() async {
-        for _ in 0 ..< DeepLinkForwarder.coldLaunchPollAttempts {
-            if await runningDefaultPID() != nil { return }
-            try? await Task.sleep(for: DeepLinkForwarder.coldLaunchPollInterval)
-        }
+        _ = await AsyncPoll.firstNonNil(
+            attempts: DeepLinkForwarder.coldLaunchPollAttempts,
+            interval: DeepLinkForwarder.coldLaunchPollInterval,
+            sleep: { try? await Task.sleep(for: $0) },
+            probe: { [weak self] in await self?.runningDefaultPID() }
+        )
     }
 
     /// Gracefully stop the running default account (SIGTERM), surfacing a notice if it

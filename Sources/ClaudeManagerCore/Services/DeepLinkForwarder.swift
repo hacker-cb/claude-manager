@@ -140,16 +140,14 @@ public struct DeepLinkForwarder: Sendable {
 
     /// Poll for the just-launched instance's pid (bounded), then settle and deliver.
     private func pollThenDeliver(_ url: URL) async -> Outcome {
-        for _ in 0 ..< pollAttempts {
-            guard let pid = await probePID() else {
-                await sleep(pollInterval)
-                continue
-            }
-            await sleep(settle)
-            return await outcome(of: deliver(url, pid))
+        guard let pid = await AsyncPoll.firstNonNil(
+            attempts: pollAttempts, interval: pollInterval, sleep: sleep, probe: probePID
+        ) else {
+            log("instance never came up after \(pollAttempts) probes — not delivered")
+            return .neverAppeared
         }
-        log("instance never came up after \(pollAttempts) probes — not delivered")
-        return .neverAppeared
+        await sleep(settle)
+        return await outcome(of: deliver(url, pid))
     }
 
     private func outcome(of failure: DeepLinkDeliveryFailure?) -> Outcome {
