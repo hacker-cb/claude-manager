@@ -87,9 +87,14 @@ public struct UsageService: Sendable {
         if token.isExpired(now: now) {
             return account.usage(latest, state: .loginNeeded)
         }
-        // Standing backoff (429 / terminal / error) still active → serve stale.
+        // Standing backoff still active → serve stale, rendering the *original* cause (a
+        // transport backoff must not read back as a 429).
         if !tokenChanged, let until = stored?.backoffUntil, until > now {
-            let state: UsageState = until == .distantFuture ? .loginNeeded : .rateLimited(until: until)
+            let state: UsageState = switch stored?.backoffReason {
+            case .terminal: .loginNeeded
+            case .rateLimited: .rateLimited(until: until)
+            case .offline, .none: latest.map { .stale(since: $0.capturedAt) } ?? .offline
+            }
             return account.usage(latest, state: state)
         }
         // 60s floor since the last attempt → skip, serve what we have.
@@ -143,6 +148,7 @@ public struct UsageService: Sendable {
             context.latest
         )
         let backoffUntil: Date
+        let reason: BackoffReason
         let state: UsageState
 
         switch error {
@@ -150,22 +156,29 @@ public struct UsageService: Sendable {
             // Terminal for this token: stop polling until the fingerprint changes (re-login)
             // or a manual refresh. A far-future backoff parks it; a new token clears it.
             backoffUntil = .distantFuture
+            reason = .terminal
             state = .loginNeeded
         case let .rateLimited(retryAfter):
             let seconds = retryAfter.map { $0.clamped(to: Self.retryAfterRange) }
                 ?? Self.nextBackoff(after: stored, now: now)
             backoffUntil = now.addingTimeInterval(seconds)
+            reason = .rateLimited
             state = .rateLimited(until: backoffUntil)
         case .transport:
             backoffUntil = now.addingTimeInterval(Self.nextBackoff(after: stored, now: now))
+            reason = .offline
             state = .offline
         case .httpError, .malformedBody:
             backoffUntil = now.addingTimeInterval(Self.nextBackoff(after: stored, now: now))
+            reason = .offline
             state = latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
 
         await history.setThrottle(
-            ThrottleState(lastAttemptAt: now, backoffUntil: backoffUntil, tokenFingerprint: fingerprint),
+            ThrottleState(
+                lastAttemptAt: now, backoffUntil: backoffUntil,
+                backoffReason: reason, tokenFingerprint: fingerprint
+            ),
             accountUUID: uuid
         )
         return account.usage(latest, state: state)
@@ -173,18 +186,30 @@ public struct UsageService: Sendable {
 
     // MARK: - Helpers
 
-    /// Whole-fleet rotation signal: nothing resolved, and every failure was a decrypt failure
-    /// (a stale shared key), not a per-account problem — safe to invalidate the key and retry.
+    /// Whole-fleet rotation signal. The safeStorage key is **shared**, so a genuine `.decryptFailed`
+    /// (padding rejected) proves *the key* is wrong — and since it's shared, wrong for every
+    /// binding, making the sibling `.malformedCache` results wrong-key garbage too. So: nothing
+    /// resolved, at least one definitive `.decryptFailed`, and every failure is crypto-related
+    /// (decrypt / malformed) — not a `.configUnreadable`/`.noTokenCache` per-account problem.
+    ///
+    /// The "at least one `.decryptFailed`" guard is what excludes codex's case: if every binding
+    /// decrypts fine but the *payload* is malformed (all `.malformedCache`, no `.decryptFailed`),
+    /// the key is correct and invalidating it would mask the real bug and re-prompt for nothing.
     private static func shouldSelfHeal(_ resolved: ResolvedAccounts) -> Bool {
-        resolved.accounts.isEmpty && !resolved.failures.isEmpty
-            && resolved.failures.values.allSatisfy(isDecryptFailure)
+        guard resolved.accounts.isEmpty, !resolved.failures.isEmpty else { return false }
+        let failures = resolved.failures.values
+        return failures.contains(where: isDecryptFailure)
+            && failures.allSatisfy { isDecryptFailure($0) || isMalformedCache($0) }
     }
 
     private static func isDecryptFailure(_ error: TokenProviderError) -> Bool {
-        switch error {
-        case .decryptFailed, .malformedCache: true
-        default: false
-        }
+        if case .decryptFailed = error { return true }
+        return false
+    }
+
+    private static func isMalformedCache(_ error: TokenProviderError) -> Bool {
+        if case .malformedCache = error { return true }
+        return false
     }
 
     /// Exponential backoff off the previous window (doubling), capped. A terminal

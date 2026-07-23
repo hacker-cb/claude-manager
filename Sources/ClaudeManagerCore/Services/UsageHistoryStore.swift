@@ -38,6 +38,14 @@ public actor UsageHistoryStore {
         connection.handle
     }
 
+    /// In-memory fallbacks used **only when the DB can't be opened**. History (samples) is
+    /// genuinely optional and degrades to empty, but the throttle state and the notification
+    /// ledger are not: losing the throttle would strip `UsageService`'s 60s floor and 429
+    /// backoff and hammer the API, and losing the ledger would re-notify every tick. These keep
+    /// both working for the session (just not persisted across restarts).
+    private var memoryThrottle: [String: ThrottleState] = [:]
+    private var memoryNotified: Set<String> = []
+
     /// Open (and bootstrap) the store at `path`. Pass `":memory:"` for a throwaway store in
     /// tests. A failed open leaves the store inert (every method no-ops / returns empty); the
     /// handle is closed by `SQLiteConnection.deinit` when the store is released.
@@ -54,31 +62,41 @@ public actor UsageHistoryStore {
         guard let db else { return }
         guard let snapshotJSON = Self.encodeSnapshot(sample.snapshot) else { return }
 
-        // New sample becomes the latest → clear raw on this account's older rows first.
-        if let stmt = Self.prepare(db, "UPDATE usage_samples SET raw_json=NULL WHERE account_uuid=?1") {
-            Self.bind(stmt, 1, text: sample.accountUUID)
-            Self.step(stmt)
-        }
-
+        // The insert + the raw-cleanup are one transaction so a crash can't leave raw cleared
+        // with no new row.
+        _ = Self.exec(db, "BEGIN")
         let sql = """
         INSERT INTO usage_samples
         (account_uuid, captured_at, five_hour_frac, seven_day_frac, binding_frac,
          extra_used_minor, extra_limit_minor, severity, snapshot_json, raw_json, source)
         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
         """
-        guard let stmt = Self.prepare(db, sql) else { return }
-        Self.bind(stmt, 1, text: sample.accountUUID)
-        Self.bind(stmt, 2, int: Self.millis(sample.capturedAt))
-        Self.bind(stmt, 3, double: sample.snapshot.session?.utilization)
-        Self.bind(stmt, 4, double: sample.snapshot.weeklyAll?.utilization)
-        Self.bind(stmt, 5, double: sample.snapshot.bindingLimit?.utilization)
-        Self.bind(stmt, 6, int: sample.snapshot.extra.map { Int64($0.usedMinor) })
-        Self.bind(stmt, 7, int: sample.snapshot.extra?.limitMinor.map(Int64.init))
-        Self.bind(stmt, 8, text: sample.snapshot.bindingLimit?.severity.rawValue)
-        Self.bind(stmt, 9, text: snapshotJSON)
-        Self.bind(stmt, 10, text: rawBody.flatMap { String(data: $0, encoding: .utf8) })
-        Self.bind(stmt, 11, text: sample.source)
-        Self.step(stmt)
+        if let stmt = Self.prepare(db, sql) {
+            Self.bind(stmt, 1, text: sample.accountUUID)
+            Self.bind(stmt, 2, int: Self.millis(sample.capturedAt))
+            Self.bind(stmt, 3, double: sample.snapshot.session?.utilization)
+            Self.bind(stmt, 4, double: sample.snapshot.weeklyAll?.utilization)
+            Self.bind(stmt, 5, double: sample.snapshot.bindingLimit?.utilization)
+            Self.bind(stmt, 6, int: sample.snapshot.extra.map { Int64($0.usedMinor) })
+            Self.bind(stmt, 7, int: sample.snapshot.extra?.limitMinor.map(Int64.init))
+            Self.bind(stmt, 8, text: sample.snapshot.bindingLimit?.severity.rawValue)
+            Self.bind(stmt, 9, text: snapshotJSON)
+            Self.bind(stmt, 10, text: rawBody.flatMap { String(data: $0, encoding: .utf8) })
+            Self.bind(stmt, 11, text: sample.source)
+            Self.step(stmt)
+        }
+        // Keep raw_json only on the account's newest row — computed *after* insert (against the
+        // real max captured_at), so an out-of-order sample can't desync latest() from
+        // latestRawJSON().
+        if let stmt = Self.prepare(db, """
+        UPDATE usage_samples SET raw_json=NULL
+        WHERE account_uuid=?1
+          AND captured_at < (SELECT MAX(captured_at) FROM usage_samples WHERE account_uuid=?1)
+        """) {
+            Self.bind(stmt, 1, text: sample.accountUUID)
+            Self.step(stmt)
+        }
+        _ = Self.exec(db, "COMMIT")
     }
 
     /// The most recent sample for an account (for serve-stale), or nil.
@@ -129,8 +147,11 @@ public actor UsageHistoryStore {
     // MARK: - Throttle state
 
     public func throttle(accountUUID: String) -> ThrottleState? {
-        guard let db else { return nil }
-        let sql = "SELECT last_attempt_at, backoff_until, token_fingerprint FROM throttle_state WHERE account_uuid=?1"
+        guard let db else { return memoryThrottle[accountUUID] }
+        let sql = """
+        SELECT last_attempt_at, backoff_until, backoff_reason, token_fingerprint
+        FROM throttle_state WHERE account_uuid=?1
+        """
         guard let stmt = Self.prepare(db, sql) else { return nil }
         defer { sqlite3_finalize(stmt) }
         Self.bind(stmt, 1, text: accountUUID)
@@ -138,25 +159,28 @@ public actor UsageHistoryStore {
         return ThrottleState(
             lastAttemptAt: Self.optionalDate(stmt, 0),
             backoffUntil: Self.optionalDate(stmt, 1),
-            tokenFingerprint: Self.text(stmt, 2)
+            backoffReason: Self.text(stmt, 2).flatMap(BackoffReason.init(rawValue:)),
+            tokenFingerprint: Self.text(stmt, 3)
         )
     }
 
     public func setThrottle(_ state: ThrottleState, accountUUID: String) {
-        guard let db else { return }
+        guard let db else { memoryThrottle[accountUUID] = state; return }
         let sql = """
-        INSERT INTO throttle_state (account_uuid, last_attempt_at, backoff_until, token_fingerprint)
-        VALUES (?1,?2,?3,?4)
+        INSERT INTO throttle_state (account_uuid, last_attempt_at, backoff_until, backoff_reason, token_fingerprint)
+        VALUES (?1,?2,?3,?4,?5)
         ON CONFLICT(account_uuid) DO UPDATE SET
             last_attempt_at=excluded.last_attempt_at,
             backoff_until=excluded.backoff_until,
+            backoff_reason=excluded.backoff_reason,
             token_fingerprint=excluded.token_fingerprint
         """
         guard let stmt = Self.prepare(db, sql) else { return }
         Self.bind(stmt, 1, text: accountUUID)
         Self.bind(stmt, 2, int: state.lastAttemptAt.map(Self.millis))
         Self.bind(stmt, 3, int: state.backoffUntil.map(Self.millis))
-        Self.bind(stmt, 4, text: state.tokenFingerprint)
+        Self.bind(stmt, 4, text: state.backoffReason?.rawValue)
+        Self.bind(stmt, 5, text: state.tokenFingerprint)
         Self.step(stmt)
     }
 
@@ -168,7 +192,10 @@ public actor UsageHistoryStore {
         threshold: Double,
         resetsAt: Date?
     ) -> Bool {
-        guard let db else { return false }
+        let threshold = Self.roundedThreshold(threshold)
+        guard let db else {
+            return memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, resetsAt))
+        }
         let sql = """
         SELECT 1 FROM notified_thresholds
         WHERE account_uuid=?1 AND limit_key=?2 AND threshold=?3 AND resets_at=?4 LIMIT 1
@@ -189,7 +216,11 @@ public actor UsageHistoryStore {
         resetsAt: Date?,
         notifiedAt: Date
     ) {
-        guard let db else { return }
+        let threshold = Self.roundedThreshold(threshold)
+        guard let db else {
+            memoryNotified.insert(Self.notifiedKey(accountUUID, limitKey, threshold, resetsAt))
+            return
+        }
         let sql = """
         INSERT OR REPLACE INTO notified_thresholds
         (account_uuid, limit_key, threshold, resets_at, notified_at) VALUES (?1,?2,?3,?4,?5)
@@ -203,12 +234,32 @@ public actor UsageHistoryStore {
         Self.step(stmt)
     }
 
+    /// Round the threshold so ledger writes and checks match on a stable value — the tiers are
+    /// constants today, but this guards against a future computed threshold whose last float bit
+    /// differs (a `REAL =` miss would re-notify).
+    private static func roundedThreshold(_ threshold: Double) -> Double {
+        (threshold * 1_000_000).rounded() / 1_000_000
+    }
+
+    private static func notifiedKey(
+        _ uuid: String,
+        _ limitKey: String,
+        _ threshold: Double,
+        _ resetsAt: Date?
+    ) -> String {
+        "\(uuid)|\(limitKey)|\(threshold)|\(resetsAt.map(millis) ?? 0)"
+    }
+
     // MARK: - Retention
 
     /// Prune old rows: drop samples older than `retentionDays`, cap each account to its newest
     /// `maxRowsPerAccount`, and expire stale ledger rows. Runs incremental auto-vacuum to
     /// actually reclaim pages.
-    public func prune(now: Date, retentionDays: Int = 90, maxRowsPerAccount: Int = 5000) {
+    ///
+    /// The default cap is a generous safety net that sits **above** the 90-day window at the
+    /// fastest cadence (adaptive 5-min running poll ≈ 288/day × 90 ≈ 26k), so retention is
+    /// governed by age, not silently truncated by the cap.
+    public func prune(now: Date, retentionDays: Int = 90, maxRowsPerAccount: Int = 50000) {
         guard let db else { return }
         let cutoff = Self.millis(now.addingTimeInterval(-Double(retentionDays) * 86400))
 
@@ -216,24 +267,38 @@ public actor UsageHistoryStore {
             Self.bind(stmt, 1, int: cutoff)
             Self.step(stmt)
         }
-        // Keep only the newest `maxRowsPerAccount` per account.
+        // Keep only the newest `maxRowsPerAccount` per account. A single-pass ROW_NUMBER window
+        // (linear) rather than a correlated COUNT (O(n²)); the `id` tiebreak keeps rows sharing
+        // the newest millisecond from all escaping the cap.
         if let stmt = Self.prepare(db, """
         DELETE FROM usage_samples WHERE id IN (
-            SELECT id FROM usage_samples s
-            WHERE (SELECT COUNT(*) FROM usage_samples s2
-                   WHERE s2.account_uuid = s.account_uuid AND s2.captured_at > s.captured_at) >= ?1
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY account_uuid ORDER BY captured_at DESC, id DESC
+                ) AS rn FROM usage_samples
+            ) WHERE rn > ?1
         )
         """) {
             Self.bind(stmt, 1, int: Int64(maxRowsPerAccount))
             Self.step(stmt)
         }
-        if let stmt = Self.prepare(db, "DELETE FROM notified_thresholds WHERE resets_at < ?1") {
+        // Only expire dated ledger rows: a nil resets_at is stored as 0 (needed for dedup
+        // matching), so `resets_at > 0` keeps no-reset entries from being wiped every prune and
+        // re-notified.
+        if let stmt = Self.prepare(
+            db,
+            "DELETE FROM notified_thresholds WHERE resets_at > 0 AND resets_at < ?1"
+        ) {
             Self.bind(stmt, 1, int: cutoff)
             Self.step(stmt)
         }
         _ = Self.exec(db, "PRAGMA incremental_vacuum")
     }
+}
 
+/// The nonisolated SQLite plumbing (open/bootstrap + statement primitives over an explicit
+/// handle) lives in an extension so the actor body stays focused on the store's operations.
+private extension UsageHistoryStore {
     // MARK: - Open + bootstrap (nonisolated; runs from init)
 
     private static func open(path: String) -> OpaquePointer? {
@@ -278,6 +343,7 @@ public actor UsageHistoryStore {
             account_uuid TEXT PRIMARY KEY,
             last_attempt_at INTEGER,
             backoff_until INTEGER,
+            backoff_reason TEXT,
             token_fingerprint TEXT
         )
         """)

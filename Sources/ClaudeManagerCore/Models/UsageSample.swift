@@ -19,18 +19,34 @@ public struct UsageSample: Sendable, Equatable {
     }
 }
 
-/// Durable per-account throttle state, read back each poll tick so the 60s floor, the 429
-/// backoff window, and the token-fingerprint cache survive the stateless-per-refresh
+/// Why a poll is currently backed off — persisted so a *subsequent* tick renders the honest
+/// state (a transport failure must not read back as a 429). `terminal` parks the account until
+/// the token fingerprint changes (a 401/403 re-login).
+public enum BackoffReason: String, Sendable, Equatable {
+    case rateLimited
+    case offline
+    case terminal
+}
+
+/// Durable per-account throttle state, read back each poll tick so the 60s floor, the backoff
+/// window (and its cause), and the token-fingerprint cache survive the stateless-per-refresh
 /// `UsageService` (which owns no memory of its own between ticks).
 public struct ThrottleState: Sendable, Equatable {
     public var lastAttemptAt: Date?
     public var backoffUntil: Date?
+    public var backoffReason: BackoffReason?
     /// `sha256(token)[:16]` — a login switch changes it, invalidating the cache immediately.
     public var tokenFingerprint: String?
 
-    public init(lastAttemptAt: Date? = nil, backoffUntil: Date? = nil, tokenFingerprint: String? = nil) {
+    public init(
+        lastAttemptAt: Date? = nil,
+        backoffUntil: Date? = nil,
+        backoffReason: BackoffReason? = nil,
+        tokenFingerprint: String? = nil
+    ) {
         self.lastAttemptAt = lastAttemptAt
         self.backoffUntil = backoffUntil
+        self.backoffReason = backoffReason
         self.tokenFingerprint = tokenFingerprint
     }
 }

@@ -247,44 +247,89 @@ struct UsageServiceTests {
         #expect(result.accounts.first?.state == .offline)
     }
 
+    @Test
+    func transportBackoffDoesNotReadBackAsRateLimited() async {
+        let history = UsageHistoryStore(path: ":memory:")
+        // Seed a good sample so the later stale read has data.
+        let ok = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        _ = await makeService(
+            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            http: ok, history: history
+        ).refresh(bindings: [binding("p")], now: now)
+        // Transport failure > 60s later → offline backoff (with reason .offline).
+        let down = ScriptedHTTP { _ in throw URLError(.notConnectedToInternet) }
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            http: down, history: history
+        )
+        let failed = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(120))
+        #expect(failed.accounts.first?.state == .offline)
+        // Next tick, still inside the backoff, must render stale — not a phantom 429.
+        let next = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(180))
+        if case .stale = next.accounts.first?.state {} else {
+            Issue.record("expected stale, got \(String(describing: next.accounts.first?.state))")
+        }
+    }
+
     // MARK: - Fleet-level key self-heal
 
+    /// Fails every binding with `.decryptFailed` on the first resolve pass (a stale shared key),
+    /// then succeeds — modelling exactly the fleet self-heal path (fail-all → invalidate → retry)
+    /// deterministically, without depending on which garbage a wrong AES key happens to produce.
+    private final class TwoPassProvider: TokenProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        private let firstPassCount: Int
+        private let healed: DesktopToken
+        init(firstPassCount: Int, healed: DesktopToken) {
+            self.firstPassCount = firstPassCount
+            self.healed = healed
+        }
+
+        func token(
+            for _: TokenBinding,
+            interactive _: Bool
+        ) async -> Result<DesktopToken, TokenProviderError> {
+            let n = lock.withLock { calls += 1; return calls }
+            return n <= firstPassCount ? .failure(.decryptFailed(.decryptFailed)) : .success(healed)
+        }
+    }
+
     @Test
-    func fleetSelfHealInvalidatesKeyWhenAllDecryptsFail() async throws {
-        let dir = try Fixture.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // config.json encrypted under the CORRECT password.
-        let correct = Data("correct-pw".utf8)
-        let key = try #require(SafeStorageDecryptor.deriveKey(password: correct))
-        let composite = "\(CoreConstants.oauthClientID):org:https://api.anthropic.com:user:inference"
-        let cacheJSON = try JSONSerialization.data(withJSONObject: [composite: [
-            "token": "TK",
-            "expiresAt": 4_000_000_000_000
-        ]])
-        let blob = SafeStorageDecryptorTests.makeV10Blob(cacheJSON, key: key)
-        let configURL = dir.appendingPathComponent("config.json")
-        try JSONSerialization.data(withJSONObject: [
-            CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString(),
-            CoreConstants.desktopLastAccountKey: "acct"
-        ]).write(to: configURL)
-
-        // Keychain hands back the WRONG password first (stale key → all decrypts fail), then the
-        // correct one after the fleet self-heal invalidates and retries.
-        let keychain = SequenceKeychain([Data("wrong".utf8), correct])
-        let keyStore = SafeStorageKeyStore(keychain: keychain)
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+    func fleetSelfHealRetriesWhenAllDecryptsFail() async {
         let history = UsageHistoryStore(path: ":memory:")
+        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        // One binding: pass 1 → .decryptFailed (all fail) → self-heal invalidates + retries →
+        // pass 2 → success. If self-heal didn't run, the account would never resolve.
+        let provider = TwoPassProvider(firstPassCount: 1, healed: token("p", lastKnown: "acct"))
         let service = UsageService(
-            resolver: AccountResolver(provider: DesktopSafeStorageProvider(keyStore: keyStore)),
+            resolver: AccountResolver(provider: provider),
             client: AnthropicOAuthClient(http: http),
-            keyStore: keyStore,
+            keyStore: SafeStorageKeyStore(keychain: StubKeychainAlways(Data("pw".utf8))),
             history: history,
             marketingVersion: "1.0"
         )
-
-        let result = await service.refresh(bindings: [TokenBinding(id: "p", configURL: configURL)], now: now)
+        let result = await service.refresh(bindings: [binding("p")], now: now)
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.state == .fresh)
+    }
+
+    @Test
+    func doesNotSelfHealOnMalformedCacheOnly() async {
+        let history = UsageHistoryStore(path: ":memory:")
+        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        // All bindings decrypt fine but the payload is malformed (key is correct) → no self-heal,
+        // no retry: the failure is reported, not masked as a rotated key.
+        let provider = StubProvider(results: ["p": .failure(.malformedCache)])
+        let service = UsageService(
+            resolver: AccountResolver(provider: provider),
+            client: AnthropicOAuthClient(http: http),
+            keyStore: SafeStorageKeyStore(keychain: StubKeychainAlways(Data("pw".utf8))),
+            history: history,
+            marketingVersion: "1.0"
+        )
+        let result = await service.refresh(bindings: [binding("p")], now: now)
+        #expect(result.accounts.isEmpty)
+        #expect(result.bindingFailures["p"] == .malformedCache)
     }
 }

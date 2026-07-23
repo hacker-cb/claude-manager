@@ -86,6 +86,7 @@ struct UsageHistoryStoreTests {
             let state = ThrottleState(
                 lastAttemptAt: Date(timeIntervalSince1970: 1000),
                 backoffUntil: Date(timeIntervalSince1970: 1300),
+                backoffReason: .rateLimited,
                 tokenFingerprint: "abc123"
             )
             await store.setThrottle(state, accountUUID: "acc")
@@ -164,15 +165,75 @@ struct UsageHistoryStoreTests {
         }
     }
 
+    @Test
+    func noResetLedgerRowSurvivesPrune() async {
+        await withStore { store in
+            // A limit with no reset time (resetsAt nil) is notified once; it must NOT be wiped by
+            // prune (which would re-notify), unlike dated rows.
+            await store.markNotified(
+                accountUUID: "acc",
+                limitKey: "extra",
+                threshold: 0.9,
+                resetsAt: nil,
+                notifiedAt: Date(timeIntervalSince1970: 1000)
+            )
+            await store.prune(now: Date(timeIntervalSince1970: 100 * 86400), retentionDays: 90)
+            #expect(await store.wasNotified(
+                accountUUID: "acc",
+                limitKey: "extra",
+                threshold: 0.9,
+                resetsAt: nil
+            ) == true)
+        }
+    }
+
+    @Test
+    func outOfOrderRecordKeepsRawOnTrueLatest() async {
+        await withStore { store in
+            await store.record(sample("acc", at: 200), rawBody: Data(#"{"newest":1}"#.utf8))
+            // A sample recorded with an EARLIER captured_at must not steal "latest raw".
+            await store.record(sample("acc", at: 100), rawBody: Data(#"{"older":1}"#.utf8))
+            #expect(await store.latest(accountUUID: "acc")?.capturedAt == Date(timeIntervalSince1970: 200))
+            #expect(await store.latestRawJSON(accountUUID: "acc") == #"{"newest":1}"#)
+        }
+    }
+
     // MARK: - Degrade-not-crash
 
     @Test
     func unopenableStoreDegradesToEmpty() async {
-        // A path under a nonexistent directory can't be created → inert store, no crash.
+        // A path under a nonexistent directory can't be created → inert store, no crash. History
+        // is genuinely lost…
         let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
         await store.record(sample("acc", at: 100), rawBody: nil)
         #expect(await store.latest(accountUUID: "acc") == nil)
         #expect(await store.sampleCount(accountUUID: "acc") == 0)
-        #expect(await store.throttle(accountUUID: "acc") == nil)
+    }
+
+    @Test
+    func unopenableStoreKeepsThrottleAndLedgerInMemory() async {
+        // …but throttle + dedup keep working in memory, so a dead DB can't strip the caller's
+        // rate-limit backoff (API hammering) or re-notify every tick.
+        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
+        let state = ThrottleState(
+            lastAttemptAt: Date(timeIntervalSince1970: 1000),
+            backoffUntil: Date(timeIntervalSince1970: 1300),
+            backoffReason: .rateLimited,
+            tokenFingerprint: "fp"
+        )
+        await store.setThrottle(state, accountUUID: "acc")
+        #expect(await store.throttle(accountUUID: "acc") == state)
+
+        #expect(await store
+            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == false)
+        await store.markNotified(
+            accountUUID: "acc",
+            limitKey: "7d",
+            threshold: 0.9,
+            resetsAt: nil,
+            notifiedAt: Date()
+        )
+        #expect(await store
+            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == true)
     }
 }
