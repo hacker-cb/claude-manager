@@ -122,6 +122,28 @@ public enum CoreConstants {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
 
+    // MARK: - Plan-usage statistics
+
+    /// On-disk schema version for the usage-history SQLite store. **Bump when the stored
+    /// `UsageSnapshot` shape or the DB schema changes** — the store drops-and-recreates on
+    /// mismatch (early-stage: history is a cache, not a contract). Mirrors the intent of
+    /// `currentWrapperVersion`, but for the stats DB rather than the launcher format.
+    public static let usageSchemaVersion = 1
+
+    /// Base URL for the OAuth usage/profile endpoints. The whole core had no networking
+    /// before plan-usage stats; this is the single place that host is named.
+    public static let usageAPIBaseURL = "https://api.anthropic.com"
+
+    /// `/api/oauth/usage` — per-account plan-usage limits (session / weekly / scoped / extra).
+    public static let usageAPIUsagePath = "/api/oauth/usage"
+
+    /// `/api/oauth/profile` — account identity (email, uuid, subscription); cached long.
+    public static let usageAPIProfilePath = "/api/oauth/profile"
+
+    /// Beta header value required by the OAuth usage/profile endpoints (proven sufficient
+    /// on its own — `anthropic-version` is not required for these calls).
+    public static let oauthBetaHeaderValue = "oauth-2025-04-20"
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =
