@@ -169,6 +169,82 @@ the profile being **currently down** (a second `open -n` on a live default dupli
 it on one user-data-dir and corrupts LevelDB — and ShipIt often relaunches the default
 itself after a swap).
 
+## Plan-usage statistics
+
+Surfaces each account's plan limits (5-hour / weekly / weekly-scoped-model / extra
+credits), warns before a limit bites, and keeps a local history for analysis. On by
+default, fully optional (Settings → Usage) — and the trust-model change it forces is
+documented in [README.md](../README.md) and [SECURITY.md](../SECURITY.md).
+
+**The account owns usage, not the profile.** Limits belong to the Anthropic
+subscription, so N launchers on one account must issue **one** `/usage` call.
+`AccountResolver` decrypts every binding's token locally first, groups by the token's
+account UUID (**not** org — a Team/Enterprise org holds many accounts), and elects one
+binding per account: valid (unexpired + `user:inference`) → latest `expiresAt` → stable
+id. The default account is a first-class peer, resolved from its own user-data-dir. A
+binding whose token can't be read maps to a login-needed / no-source UI state; an
+account is only "login needed" if **every** binding fails.
+
+**Token source — Electron safeStorage, no separate keychain entry.** Desktop tokens
+live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by
+Electron safeStorage. `SafeStorageDecryptor` reproduces the recipe with **CommonCrypto**
+(CryptoKit has neither PBKDF2 nor AES-CBC, so this adds zero SPM deps): read the keychain
+secret ("Claude Safe Storage"), `PBKDF2-HMAC-SHA1(salt "saltysalt", 1003 iters, 16 bytes)`
+→ AES-128-CBC (IV = 16 spaces), strip the `v10` prefix, PKCS7-unpad. The plaintext is a
+map keyed `<clientId>:<orgUuid>:<audience>:<scopes>`; the audience contains colons, so
+entries are matched by substring, never split on `:`. `SafeStorageKeyStore` (an actor)
+caches the derived key for the process lifetime, so a fleet of accounts costs **one**
+keychain access — and one "Always Allow" prompt. Background polls read with
+`kSecUseAuthenticationUISkip` so a locked/unauthorized keychain fails fast (serve stale)
+instead of prompting mid-poll; the prompt is deferred to an interactive Refresh.
+
+**Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
+self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,
+`is_active`) and is the source of truth; the model label is **data**
+(`scope.model.display_name` — "Sonnet" became "Fable" mid-development). `UsageLimitsParser`
+decodes field-by-field over `[String: Any]`, never a strict `Codable`: an unknown `kind`
+is kept in an "other" bucket, percents are clamped, a bad date degrades to nil, a
+non-object body to nil — it never drops the payload or crashes. Percent (0…100) is
+normalized to a fraction (0…1) at the parse boundary so every internal comparison speaks
+one unit.
+
+**AppModel owns the loop; the core service is stateless.** `UsageService` is a value
+rebuilt each tick (resolve → dedup → fetch-with-backoff → persist → return); the durable
+state lives in two actors the model holds — `UsageHistoryStore` (SQLite) and
+`SafeStorageKeyStore`. The poll loop mirrors `monitorTask`: default 30 min (presets
+15/30/60/manual), an opt-in adaptive 5-min lane while any account is running, gated on
+`!isApplyingStagedUpdate`. **The master switch is the choke point** — with tracking off,
+`refreshUsage` returns before any keychain read, network call, or storage, so the
+README/SECURITY promise holds literally. A rotated safeStorage key self-heals at the
+**fleet** level: if *every* binding fails to decrypt (with at least one real
+decrypt-failure), `UsageService` invalidates the shared key once and retries — the
+provider never invalidates per-binding, which would poison a healthy key when a single
+blob is corrupt.
+
+**Throttle & backoff are persisted, honestly.** `UsageHistoryStore` holds per-account
+throttle state (last attempt, `backoff_until`, a token fingerprint `sha256(token)[:16]`,
+and the backoff **reason** — rateLimited / offline / terminal). A 60s floor gates even
+the manual Refresh; 429 honors `Retry-After` (integer **and** HTTP-date); other errors
+back off exponentially, capped ~30 min; 401/403 is terminal until the fingerprint changes
+(a re-login) or a manual Refresh. Storing the *reason* means a later tick renders the
+true cause rather than reading a transport failure back as a 429.
+
+**Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
+via `.linkedLibrary("sqlite3")`; zero SPM deps). A canonical `snapshot_json` is the
+restore source; flat columns index it; `raw_json` is kept **latest-only** for the Doctor
+inspector; `notified_thresholds` dedups notifications across relaunches (keyed on account
++ limit identity + rounded threshold + reset window); a throttle table holds the state
+above. Bootstrap is `PRAGMA user_version` drop-and-recreate on mismatch (early-stage: no
+migrations). Every open/read failure degrades to empty (mirroring `MetadataStore`), with
+an in-memory fallback for throttle/ledger so a dead DB can't strip backoff and hammer the
+API. `CoreConstants.usageSchemaVersion` is bumped when the schema changes.
+
+**Thresholds (`LimitEvaluator`, pure).** A time-relative model (warn when utilization is
+high *and* the window is early: 5h (0.90, 0.72), 7d (0.75, 0.60)) plus an absolute
+near-exhaustion tier (0.90 warning / 0.95 critical), floored at 0.70, firing only the
+single most-severe tier per limit. `LimitNotifier` posts via `UNUserNotificationCenter`,
+deduped against `notified_thresholds` so each threshold fires once per reset window.
+
 ## macOS facts baked into the code
 
 - **Keep `CFBundleIconName` OUT of launcher Info.plists.** When present, macOS reads

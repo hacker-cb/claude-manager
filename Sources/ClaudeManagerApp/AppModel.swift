@@ -113,6 +113,10 @@ final class AppModel: ObservableObject {
     /// Refresh overlapping a scheduled poll can't both fetch (the throttle read+write aren't
     /// atomic across ticks). Non-private for `AppModel+Usage`.
     var isRefreshingUsage = false
+    /// Set when an interactive Refresh arrives while a refresh is already in flight, so the
+    /// current pass runs one more interactive round on completion — a background poll must never
+    /// swallow the user's only path to the keychain prompt. Non-private for `AppModel+Usage`.
+    var pendingInteractiveRefresh = false
 
     @Published var usageTrackingEnabled: Bool {
         didSet {
@@ -137,6 +141,11 @@ final class AppModel: ObservableObject {
             guard didFinishInit else { return }
             restartUsagePolling()
         }
+    }
+
+    /// Whether limit-approaching reminders are posted. On by default.
+    @Published var usageNotificationsEnabled: Bool {
+        didSet { defaults.set(usageNotificationsEnabled, forKey: PreferenceKeys.usageNotificationsEnabled) }
     }
 
     @Published var measureSizes: Bool {
@@ -193,6 +202,8 @@ final class AppModel: ObservableObject {
         usagePollIntervalMinutes = defaults
             .object(forKey: PreferenceKeys.usagePollIntervalMinutes) as? Int ?? 30
         usageAdaptiveEnabled = defaults.object(forKey: PreferenceKeys.usageAdaptiveEnabled) as? Bool ?? true
+        usageNotificationsEnabled = defaults
+            .object(forKey: PreferenceKeys.usageNotificationsEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
         // Wire the AppKit deep-link sink and run the launch tasks. Both are deferred to the
@@ -288,30 +299,19 @@ final class AppModel: ObservableObject {
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
+        // A user gesture: allow the one-time keychain prompt the background poll can't.
+        await refreshUsage(interactive: true)
     }
 
     func runDoctor() async {
-        guard let result = await perform({ store in store.doctor() }) else { return }
+        guard var result = await perform({ store in store.doctor() }) else { return }
+        if let usage = usageDoctorDiagnostic() { result.append(usage) }
         diagnostics = result
     }
 
     func refreshRunningInstances() async {
         guard let result = await perform({ store in store.runningInstances() }) else { return }
         runningInstances = result
-    }
-
-    func draft(
-        name: String,
-        label: String? = nil,
-        color: BadgeColor? = nil,
-        displayName: String? = nil,
-        bundleID: String? = nil,
-        profilePath: String? = nil
-    ) -> Profile? {
-        makeStore()?.draft(
-            name: name, label: label, color: color,
-            displayName: displayName, bundleID: bundleID, profilePath: profilePath
-        )
     }
 
     // MARK: - Mutations
@@ -445,10 +445,14 @@ final class AppModel: ObservableObject {
 
     /// Cancel the poll and drop the activation observer. The root model normally lives
     /// for the process, but explicit teardown keeps `startMonitoring` restartable.
+    ///
+    /// Usage polling is deliberately **not** torn down here: it has its own lifecycle (the master
+    /// switch via `applyUsageTrackingChange`, the interval/adaptive didSets, and `performLaunchTasks`),
+    /// and `startMonitoring` doesn't start it — tying only the stop to this pair would strand the
+    /// poll after a monitor restart. Turn usage polling off through the master switch instead.
     func stopMonitoring() {
         monitorTask?.cancel()
         monitorTask = nil
-        stopUsagePolling()
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil

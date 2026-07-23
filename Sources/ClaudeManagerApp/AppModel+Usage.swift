@@ -10,17 +10,12 @@ extension AppModel {
     static let usageMarketingVersion = Bundle.main
         .infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
-    /// `~/Library/Application Support/Claude Manager/usage.db`, creating the directory.
+    /// `~/Library/Application Support/Claude Manager/usage.db`, creating the directory. Shares
+    /// `MetadataStore.defaultDirectory()` so usage.db always lands beside metadata.json / Profiles
+    /// rather than re-deriving (and risking drifting from) the app-support location.
     static func usageDatabaseURL() -> URL {
-        let fileManager = FileManager.default
-        let support = (try? fileManager.url(
-            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-        )) ?? URL(fileURLWithPath: NSHomeDirectory())
-        let directory = support.appendingPathComponent(
-            CoreConstants.appSupportDirectoryName,
-            isDirectory: true
-        )
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = MetadataStore.defaultDirectory()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("usage.db")
     }
 
@@ -72,14 +67,15 @@ extension AppModel {
         }
     }
 
-    /// Seconds until the next poll: the chosen interval, halved to the adaptive 5-min cadence
-    /// while any account is running (actively used) — bounded by the interval so a longer
-    /// interval is never made *slower* by adaptivity.
+    /// Seconds until the next poll — the cadence math lives in (and is tested in) the core; the
+    /// app only supplies the running-accounts fact it can't compute headless.
     func usagePollSleepInterval() -> TimeInterval {
-        let base = TimeInterval(max(1, usagePollIntervalMinutes) * 60)
-        guard usageAdaptiveEnabled else { return base }
         let anyRunning = primaryAccount?.isRunning == true || profiles.contains(where: \.isRunning)
-        return anyRunning ? min(base, 5 * 60) : base
+        return UsageService.pollIntervalSeconds(
+            minutes: usagePollIntervalMinutes,
+            adaptiveEnabled: usageAdaptiveEnabled,
+            anyRunning: anyRunning
+        )
     }
 
     // MARK: - Refresh
@@ -89,24 +85,53 @@ extension AppModel {
     func refreshUsage(interactive: Bool) async {
         // Master switch is the choke point: off → read nothing, call nothing, store nothing.
         guard usageTrackingEnabled else { return }
-        // Single-flight: a manual Refresh overlapping a scheduled poll must not both fetch.
-        guard !isRefreshingUsage else { return }
         guard realClaude != nil, let config = currentConfiguration() else { return }
-        isRefreshingUsage = true
-        defer { isRefreshingUsage = false }
 
-        let bindings = usageBindings(config: config)
-        guard !bindings.isEmpty else { return }
-        let result = await makeUsageService().refresh(bindings: bindings, interactive: interactive)
-
-        var byBinding: [String: AccountUsage] = [:]
-        for account in result.accounts {
-            for bindingID in account.bindingIDs {
-                byBinding[bindingID] = account
-            }
+        // Single-flight — but an interactive request must never be silently dropped: it is the
+        // only path that can raise the one-time keychain prompt. If a refresh is already running,
+        // record that an interactive pass is still owed and let the current one finish first.
+        if isRefreshingUsage {
+            if interactive { pendingInteractiveRefresh = true }
+            return
         }
-        usageByBinding = byBinding
-        usageBindingFailures = result.bindingFailures
+        isRefreshingUsage = true
+
+        let result = await makeUsageService().refresh(
+            bindings: usageBindings(config: config), interactive: interactive
+        )
+
+        // The master switch can flip off during the await; honor it so we neither repopulate the
+        // state `applyUsageTrackingChange` just cleared nor fire notifications after "off".
+        if usageTrackingEnabled {
+            var byBinding: [String: AccountUsage] = [:]
+            for account in result.accounts {
+                for bindingID in account.bindingIDs {
+                    byBinding[bindingID] = account
+                }
+            }
+            usageByBinding = byBinding
+            usageBindingFailures = result.bindingFailures
+            await notifyLimits(for: result.accounts)
+        }
+
+        let owedInteractive = pendingInteractiveRefresh
+        pendingInteractiveRefresh = false
+        isRefreshingUsage = false
+        // Honor an interactive Refresh that arrived mid-flight — run it now that the slot is free.
+        if owedInteractive, usageTrackingEnabled { await refreshUsage(interactive: true) }
+    }
+
+    // MARK: - Menu-bar summary
+
+    /// The worst active limit across all accounts, as `7d 54%` — the at-a-glance value shown in
+    /// the status bar. Nil when tracking is off or there's no data yet.
+    var menuBarUsageSummary: (label: String, fraction: Double)? {
+        guard usageTrackingEnabled else { return nil }
+        let worst = usageByBinding.values
+            .compactMap(\.displayLimit)
+            .max { $0.utilization < $1.utilization }
+        guard let worst else { return nil }
+        return ("\(worst.shortLabel) \(UsageFormat.percent(worst.utilization))", worst.utilization)
     }
 
     // MARK: - Wiring

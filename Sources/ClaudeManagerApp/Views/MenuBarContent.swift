@@ -51,7 +51,9 @@ struct MenuBarContent: View {
                 Task { await model.openReal() }
             } label: {
                 Label(
-                    "Default profile\(model.primaryProfile?.isRunning == true ? " — running" : "")",
+                    "Default profile"
+                        + (model.primaryProfile?.isRunning == true ? " — running" : "")
+                        + usageSuffix(TokenBinding.defaultID),
                     systemImage: model.primaryProfile?.isRunning == true
                         ? "person.crop.circle.fill" : "person.crop.circle"
                 )
@@ -66,7 +68,9 @@ struct MenuBarContent: View {
                         Task { await model.open(managed.profile) }
                     } label: {
                         Label(
-                            "\(managed.profile.displayName)\(managed.isRunning ? " — running" : "")",
+                            managed.profile.displayName
+                                + (managed.isRunning ? " — running" : "")
+                                + usageSuffix(managed.profile.id),
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
                     }
@@ -122,5 +126,28 @@ struct MenuBarContent: View {
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// A trailing `  ·  7d 54%` for an account row, or "" when tracking is off or there's no
+    /// binding limit yet — so a menu row shows its own worst limit at a glance.
+    private func usageSuffix(_ bindingID: String) -> String {
+        guard model.usageTrackingEnabled,
+              let limit = model.usage(forBinding: bindingID)?.displayLimit else { return "" }
+        return "  ·  \(limit.shortLabel) \(UsageFormat.percent(limit.utilization))"
+    }
+}
+
+/// The status-bar item's label: the stack glyph, plus the worst limit across all accounts
+/// (`7d 54%`) when usage tracking has data. `Label` gives the menu-bar icon + text; a plain
+/// `Image` keeps just the glyph when there's nothing to show.
+struct MenuBarLabel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let summary = model.menuBarUsageSummary {
+            Label(summary.label, systemImage: "square.stack.3d.up.fill")
+        } else {
+            Image(systemName: "square.stack.3d.up.fill")
+        }
     }
 }

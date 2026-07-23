@@ -108,6 +108,7 @@ struct SettingsView: View {
                 }
                 Toggle("Refresh running accounts more often", isOn: $model.usageAdaptiveEnabled)
                     .disabled(model.usagePollIntervalMinutes == 0)
+                Toggle("Notify before limits are reached", isOn: $model.usageNotificationsEnabled)
             }
         }
     }

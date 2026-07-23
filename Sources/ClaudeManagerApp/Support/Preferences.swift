@@ -19,4 +19,6 @@ enum PreferenceKeys {
     static let usagePollIntervalMinutes = "usagePollIntervalMinutes"
     /// Whether a running account is polled on the faster adaptive cadence. On by default.
     static let usageAdaptiveEnabled = "usageAdaptiveEnabled"
+    /// Whether limit-approaching reminders are posted. On by default.
+    static let usageNotificationsEnabled = "usageNotificationsEnabled"
 }

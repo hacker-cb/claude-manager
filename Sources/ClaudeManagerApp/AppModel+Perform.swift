@@ -53,4 +53,19 @@ extension AppModel {
         guard let real = realClaude, let config = currentConfiguration() else { return nil }
         return ProfileStore(realClaude: real, configuration: config)
     }
+
+    /// A seeded `Profile` for the editor, synchronously (no store mutation).
+    func draft(
+        name: String,
+        label: String? = nil,
+        color: BadgeColor? = nil,
+        displayName: String? = nil,
+        bundleID: String? = nil,
+        profilePath: String? = nil
+    ) -> Profile? {
+        makeStore()?.draft(
+            name: name, label: label, color: color,
+            displayName: displayName, bundleID: bundleID, profilePath: profilePath
+        )
+    }
 }

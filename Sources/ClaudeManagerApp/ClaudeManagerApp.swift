@@ -44,8 +44,11 @@ struct ClaudeManagerApp: App {
             }
         }
 
-        MenuBarExtra("Claude Manager", systemImage: "square.stack.3d.up.fill") {
+        MenuBarExtra {
             MenuBarContent(updater: updaterController.updater)
+                .environmentObject(model)
+        } label: {
+            MenuBarLabel()
                 .environmentObject(model)
         }
 

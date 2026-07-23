@@ -1,0 +1,264 @@
+{
+  "": {
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/primary.swiftdeps"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/AccountResolverTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AccountResolverTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AccountResolverTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AccountResolverTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AccountResolverTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AccountResolverTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/AnthropicOAuthClientTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AnthropicOAuthClientTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AnthropicOAuthClientTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AnthropicOAuthClientTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AnthropicOAuthClientTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/AnthropicOAuthClientTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/BadgeColorTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeColorTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeColorTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeColorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeColorTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeColorTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/BadgeStyleTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeStyleTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeStyleTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeStyleTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeStyleTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/BadgeStyleTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/CoreConstantsTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/CoreConstantsTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/CoreConstantsTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/CoreConstantsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/CoreConstantsTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/CoreConstantsTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/DeepLinkTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DeepLinkTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DeepLinkTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DeepLinkTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DeepLinkTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DeepLinkTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/DesktopSafeStorageProviderTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DesktopSafeStorageProviderTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DesktopSafeStorageProviderTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DesktopSafeStorageProviderTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DesktopSafeStorageProviderTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DesktopSafeStorageProviderTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/DoctorDefaultAccountTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorDefaultAccountTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorDefaultAccountTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorDefaultAccountTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorDefaultAccountTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorDefaultAccountTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/DoctorTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/DoctorTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/IconRenderingTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/IconRenderingTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/IconRenderingTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/IconRenderingTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/IconRenderingTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/IconRenderingTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/LauncherBundleTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherBundleTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherBundleTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherBundleTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherBundleTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherBundleTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/LauncherScriptTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherScriptTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherScriptTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherScriptTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherScriptTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LauncherScriptTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/LimitEvaluatorTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LimitEvaluatorTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LimitEvaluatorTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LimitEvaluatorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LimitEvaluatorTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LimitEvaluatorTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/LiveIntegrationTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LiveIntegrationTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LiveIntegrationTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LiveIntegrationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LiveIntegrationTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/LiveIntegrationTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ManagedConfigWriterTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ManagedConfigWriterTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ManagedConfigWriterTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ManagedConfigWriterTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ManagedConfigWriterTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ManagedConfigWriterTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/MetadataStoreTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/MetadataStoreTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/MetadataStoreTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/MetadataStoreTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/MetadataStoreTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/MetadataStoreTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ModelTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ModelTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ModelTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ModelTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ModelTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ModelTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/PathUtilsTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/PathUtilsTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/PathUtilsTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/PathUtilsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/PathUtilsTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/PathUtilsTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProcessProbeTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProcessProbeTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProcessProbeTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProcessProbeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProcessProbeTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProcessProbeTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileManagedConfigTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileManagedConfigTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileManagedConfigTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileManagedConfigTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileManagedConfigTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileManagedConfigTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileStoreEdgeTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreEdgeTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreEdgeTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreEdgeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreEdgeTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreEdgeTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileStoreManagedConfigTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreManagedConfigTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreManagedConfigTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreManagedConfigTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreManagedConfigTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreManagedConfigTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileStorePrimaryAccountTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStorePrimaryAccountTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStorePrimaryAccountTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStorePrimaryAccountTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStorePrimaryAccountTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStorePrimaryAccountTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileStoreStagedUpdateTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreStagedUpdateTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreStagedUpdateTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreStagedUpdateTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreStagedUpdateTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreStagedUpdateTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/ProfileStoreTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/ProfileStoreTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/RealClaudeTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RealClaudeTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RealClaudeTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RealClaudeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RealClaudeTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RealClaudeTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/RebuildTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RebuildTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RebuildTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RebuildTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RebuildTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/RebuildTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/SafeStorageDecryptorTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/SafeStorageDecryptorTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/SafeStorageDecryptorTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/SafeStorageDecryptorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/SafeStorageDecryptorTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/SafeStorageDecryptorTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/StagedUpdateProbeTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/StagedUpdateProbeTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/StagedUpdateProbeTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/StagedUpdateProbeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/StagedUpdateProbeTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/StagedUpdateProbeTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/Support/TestSupport.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/TestSupport.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/TestSupport.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/TestSupport~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/TestSupport.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/TestSupport.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageHistoryStoreTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageHistoryStoreTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageHistoryStoreTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageHistoryStoreTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageHistoryStoreTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageHistoryStoreTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageLimitsParserTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageLimitsParserTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageLimitsParserTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageLimitsParserTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageLimitsParserTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageLimitsParserTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageModelTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageModelTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageModelTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageModelTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageModelTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageModelTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageServiceGateTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceGateTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceGateTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceGateTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceGateTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceGateTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageServiceTestHarness.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTestHarness.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTestHarness.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTestHarness~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTestHarness.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTestHarness.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/UsageServiceTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/UsageServiceTests.dia"
+  },
+  "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/Tests/ClaudeManagerCoreTests/VersionOrderTests.swift": {
+    "dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/VersionOrderTests.d",
+    "object": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/VersionOrderTests.swift.o",
+    "swiftmodule": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/VersionOrderTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/VersionOrderTests.swiftdeps",
+    "diagnostics": "/Users/pavel/projects/claude-manager/.claude/worktrees/usage-stats-limits-f6b629/.tmp-cache/swiftpm/arm64-apple-macosx/debug/ClaudeManagerCoreTests.build/VersionOrderTests.dia"
+  }
+}
