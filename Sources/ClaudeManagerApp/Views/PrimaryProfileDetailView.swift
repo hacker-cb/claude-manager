@@ -46,6 +46,12 @@ struct PrimaryProfileDetailView: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Default profile").font(.title2).bold()
+                // Mirrors the clone pane: the login identifies the account, so it belongs with
+                // the name rather than inside the Usage section.
+                if let account = model.usage(forBinding: TokenBinding.defaultID)?.identity.accountLabel {
+                    Text(account).font(.callout).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 HStack(spacing: 8) {
                     StatusDot(isRunning: status?.isRunning ?? false)
                     Text(runningLabel).foregroundStyle(.secondary)
