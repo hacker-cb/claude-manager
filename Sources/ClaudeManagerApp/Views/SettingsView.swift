@@ -61,6 +61,8 @@ struct SettingsView: View {
 
             deepLinkSection
 
+            usageSection
+
             Section("Updates") {
                 UpdaterSettingsView(updater: updater)
             }
@@ -87,6 +89,26 @@ struct SettingsView: View {
                     + "format (script, icon, Info.plist). Running launchers are skipped; "
                     + "the Dock refreshes for any that are rebuilt."
             )
+        }
+    }
+
+    private var usageSection: some View {
+        Section("Usage") {
+            Toggle("Track plan usage", isOn: $model.usageTrackingEnabled)
+            Text("Reads each account's token from your keychain to show 5-hour / weekly limits, "
+                + "calling Anthropic's usage endpoint directly. On by default; off stops all "
+                + "polling — no keychain read, network call, or storage.")
+                .font(.caption).foregroundStyle(.secondary)
+            if model.usageTrackingEnabled {
+                Picker("Check every", selection: $model.usagePollIntervalMinutes) {
+                    Text("15 minutes").tag(15)
+                    Text("30 minutes").tag(30)
+                    Text("60 minutes").tag(60)
+                    Text("Manually only").tag(0)
+                }
+                Toggle("Refresh running accounts more often", isOn: $model.usageAdaptiveEnabled)
+                    .disabled(model.usagePollIntervalMinutes == 0)
+            }
         }
     }
 

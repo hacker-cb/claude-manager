@@ -17,6 +17,15 @@ struct PrimaryProfileDetailView: View {
                 header
                 Divider()
                 actions
+                if model.usageTrackingEnabled {
+                    Divider()
+                    UsageDetailSection(
+                        usage: model.usage(forBinding: TokenBinding.defaultID),
+                        failure: model.usageFailure(forBinding: TokenBinding.defaultID),
+                        isRefreshing: model.isRefreshingUsage,
+                        onRefresh: { Task { await model.refreshUsage(interactive: true) } }
+                    )
+                }
                 Divider()
                 details
             }

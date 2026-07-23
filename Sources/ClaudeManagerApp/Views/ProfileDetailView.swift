@@ -20,6 +20,15 @@ struct ProfileDetailView: View {
                 if managed.needsRebuild { rebuildBanner }
                 Divider()
                 actions
+                if model.usageTrackingEnabled {
+                    Divider()
+                    UsageDetailSection(
+                        usage: model.usage(forBinding: profile.id),
+                        failure: model.usageFailure(forBinding: profile.id),
+                        isRefreshing: model.isRefreshingUsage,
+                        onRefresh: { Task { await model.refreshUsage(interactive: true) } }
+                    )
+                }
                 Divider()
                 details
             }

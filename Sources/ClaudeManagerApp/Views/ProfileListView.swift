@@ -67,7 +67,10 @@ struct PrimaryProfileRow: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 4)
-            StatusDot(isRunning: status.isRunning)
+            VStack(alignment: .trailing, spacing: 2) {
+                StatusDot(isRunning: status.isRunning)
+                UsageSidebarIndicator(usage: model.usage(forBinding: TokenBinding.defaultID))
+            }
         }
         .padding(.vertical, 2)
         .contextMenu {
@@ -132,6 +135,7 @@ struct ProfileRow: View {
                     }
                     StatusDot(isRunning: managed.isRunning)
                 }
+                UsageSidebarIndicator(usage: model.usage(forBinding: managed.profile.id))
                 if let size = managed.diskSize {
                     Text(size).font(.caption2).foregroundStyle(.secondary)
                 }
