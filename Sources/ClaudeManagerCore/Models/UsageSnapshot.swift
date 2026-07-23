@@ -97,6 +97,12 @@ public struct UsageLimit: Codable, Sendable, Equatable {
         if isWeeklyScoped { return "7d·\(scopeModelName ?? "?")" }
         return rawKind
     }
+
+    /// Stable identity for notification dedup — distinguishes a scoped window per model
+    /// (`weekly_scoped:Fable`) from the weekly-all window, so they don't share a ledger key.
+    public var dedupKey: String {
+        isWeeklyScoped ? "\(rawKind):\(scopeModelName ?? "")" : rawKind
+    }
 }
 
 /// Extra-usage (overage) credits. Amounts are **minor units (cents)** — the API reports
