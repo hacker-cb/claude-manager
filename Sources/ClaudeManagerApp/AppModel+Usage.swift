@@ -83,6 +83,21 @@ extension AppModel {
 
     // MARK: - Refresh
 
+    /// Called after every list refresh. Resolves usage **only when the launcher set changed** —
+    /// a newly added account otherwise has neither usage nor a failure to show, and would sit
+    /// unexplained until the next tick (forever, under "Manually only"). An unchanged set does
+    /// nothing: usage is driven by its own interval, never by a list refresh, which also fires
+    /// automatically (launch, activation, after open/stop) and would both defeat "Manually only"
+    /// and raise the keychain prompt at launch. Non-interactive for that same reason — adding a
+    /// launcher must never pop an authorization dialog.
+    func refreshUsageIfBindingsChanged() async {
+        let current = Set(profiles.map(\.profile.id))
+        guard current != lastKnownBindingIDs else { return }
+        lastKnownBindingIDs = current
+        guard usageTrackingEnabled, usagePollIntervalMinutes > 0 else { return }
+        await refreshUsage(interactive: false)
+    }
+
     /// One refresh pass, merged into `usageByBinding`. `interactive` allows the one-time keychain
     /// prompt (a user gesture); the background loop passes `false`.
     func refreshUsage(interactive: Bool) async {

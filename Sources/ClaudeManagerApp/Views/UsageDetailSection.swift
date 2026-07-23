@@ -44,8 +44,15 @@ struct UsageDetailSection: View {
             bars(for: snapshot)
         } else if let note = emptyStateNote {
             Text(note).font(.callout).foregroundStyle(.secondary)
+        } else if isRefreshing {
+            Text("Checking usage…").font(.callout).foregroundStyle(.secondary)
         } else {
-            Text("Loading usage…").font(.callout).foregroundStyle(.secondary)
+            // "No data" is not "loading": a binding no refresh pass has covered yet — a launcher
+            // added since the last check — has neither usage nor a failure to explain, and a
+            // spinner-ish "Loading…" here would sit there forever. Say what's true and offer the
+            // action that fixes it.
+            Text("Not checked yet — use Refresh to fetch this account's usage.")
+                .font(.callout).foregroundStyle(.secondary)
         }
     }
 

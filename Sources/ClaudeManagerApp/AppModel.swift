@@ -117,6 +117,8 @@ final class AppModel: ObservableObject {
     /// current pass runs one more interactive round on completion — a background poll must never
     /// swallow the user's only path to the keychain prompt. Non-private for `AppModel+Usage`.
     var pendingInteractiveRefresh = false
+    /// Launcher ids as of the last usage resolve, so a changed set can be spotted.
+    var lastKnownBindingIDs: Set<String> = []
 
     @Published var usageTrackingEnabled: Bool {
         didSet {
@@ -299,9 +301,7 @@ final class AppModel: ObservableObject {
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
-        // Deliberately does NOT refresh usage: this also fires automatically (launch, activation,
-        // after open/stop), so piggybacking would fetch under "Manually only" and prompt for the
-        // keychain at launch. Usage has its own interval + per-account Refresh button.
+        await refreshUsageIfBindingsChanged()
     }
 
     func runDoctor() async {
