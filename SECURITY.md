@@ -30,6 +30,14 @@ fixes. Because the app auto-updates (below), staying current is the intended pat
   unsigned update is rejected. The signing private key is held only as a CI secret and
   is **un-rotatable once shipped** — see [docs/RELEASING.md](docs/RELEASING.md) §
   Auto-update.
-- **Your credentials stay local.** Claude Manager never reads account credentials or
-  session tokens; each profile's login lives inside its own `--user-data-dir`, managed
-  by the real Claude app. Nothing is transmitted to any third party.
+- **Plan-usage stats read your token locally; nothing goes to a third party.** To show
+  each account's plan-usage limits, Claude Manager reads the shared **"Claude Safe Storage"**
+  key from your login keychain and uses it to decrypt that account's OAuth token from the
+  account's own `--user-data-dir/config.json`. The token is sent **only** to Anthropic's
+  official first-party endpoint (`https://api.anthropic.com/api/oauth/usage` / `…/profile`) —
+  the same call the Claude CLI makes — and to no other host. Usage responses are stored
+  locally under `~/Library/Application Support/Claude Manager`; the token itself is never
+  written to disk or logged. This is **on by default** and can be disabled in
+  **Settings → Usage**, after which no keychain read, network call, or storage occurs.
+  Aside from this, Claude Manager keeps no account data of its own, and each profile's login
+  otherwise lives inside its own user-data-dir, managed by the real Claude app.

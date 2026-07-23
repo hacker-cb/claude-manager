@@ -91,13 +91,23 @@ The first time you re-activate an *already-running* profile, macOS asks for
   `~/Library/Application Support/Claude Manager`. It is always optional: the launcher
   apps themselves are the source of truth.
 
-Claude Manager **never reads your credentials or session tokens** — those live
-inside each profile's user-data-dir and are managed by Claude itself. It keeps no
-account data of its own; its only network activity is Sparkle **checking for and
-downloading app updates** (see [Updates](#updates)). Routing a `claude://` link
-registers Claude Manager as the local handler for that scheme (a LaunchServices
-setting — no network) and hands the link to the profile you pick; it doesn't store or
-inspect the link's contents.
+**Plan-usage statistics read your account token locally.** To show how close each
+Claude account is to its 5-hour / weekly limits, Claude Manager reads the shared
+**"Claude Safe Storage"** key from your login keychain (one **Always Allow** prompt) and
+uses it to decrypt that account's OAuth token from the profile's *own* `config.json` —
+then calls Anthropic's official usage endpoint (`api.anthropic.com/api/oauth/usage`), the
+same first-party request the Claude CLI makes for `/usage`. The token is used **only** for
+that call and is never sent anywhere else. Usage responses (utilization, reset times,
+extra-usage credits) are kept in a local history database under
+`~/Library/Application Support/Claude Manager` — on your Mac only, never to a third party.
+This is **on by default** and fully optional: turn it off in **Settings → Usage → Track
+plan usage**, and nothing is read, called, or stored.
+
+Otherwise Claude Manager keeps no account data of its own. Network activity is limited to
+Sparkle **app-update checks** (see [Updates](#updates)) and, while usage tracking is on,
+the usage/profile calls above. Routing a `claude://` link registers Claude Manager as the
+local handler for that scheme (a LaunchServices setting — no network) and hands the link to
+the profile you pick; it doesn't store or inspect the link's contents.
 
 ## Permissions
 
