@@ -178,12 +178,22 @@ documented in [README.md](../README.md) and [SECURITY.md](../SECURITY.md).
 
 **The account owns usage, not the profile.** Limits belong to the Anthropic
 subscription, so N launchers on one account must issue **one** `/usage` call.
-`AccountResolver` decrypts every binding's token locally first, groups by the token's
-account UUID (**not** org — a Team/Enterprise org holds many accounts), and elects one
-binding per account: valid (unexpired + `user:inference`) → latest `expiresAt` → stable
-id. The default account is a first-class peer, resolved from its own user-data-dir. A
-binding whose token can't be read maps to a login-needed / no-source UI state; an
-account is only "login needed" if **every** binding fails.
+`AccountResolver` decrypts every binding's token locally first, groups by the config's
+account-UUID hint (`lastKnownAccountUuid`), and elects one binding per account: valid
+(unexpired + `user:inference`) → latest `expiresAt` → stable id. The default account is a
+first-class peer, resolved from its own user-data-dir. A binding whose token can't be read
+maps to a login-needed / no-source UI state; an account is only "login needed" if **every**
+binding fails.
+
+**The org is never the account key.** A Team/Enterprise org holds many accounts, so keying
+on `organizationUUID` would collapse two profiles signed in as different users and render
+one account's limits for both. Without the local hint a binding therefore stands alone as a
+**provisional** identity, and `UsageService` settles it with one `/profile` call before
+anything persistent is keyed on it — which also fills in the email / display name. That
+matters twice over: the provisional key is the *binding id*, so it would otherwise flip the
+moment Claude writes the hint, orphaning the throttle window and every stored sample under
+the old key. The trade is deliberate — over-splitting costs one extra call for a moment,
+collapsing shows the wrong account's numbers.
 
 **Token source — Electron safeStorage, no separate keychain entry.** Desktop tokens
 live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by

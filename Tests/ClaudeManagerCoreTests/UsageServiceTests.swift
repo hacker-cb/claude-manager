@@ -6,108 +6,6 @@ struct UsageServiceTests {
     private let now = Date(timeIntervalSince1970: 1_000_000_000)
     private let usageBody = Data(#"{"limits":[{"kind":"weekly_all","percent":50,"is_active":true}]}"#.utf8)
 
-    // MARK: - Harness
-
-    private struct StubProvider: TokenProvider {
-        let results: [String: Result<DesktopToken, TokenProviderError>]
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
-            results[binding.id] ?? .failure(.configUnreadable)
-        }
-    }
-
-    /// Records call count; each call runs `handler(callIndex)` (1-based) → response or throw.
-    private final class ScriptedHTTP: HTTPClient, @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        private let handler: @Sendable (Int) throws -> HTTPResponse
-        init(_ handler: @escaping @Sendable (Int) throws -> HTTPResponse) {
-            self.handler = handler
-        }
-
-        var callCount: Int {
-            lock.withLock { count }
-        }
-
-        /// Sync (non-async) so `NSLock` is legal — Swift 6 forbids `.lock()` in an async scope.
-        private func nextIndex() -> Int {
-            lock.withLock { count += 1; return count }
-        }
-
-        func get(
-            url _: URL,
-            headers _: [String: String],
-            timeout _: TimeInterval
-        ) async throws -> HTTPResponse {
-            try handler(nextIndex())
-        }
-    }
-
-    private final class SequenceKeychain: KeychainReading, @unchecked Sendable {
-        private let secrets: [Data]
-        private let lock = NSLock()
-        private var index = 0
-        init(_ secrets: [Data]) {
-            self.secrets = secrets
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            lock.lock(); defer { lock.unlock() }
-            let value = secrets[Swift.min(index, secrets.count - 1)]
-            index += 1
-            return value
-        }
-    }
-
-    private func binding(_ id: String) -> TokenBinding {
-        TokenBinding(id: id, configURL: URL(fileURLWithPath: "/tmp/\(id)/config.json"))
-    }
-
-    private func token(
-        _ bindingID: String,
-        value: String? = nil,
-        expiresAt: Date = Date(timeIntervalSince1970: 4_000_000_000),
-        lastKnown: String
-    ) -> DesktopToken {
-        DesktopToken(
-            token: value ?? "TK-\(bindingID)",
-            expiresAt: expiresAt,
-            scopes: [CoreConstants.oauthInferenceScope],
-            organizationUUID: "org",
-            subscriptionType: "max",
-            rateLimitTier: "default_claude_max_20x",
-            bindingID: bindingID,
-            lastKnownAccountUUID: lastKnown
-        )
-    }
-
-    private func makeService(
-        provider: TokenProvider,
-        http: HTTPClient,
-        history: UsageHistoryStore
-    ) -> UsageService {
-        UsageService(
-            resolver: AccountResolver(provider: provider),
-            client: AnthropicOAuthClient(http: http),
-            keyStore: SafeStorageKeyStore(keychain: StubKeychainAlways(Data("pw".utf8))),
-            history: history,
-            marketingVersion: "1.0"
-        )
-    }
-
-    private struct StubKeychainAlways: KeychainReading {
-        let secret: Data
-        init(_ secret: Data) {
-            self.secret = secret
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            secret
-        }
-    }
-
     // MARK: - Poll cadence
 
     @Test
@@ -169,6 +67,55 @@ struct UsageServiceTests {
         #expect(result.accounts.count == 1)
         #expect(result.bindingFailures["locked"] == .keychainUnavailable(.interactionNotAllowed))
     }
+
+    // MARK: - Identity reconciliation
+
+    @Test
+    func provisionalIdentityIsReconciledViaProfile() async {
+        // No `lastKnownAccountUuid` hint → the resolver keys by binding id and flags the identity
+        // provisional; the service must settle it via `/profile` before storing anything.
+        let profileBody = Data(#"{"account":{"uuid":"acct-real","email":"a@b.co"}}"#.utf8)
+        let http = ScriptedHTTP { index in
+            HTTPResponse(status: 200, body: index == 1 ? profileBody : usageBody)
+        }
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p"))]),
+            http: http,
+            history: history
+        )
+        let result = await service.refresh(bindings: [binding("p")], now: now)
+        #expect(result.accounts.first?.identity.uuid == "acct-real")
+        #expect(result.accounts.first?.identity.email == "a@b.co")
+        #expect(result.accounts.first?.state == .fresh)
+        #expect(http.callCount == 2) // /profile, then /usage
+        // Persisted under the authoritative uuid — not the binding id it started with.
+        #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
+        #expect(await history.sampleCount(accountUUID: "p") == 0)
+    }
+
+    @Test
+    func profileFailureKeepsProvisionalIdentity() async {
+        // `/profile` unreachable → keep the provisional key rather than dropping the account;
+        // usage still works, just keyed per binding until a later poll settles it.
+        let http = ScriptedHTTP { index in
+            if index == 1 { return HTTPResponse(status: 500, body: Data()) }
+            return HTTPResponse(status: 200, body: usageBody)
+        }
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p"))]),
+            http: http,
+            history: history
+        )
+        let result = await service.refresh(bindings: [binding("p")], now: now)
+        #expect(result.accounts.first?.identity.uuid == "p")
+        #expect(result.accounts.first?.state == .fresh)
+        #expect(await history.sampleCount(accountUUID: "p") == 1)
+    }
+
+    // A *hinted* identity needs no reconciliation: `freshFetchRecordsAndReturnsFresh` below
+    // passes `lastKnown` and asserts `callCount == 1`, which is exactly "no /profile call".
 
     // MARK: - Throttle / expiry
 

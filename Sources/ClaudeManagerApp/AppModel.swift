@@ -299,8 +299,9 @@ final class AppModel: ObservableObject {
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
-        // A user gesture: allow the one-time keychain prompt the background poll can't.
-        await refreshUsage(interactive: true)
+        // Deliberately does NOT refresh usage: this also fires automatically (launch, activation,
+        // after open/stop), so piggybacking would fetch under "Manually only" and prompt for the
+        // keychain at launch. Usage has its own interval + per-account Refresh button.
     }
 
     func runDoctor() async {

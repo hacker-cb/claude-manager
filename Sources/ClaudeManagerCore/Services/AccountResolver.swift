@@ -10,11 +10,21 @@ public struct ResolvedAccount: Sendable, Equatable {
     /// Every binding (profile / default) that maps to this account — so one `/usage` call
     /// covers them all, and the UI can show "shared with N profiles".
     public var bindingIDs: [String]
+    /// True when no local account-UUID hint was available, so `identity.uuid` is merely the
+    /// binding id. `UsageService` asks `/profile` for the authoritative UUID before anything
+    /// persistent (throttle state, samples, the notification ledger) is keyed on it.
+    public var isProvisionalIdentity: Bool
 
-    public init(identity: AccountIdentity, token: DesktopToken, bindingIDs: [String]) {
+    public init(
+        identity: AccountIdentity,
+        token: DesktopToken,
+        bindingIDs: [String],
+        isProvisionalIdentity: Bool = false
+    ) {
         self.identity = identity
         self.token = token
         self.bindingIDs = bindingIDs
+        self.isProvisionalIdentity = isProvisionalIdentity
     }
 }
 
@@ -70,13 +80,16 @@ public struct AccountResolver: Sendable {
     }
 
     /// The dedup key must identify the **account**, not the organization: in a Team/Enterprise
-    /// org, several profiles signed in as different users share one `organizationUUID` but are
-    /// distinct accounts, so keying on the org would collapse them and hide all but the elected
-    /// one. Prefer the config's account-UUID hint (`lastKnownAccountUuid`), fall back to the org
-    /// only when it's absent (a personal plan, where org == account 1:1), then the binding id.
-    /// `/profile` (in `UsageService`) later provides the authoritative account UUID to re-key on.
+    /// org several profiles signed in as *different users* share one `organizationUUID` while
+    /// being distinct accounts, so keying on the org collapses them and renders one account's
+    /// limits for all of them. The config's account-UUID hint (`lastKnownAccountUuid`) is the
+    /// only thing that identifies an account locally; without it a binding stands alone until
+    /// `/profile` supplies the authoritative UUID (`UsageService.reconcileIdentity`).
+    ///
+    /// Deliberately asymmetric: over-splitting costs one extra `/usage` call for a moment,
+    /// while collapsing shows the *wrong account's* numbers — so this errs toward splitting.
     private func groupingKey(for token: DesktopToken) -> String {
-        token.lastKnownAccountUUID ?? token.organizationUUID ?? token.bindingID
+        token.lastKnownAccountUUID ?? token.bindingID
     }
 
     private func resolvedAccount(
@@ -85,14 +98,20 @@ public struct AccountResolver: Sendable {
     ) -> ResolvedAccount {
         let elected = elect(members.map(\.token), now: now)
         let bindingIDs = members.map(\.binding.id).sorted()
-        // Provisional identity: account UUID from the best local hint (config hint, else org).
+        // With no local hint the uuid is just the binding id — provisional until `/profile`.
+        let hinted = elected.lastKnownAccountUUID
         let identity = AccountIdentity(
-            uuid: elected.lastKnownAccountUUID ?? elected.organizationUUID ?? elected.bindingID,
+            uuid: hinted ?? elected.bindingID,
             organizationUuid: elected.organizationUUID,
             subscriptionType: elected.subscriptionType,
             rateLimitTier: elected.rateLimitTier
         )
-        return ResolvedAccount(identity: identity, token: elected, bindingIDs: bindingIDs)
+        return ResolvedAccount(
+            identity: identity,
+            token: elected,
+            bindingIDs: bindingIDs,
+            isProvisionalIdentity: hinted == nil
+        )
     }
 
     /// Election ladder: a valid token (unexpired AND has the inference scope) beats an invalid

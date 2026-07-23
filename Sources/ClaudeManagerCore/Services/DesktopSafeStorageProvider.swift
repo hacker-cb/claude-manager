@@ -86,16 +86,35 @@ public struct DesktopSafeStorageProvider: TokenProvider {
     /// token), else any entry carrying the profile scope. The composite key's audience
     /// (`https://api.anthropic.com`) contains colons, so it is matched by substring, never
     /// split on `:`.
+    ///
+    /// More than one entry can match — a user who belongs to several organizations, or a stale
+    /// entry sitting beside a fresh one — so the choice must not depend on `Dictionary` order,
+    /// which Swift randomizes per process (the same cache would otherwise elect a different,
+    /// possibly expired, token between launches).
     private func pickEntry(from cache: [String: Any]) -> (String, [String: Any])? {
-        let entries: [(String, [String: Any])] = cache.compactMap { key, value in
-            guard let dict = value as? [String: Any] else { return nil }
-            return (key, dict)
+        let entries: [(String, [String: Any])] = cache
+            .compactMap { key, value in
+                guard let dict = value as? [String: Any] else { return nil }
+                return (key, dict)
+            }
+            .sorted { $0.0 < $1.0 }
+        let inference = freshest(among: entries) {
+            $0.hasPrefix(CoreConstants.oauthClientID) && $0.contains(CoreConstants.oauthInferenceScope)
         }
-        let inference = entries.first {
-            $0.0.hasPrefix(CoreConstants.oauthClientID) && $0.0.contains(CoreConstants.oauthInferenceScope)
-        }
-        let profile = entries.first { $0.0.contains(CoreConstants.oauthProfileScope) }
+        let profile = freshest(among: entries) { $0.contains(CoreConstants.oauthProfileScope) }
         return inference ?? profile
+    }
+
+    /// The latest-expiring entry whose key matches — so a live token wins over a dead one in the
+    /// same cache. `max(by:)` keeps the first of equal elements, and `entries` arrives key-sorted,
+    /// so ties resolve identically on every launch.
+    private func freshest(
+        among entries: [(String, [String: Any])],
+        matching predicate: (String) -> Bool
+    ) -> (String, [String: Any])? {
+        entries
+            .filter { predicate($0.0) }
+            .max { expiry(from: $0.1["expiresAt"]) < expiry(from: $1.1["expiresAt"]) }
     }
 
     /// `expiresAt` is epoch **milliseconds**. A missing/odd value → `.distantFuture` so the

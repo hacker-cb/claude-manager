@@ -48,13 +48,19 @@ struct AccountResolverTests {
     // MARK: - Dedup
 
     @Test
-    func dedupsBindingsOnSameOrgIntoOneAccount() async {
+    func sameOrgWithoutHintStaysProvisionalPerBinding() async {
+        // Same org, no `lastKnownAccountUuid` on either side: the org does NOT identify an
+        // account (a Team org holds many), so these must not collapse into one. They stand alone
+        // as provisional identities until `/profile` supplies the authoritative UUID — over-
+        // splitting costs an extra call, collapsing would render one account's limits for both.
         let result = await resolve([
             "p1": .success(token(binding: "p1", org: "org-A")),
             "p2": .success(token(binding: "p2", org: "org-A"))
         ])
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
+        #expect(result.accounts.count == 2)
+        let allProvisional = result.accounts.allSatisfy(\.isProvisionalIdentity)
+        #expect(allProvisional)
+        #expect(Set(result.accounts.map(\.identity.uuid)) == ["p1", "p2"])
     }
 
     @Test
@@ -86,16 +92,23 @@ struct AccountResolverTests {
         ])
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.identity.uuid == "acct-9")
+        // A hinted identity is authoritative enough to key on — no `/profile` round-trip needed.
+        #expect(result.accounts.first?.isProvisionalIdentity == false)
     }
 
     // MARK: - Election
+
+    /// Election only happens *within* a group, so each test below shares one account hint — two
+    /// profiles signed into the same account. Without it they'd resolve to separate accounts and
+    /// the assertions would pass on sort order rather than on the election ladder.
+    private static let sharedAccount = "acct-shared"
 
     @Test
     func electsValidOverExpired() async {
         let past = Date(timeIntervalSince1970: 1000)
         let result = await resolve([
-            "expired": .success(token(binding: "expired", expiresAt: past)),
-            "valid": .success(token(binding: "valid"))
+            "expired": .success(token(binding: "expired", expiresAt: past, lastKnown: Self.sharedAccount)),
+            "valid": .success(token(binding: "valid", lastKnown: Self.sharedAccount))
         ], now: Date(timeIntervalSince1970: 2000))
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.token.bindingID == "valid")
@@ -104,9 +117,14 @@ struct AccountResolverTests {
     @Test
     func electsInferenceOverProfileOnly() async {
         let result = await resolve([
-            "profileOnly": .success(token(binding: "profileOnly", scopes: [CoreConstants.oauthProfileScope])),
-            "inference": .success(token(binding: "inference"))
+            "profileOnly": .success(token(
+                binding: "profileOnly",
+                scopes: [CoreConstants.oauthProfileScope],
+                lastKnown: Self.sharedAccount
+            )),
+            "inference": .success(token(binding: "inference", lastKnown: Self.sharedAccount))
         ])
+        #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.token.bindingID == "inference")
     }
 
@@ -115,9 +133,10 @@ struct AccountResolverTests {
         let soon = Date(timeIntervalSince1970: 3_000_000_000)
         let later = Date(timeIntervalSince1970: 4_000_000_000)
         let result = await resolve([
-            "soon": .success(token(binding: "soon", expiresAt: soon)),
-            "later": .success(token(binding: "later", expiresAt: later))
+            "soon": .success(token(binding: "soon", expiresAt: soon, lastKnown: Self.sharedAccount)),
+            "later": .success(token(binding: "later", expiresAt: later, lastKnown: Self.sharedAccount))
         ])
+        #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.token.bindingID == "later")
     }
 
@@ -127,8 +146,8 @@ struct AccountResolverTests {
         let older = Date(timeIntervalSince1970: 1000)
         let newer = Date(timeIntervalSince1970: 2000)
         let result = await resolve([
-            "older": .success(token(binding: "older", expiresAt: older)),
-            "newer": .success(token(binding: "newer", expiresAt: newer))
+            "older": .success(token(binding: "older", expiresAt: older, lastKnown: Self.sharedAccount)),
+            "newer": .success(token(binding: "newer", expiresAt: newer, lastKnown: Self.sharedAccount))
         ], now: now)
         // Both expired → still one account, elected token is the latest-expiry one; the caller
         // sees isExpired and skips the /usage call (login-needed), but dedup still holds.

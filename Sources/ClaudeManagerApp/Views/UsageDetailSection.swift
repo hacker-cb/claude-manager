@@ -57,15 +57,19 @@ struct UsageDetailSection: View {
             if let weekly = snapshot.weeklyAll {
                 LimitRow(title: "Current week (all models)", limit: weekly)
             }
+            // Keyed by position, not `dedupKey`: two scoped windows whose model name is missing
+            // (or two unknown kinds sharing a rawKind) collapse to the same dedupKey, and a
+            // duplicate ForEach id silently drops a row. Position is unique and these lists are
+            // rendered as-is, never reordered.
             if usage?.identity.showsScopedWeeklyLimit == true {
-                ForEach(snapshot.weeklyScoped, id: \.dedupKey) { scoped in
+                ForEach(Array(snapshot.weeklyScoped.enumerated()), id: \.offset) { _, scoped in
                     LimitRow(title: "Current week (\(scoped.scopeModelName ?? "scoped"))", limit: scoped)
                 }
             }
             // Forward-compat: a window this build doesn't recognize is kept visible (the parser's
             // "other" bucket) rather than silently dropped — so the detail can't disagree with the
             // sidebar, which may already be surfacing it as the binding limit.
-            ForEach(snapshot.otherLimits, id: \.dedupKey) { other in
+            ForEach(Array(snapshot.otherLimits.enumerated()), id: \.offset) { _, other in
                 LimitRow(title: other.shortLabel, limit: other)
             }
             if let extra = snapshot.extra {

@@ -133,21 +133,35 @@ struct MenuBarContent: View {
     private func usageSuffix(_ bindingID: String) -> String {
         guard model.usageTrackingEnabled,
               let limit = model.usage(forBinding: bindingID)?.displayLimit else { return "" }
-        return "  ·  \(limit.shortLabel) \(UsageFormat.percent(limit.utilization))"
+        return "  ·  \(UsageFormat.limitSummary(limit))"
     }
 }
 
 /// The status-bar item's label: the stack glyph, plus the worst limit across all accounts
 /// (`7d 54%`) when usage tracking has data. `Label` gives the menu-bar icon + text; a plain
 /// `Image` keeps just the glyph when there's nothing to show.
+///
+/// The accessibility label is pinned to the app name: the closure form of `MenuBarExtra` has no
+/// title string, so without this VoiceOver would announce the usage summary (or the SF Symbol's
+/// derived name) and the status item would no longer be identifiable by name.
 struct MenuBarLabel: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        content
+            .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder private var content: some View {
         if let summary = model.menuBarUsageSummary {
             Label(summary.label, systemImage: "square.stack.3d.up.fill")
         } else {
             Image(systemName: "square.stack.3d.up.fill")
         }
+    }
+
+    private var accessibilityText: String {
+        guard let summary = model.menuBarUsageSummary else { return "Claude Manager" }
+        return "Claude Manager — \(summary.label) used"
     }
 }

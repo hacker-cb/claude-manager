@@ -90,19 +90,28 @@ public struct UsageService: Sendable {
 
     // MARK: - Per account
 
-    private func usage(for account: ResolvedAccount, now: Date) async -> AccountUsage {
+    private func usage(for resolved: ResolvedAccount, now: Date) async -> AccountUsage {
+        let token = resolved.token
+        // Expired token → call nothing at all (not even `/profile`, which would 401); the account
+        // needs a fresh login. Served from whatever key we have.
+        if token.isExpired(now: now) {
+            let stale = await history.latest(accountUUID: resolved.identity.uuid)
+            return resolved.usage(stale, state: .loginNeeded)
+        }
+
+        // Settle the identity *before* anything persistent is keyed on it. Without a local hint
+        // the key would be the binding id, which flips the moment Claude writes
+        // `lastKnownAccountUuid` (orphaning the throttle window and every stored sample) and
+        // can't tell two same-org accounts apart. One `/profile` call fixes both — and fills in
+        // the email / display name the UI otherwise never learns.
+        let account = resolved.isProvisionalIdentity ? await reconcileIdentity(resolved) : resolved
+
         let uuid = account.identity.uuid
-        let token = account.token
         let fingerprint = Self.fingerprint(token.token)
         let stored = await history.throttle(accountUUID: uuid)
         let latest = await history.latest(accountUUID: uuid)
         // A login switch (new token) clears any standing backoff — try immediately.
         let tokenChanged = stored?.tokenFingerprint != nil && stored?.tokenFingerprint != fingerprint
-
-        // Expired token → don't call; the account needs a fresh login.
-        if token.isExpired(now: now) {
-            return account.usage(latest, state: .loginNeeded)
-        }
         // Standing backoff still active → serve stale, rendering the *original* cause (a
         // transport backoff must not read back as a 429).
         if !tokenChanged, let until = stored?.backoffUntil, until > now {
@@ -141,6 +150,30 @@ public struct UsageService: Sendable {
             let context = PollContext(now: now, fingerprint: fingerprint, stored: stored, latest: latest)
             return await handleFailure(error, account: account, context: context)
         }
+    }
+
+    /// Ask `/profile` for the authoritative account UUID (plus email / display name) when no
+    /// local hint identified the account. Any failure keeps the provisional identity — a later
+    /// poll retries, and usage still works, just keyed per binding until it succeeds. Only ever
+    /// reached for a binding whose `config.json` carries no `lastKnownAccountUuid`, which for a
+    /// signed-in Desktop account is a transient state, so the extra call is not a per-tick cost
+    /// for the normal fleet.
+    private func reconcileIdentity(_ account: ResolvedAccount) async -> ResolvedAccount {
+        let fetched = await client.fetchProfile(
+            token: account.token.token,
+            marketingVersion: marketingVersion
+        )
+        guard case let .success(profile) = fetched else { return account }
+        var updated = account
+        updated.identity.uuid = profile.accountUUID
+        updated.identity.email = profile.email
+        updated.identity.displayName = profile.displayName
+        // The token's own values win — they're exact where `/profile` only exposes coarse flags.
+        updated.identity.organizationUuid = account.identity.organizationUuid ?? profile.organizationUUID
+        updated.identity.subscriptionType = account.identity.subscriptionType ?? profile.subscriptionType
+        updated.identity.rateLimitTier = account.identity.rateLimitTier ?? profile.rateLimitTier
+        updated.isProvisionalIdentity = false
+        return updated
     }
 
     /// The per-account state a failure handler needs, bundled to keep the parameter list small.

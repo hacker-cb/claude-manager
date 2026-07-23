@@ -103,7 +103,7 @@ struct UsageSidebarIndicator: View {
                         .foregroundStyle(UsageDisplaySeverity.forFraction(limit.utilization).color)
                 }
                 UsageRing(fraction: limit.utilization)
-                Text("\(limit.shortLabel) \(UsageFormat.percent(limit.utilization))")
+                Text(UsageFormat.limitSummary(limit))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -127,8 +127,26 @@ enum UsageFormat {
         "\(Int((fraction * 100).rounded()))%"
     }
 
+    /// `7d 54%` — the one spelling of a limit's compact label, shared by the sidebar row, the
+    /// menu-bar status item, and each menu account row, so the three can't drift apart.
+    static func limitSummary(_ limit: UsageLimit) -> String {
+        "\(limit.shortLabel) \(percent(limit.utilization))"
+    }
+
+    /// Reused across renders — building a `DateFormatter` / `NumberFormatter` resolves the
+    /// locale each time, and these are called from view bodies and tooltips that re-render
+    /// often. `@MainActor` (not a bare `static let`) is what makes sharing mutable formatters
+    /// safe under strict concurrency; every caller is already main-actor UI code.
+    @MainActor private static let dateFormatter = DateFormatter()
+    @MainActor private static let currencyFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        return formatter
+    }()
+
     /// A short reset phrase: `resets in 3h 10m` under a day, else `resets Thu 10:59 AM` /
     /// `resets Jul 28`. nil when there's no reset time.
+    @MainActor
     static func resets(_ date: Date?, now: Date = Date()) -> String? {
         guard let date else { return nil }
         let seconds = date.timeIntervalSince(now)
@@ -138,16 +156,16 @@ enum UsageFormat {
             let minutes = (Int(seconds) % 3600) / 60
             return hours > 0 ? "resets in \(hours)h \(minutes)m" : "resets in \(minutes)m"
         }
-        let formatter = DateFormatter()
+        let formatter = dateFormatter
         formatter.locale = .autoupdatingCurrent
         formatter.setLocalizedDateFormatFromTemplate(seconds < 7 * 24 * 3600 ? "EEE h:mm a" : "MMM d")
         return "resets \(formatter.string(from: date))"
     }
 
     /// `$1,000.00` from minor units (cents).
+    @MainActor
     static func money(minorUnits: Int, currency: String = "USD") -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
+        let formatter = currencyFormatter
         formatter.currencyCode = currency
         return formatter.string(from: NSNumber(value: Double(minorUnits) / 100)) ?? "\(minorUnits)"
     }
@@ -168,14 +186,6 @@ extension AccountUsage {
     /// The limit that constrains the account right now (highest-utilization active window).
     var displayLimit: UsageLimit? {
         snapshot?.bindingLimit
-    }
-
-    /// A short one-liner for a compact surface: `7d 54%`, or the state when there's no data.
-    var compactSummary: String {
-        if let limit = displayLimit {
-            return "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization))"
-        }
-        return stateNote
     }
 
     /// Whether the account needs a user action (a re-login / authorization) — surfaced even

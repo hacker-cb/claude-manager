@@ -6,9 +6,10 @@ import Foundation
 /// and rebuilt each tick; the durable actors (`usageHistory`, `safeStorageKeys`) are held by the
 /// model. The app owns the loop — the core does not self-poll.
 extension AppModel {
-    /// The app's marketing version, sent as the `User-Agent` on usage calls.
+    /// The app's marketing version, sent as the `User-Agent` on usage calls. Falls back to the
+    /// shared dev placeholder rather than a second literal, so the two can't drift.
     static let usageMarketingVersion = Bundle.main
-        .infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        .infoDictionary?["CFBundleShortVersionString"] as? String ?? CoreConstants.devMarketingVersion
 
     /// `~/Library/Application Support/Claude Manager/usage.db`, creating the directory. Shares
     /// `MetadataStore.defaultDirectory()` so usage.db always lands beside metadata.json / Profiles
@@ -131,7 +132,7 @@ extension AppModel {
             .compactMap(\.displayLimit)
             .max { $0.utilization < $1.utilization }
         guard let worst else { return nil }
-        return ("\(worst.shortLabel) \(UsageFormat.percent(worst.utilization))", worst.utilization)
+        return (UsageFormat.limitSummary(worst), worst.utilization)
     }
 
     // MARK: - Wiring
