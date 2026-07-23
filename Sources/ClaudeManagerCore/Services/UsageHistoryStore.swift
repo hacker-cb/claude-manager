@@ -1,10 +1,6 @@
 import Foundation
 import SQLite3
 
-/// SQLite's `SQLITE_TRANSIENT` — tells SQLite to copy a bound string, since our Swift buffer
-/// doesn't outlive the call. (`SQLITE_STATIC` would be a use-after-free here.)
-private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 /// Owns the `sqlite3` handle and closes it on `deinit`. A class (not the actor) so closing
 /// happens in the holder's own deinit — Swift 6 forbids an actor's nonisolated deinit from
 /// touching its non-`Sendable` stored handle. `@unchecked Sendable` is sound because the
@@ -45,6 +41,9 @@ public actor UsageHistoryStore {
     /// both working for the session (just not persisted across restarts).
     private var memoryThrottle: [String: ThrottleState] = [:]
     private var memoryNotified: Set<String> = []
+    /// Same idea for the identity cache: without it a dead DB would re-fetch `/profile` on every
+    /// tick instead of once a day.
+    private var memoryProfiles: [String: (identity: AccountIdentity, fetchedAt: Date)] = [:]
 
     /// Open (and bootstrap) the store at `path`. Pass `":memory:"` for a throwaway store in
     /// tests. A failed open leaves the store inert (every method no-ops / returns empty); the
@@ -250,6 +249,61 @@ public actor UsageHistoryStore {
         "\(uuid)|\(limitKey)|\(threshold)|\(resetsAt.map(millis) ?? 0)"
     }
 
+    // MARK: - Account profile (identity cache)
+
+    /// The `/profile` answer for a token, if one was stored **and fetched no earlier than**
+    /// `fetchedAfter`. Keyed by the token's fingerprint, so a re-login simply misses and
+    /// re-fetches; the freshness bound then covers what can change without a new token — a
+    /// renamed account, a changed email, a moved plan.
+    public func profile(tokenFingerprint: String, fetchedAfter: Date) -> AccountIdentity? {
+        guard let db else {
+            guard let cached = memoryProfiles[tokenFingerprint], cached.fetchedAt >= fetchedAfter else {
+                return nil
+            }
+            return cached.identity
+        }
+        let sql = """
+        SELECT account_uuid, email, display_name, organization_uuid, subscription_type, rate_limit_tier
+        FROM account_profiles WHERE token_fingerprint=?1 AND fetched_at>=?2 LIMIT 1
+        """
+        guard let stmt = Self.prepare(db, sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        Self.bind(stmt, 1, text: tokenFingerprint)
+        Self.bind(stmt, 2, int: Self.millis(fetchedAfter))
+        guard sqlite3_step(stmt) == SQLITE_ROW, let uuid = Self.text(stmt, 0) else { return nil }
+        return AccountIdentity(
+            uuid: uuid,
+            email: Self.text(stmt, 1),
+            displayName: Self.text(stmt, 2),
+            organizationUuid: Self.text(stmt, 3),
+            subscriptionType: Self.text(stmt, 4),
+            rateLimitTier: Self.text(stmt, 5)
+        )
+    }
+
+    /// Remember a `/profile` answer so the fleet costs one lookup per token, not one per poll.
+    public func setProfile(_ identity: AccountIdentity, tokenFingerprint: String, fetchedAt: Date) {
+        guard let db else {
+            memoryProfiles[tokenFingerprint] = (identity, fetchedAt)
+            return
+        }
+        let sql = """
+        INSERT OR REPLACE INTO account_profiles
+        (token_fingerprint, account_uuid, email, display_name, organization_uuid,
+         subscription_type, rate_limit_tier, fetched_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+        """
+        guard let stmt = Self.prepare(db, sql) else { return }
+        Self.bind(stmt, 1, text: tokenFingerprint)
+        Self.bind(stmt, 2, text: identity.uuid)
+        Self.bind(stmt, 3, text: identity.email)
+        Self.bind(stmt, 4, text: identity.displayName)
+        Self.bind(stmt, 5, text: identity.organizationUuid)
+        Self.bind(stmt, 6, text: identity.subscriptionType)
+        Self.bind(stmt, 7, text: identity.rateLimitTier)
+        Self.bind(stmt, 8, int: Self.millis(fetchedAt))
+        Self.step(stmt)
+    }
+
     // MARK: - Retention
 
     /// Prune old rows: drop samples older than `retentionDays`, cap each account to its newest
@@ -293,162 +347,5 @@ public actor UsageHistoryStore {
             Self.step(stmt)
         }
         _ = Self.exec(db, "PRAGMA incremental_vacuum")
-    }
-}
-
-/// The nonisolated SQLite plumbing (open/bootstrap + statement primitives over an explicit
-/// handle) lives in an extension so the actor body stays focused on the store's operations.
-private extension UsageHistoryStore {
-    // MARK: - Open + bootstrap (nonisolated; runs from init)
-
-    private static func open(path: String) -> OpaquePointer? {
-        var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK, let handle else {
-            if let handle { sqlite3_close(handle) }
-            return nil
-        }
-        bootstrap(handle)
-        return handle
-    }
-
-    private static func bootstrap(_ db: OpaquePointer) {
-        _ = exec(db, "PRAGMA journal_mode=WAL")
-        guard userVersion(db) != CoreConstants.usageSchemaVersion else { return }
-        // A cache, not a contract: any version drift → drop & recreate.
-        _ = exec(db, "DROP TABLE IF EXISTS usage_samples")
-        _ = exec(db, "DROP TABLE IF EXISTS throttle_state")
-        _ = exec(db, "DROP TABLE IF EXISTS notified_thresholds")
-        _ = exec(db, "PRAGMA auto_vacuum=INCREMENTAL")
-        _ = exec(db, "VACUUM")
-        _ = exec(db, """
-        CREATE TABLE usage_samples (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_uuid TEXT NOT NULL,
-            captured_at INTEGER NOT NULL,
-            five_hour_frac REAL,
-            seven_day_frac REAL,
-            binding_frac REAL,
-            extra_used_minor INTEGER,
-            extra_limit_minor INTEGER,
-            severity TEXT,
-            snapshot_json TEXT NOT NULL,
-            raw_json TEXT,
-            source TEXT NOT NULL
-        )
-        """)
-        _ = exec(db, "CREATE INDEX idx_samples_account_time ON usage_samples(account_uuid, captured_at)")
-        _ = exec(db, """
-        CREATE TABLE throttle_state (
-            account_uuid TEXT PRIMARY KEY,
-            last_attempt_at INTEGER,
-            backoff_until INTEGER,
-            backoff_reason TEXT,
-            token_fingerprint TEXT
-        )
-        """)
-        _ = exec(db, """
-        CREATE TABLE notified_thresholds (
-            account_uuid TEXT NOT NULL,
-            limit_key TEXT NOT NULL,
-            threshold REAL NOT NULL,
-            resets_at INTEGER NOT NULL,
-            notified_at INTEGER NOT NULL,
-            PRIMARY KEY (account_uuid, limit_key, threshold, resets_at)
-        )
-        """)
-        _ = exec(db, "PRAGMA user_version=\(CoreConstants.usageSchemaVersion)")
-    }
-
-    // MARK: - SQLite primitives (nonisolated statics over an explicit handle)
-
-    private static func exec(_ db: OpaquePointer, _ sql: String) -> Bool {
-        sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
-    }
-
-    private static func userVersion(_ db: OpaquePointer) -> Int {
-        guard let stmt = prepare(db, "PRAGMA user_version") else { return -1 }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return -1 }
-        return Int(sqlite3_column_int64(stmt, 0))
-    }
-
-    /// Prepare a statement. **The caller owns finalization** — statements stepped through the
-    /// `step(_:)` helper are finalized there; those read with `sqlite3_step` directly finalize
-    /// via a `defer`.
-    private static func prepare(_ db: OpaquePointer, _ sql: String) -> OpaquePointer? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            if let stmt { sqlite3_finalize(stmt) }
-            return nil
-        }
-        return stmt
-    }
-
-    /// Step a write-only statement to completion and finalize it.
-    private static func step(_ stmt: OpaquePointer) {
-        _ = sqlite3_step(stmt)
-        sqlite3_finalize(stmt)
-    }
-
-    private static func bind(_ stmt: OpaquePointer, _ index: Int32, text value: String?) {
-        if let value {
-            sqlite3_bind_text(stmt, index, value, -1, sqliteTransient)
-        } else {
-            sqlite3_bind_null(stmt, index)
-        }
-    }
-
-    private static func bind(_ stmt: OpaquePointer, _ index: Int32, int value: Int64?) {
-        if let value {
-            sqlite3_bind_int64(stmt, index, value)
-        } else {
-            sqlite3_bind_null(stmt, index)
-        }
-    }
-
-    private static func bind(_ stmt: OpaquePointer, _ index: Int32, double value: Double?) {
-        if let value {
-            sqlite3_bind_double(stmt, index, value)
-        } else {
-            sqlite3_bind_null(stmt, index)
-        }
-    }
-
-    private static func text(_ stmt: OpaquePointer, _ column: Int32) -> String? {
-        guard sqlite3_column_type(stmt, column) != SQLITE_NULL,
-              let cString = sqlite3_column_text(stmt, column)
-        else {
-            return nil
-        }
-        return String(cString: cString)
-    }
-
-    private static func optionalDate(_ stmt: OpaquePointer, _ column: Int32) -> Date? {
-        guard sqlite3_column_type(stmt, column) != SQLITE_NULL else { return nil }
-        return date(fromMillis: sqlite3_column_int64(stmt, column))
-    }
-
-    private static func millis(_ date: Date) -> Int64 {
-        Int64((date.timeIntervalSince1970 * 1000).rounded())
-    }
-
-    private static func date(fromMillis millis: Int64) -> Date {
-        Date(timeIntervalSince1970: Double(millis) / 1000)
-    }
-
-    // MARK: - Snapshot JSON (canonical restore source)
-
-    private static func encodeSnapshot(_ snapshot: UsageSnapshot) -> String? {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .millisecondsSince1970
-        guard let data = try? encoder.encode(snapshot) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    private static func decodeSnapshot(_ json: String) -> UsageSnapshot? {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .millisecondsSince1970
-        return try? decoder.decode(UsageSnapshot.self, from: Data(json.utf8))
     }
 }

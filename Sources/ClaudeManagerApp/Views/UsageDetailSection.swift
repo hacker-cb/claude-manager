@@ -20,6 +20,11 @@ struct UsageDetailSection: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             Text("Usage").font(.headline)
+            // Which Anthropic login this launcher actually holds — launcher names are whatever the
+            // user typed, so without this there's nothing tying a row to a real account.
+            if let account = usage?.identity.accountLabel {
+                Text(account).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             if let usage, usage.bindingIDs.count > 1 {
                 Text("· shared with \(usage.bindingIDs.count) profiles")
                     .font(.caption).foregroundStyle(.secondary)

@@ -112,7 +112,9 @@ struct UsageSidebarIndicator: View {
     }
 
     private func tooltip(limit: UsageLimit, usage: AccountUsage) -> String {
-        var parts = ["\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used"]
+        var parts: [String] = []
+        if let account = usage.identity.accountLabel { parts.append(account) }
+        parts.append("\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used")
         if let resets = UsageFormat.resets(limit.resetsAt) { parts.append(resets) }
         if case let .stale(since) = usage.state { parts.append("as of \(UsageFormat.age(since))") }
         return parts.joined(separator: " · ")

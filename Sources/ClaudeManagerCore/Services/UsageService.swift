@@ -39,6 +39,10 @@ public struct UsageService: Sendable {
     /// Background cadence when the user hasn't chosen one. The settings picker offers this
     /// among its presets, so the two can't disagree about what "default" means.
     public static let defaultPollMinutes = 30
+    /// How long a stored `/profile` answer is trusted. A re-login invalidates it immediately
+    /// (the fingerprint changes), so this only covers what can change *under the same token* —
+    /// a renamed account, a changed email, a moved plan — at one call per account per day.
+    public static let profileTTLSeconds: TimeInterval = 24 * 3600
 
     /// Seconds until the next poll for a given interval. `minutes` (floored at 1) in seconds,
     /// dropped to the adaptive 5-min lane while an account is running — bounded by the interval
@@ -102,15 +106,27 @@ public struct UsageService: Sendable {
             return resolved.usage(stale, state: .loginNeeded)
         }
 
-        // Settle the identity *before* anything persistent is keyed on it. Without a local hint
-        // the key would be the binding id, which flips the moment Claude writes
+        // Naming the account (email / display name) is the only way to tell which login a
+        // launcher holds. Reading the stored answer is free, so do it on every pass — a throttled
+        // account still renders with its name rather than losing it until the next fetch.
+        let fingerprint = Self.fingerprint(token.token)
+        let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
+        let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff)
+        var account = cached.map(resolved.named(by:)) ?? resolved
+        // Whether this pass still owes a `/profile` call — a cache hit settles it, and so does an
+        // attempt below (success or not), so an account is never asked twice in one pass.
+        var identified = cached != nil
+
+        // A provisional identity has no usable storage key until `/profile` answers, so it must
+        // ask now: the binding-id key it would otherwise use flips the moment Claude writes
         // `lastKnownAccountUuid` (orphaning the throttle window and every stored sample) and
-        // can't tell two same-org accounts apart. One `/profile` call fixes both — and fills in
-        // the email / display name the UI otherwise never learns.
-        let account = resolved.isProvisionalIdentity ? await reconcileIdentity(resolved) : resolved
+        // can't tell two same-org accounts apart.
+        if account.isProvisionalIdentity {
+            account = await fetchIdentity(account, fingerprint: fingerprint, now: now)
+            identified = true
+        }
 
         let uuid = account.identity.uuid
-        let fingerprint = Self.fingerprint(token.token)
         let stored = await history.throttle(accountUUID: uuid)
         let latest = await history.latest(accountUUID: uuid)
         // A login switch (new token) clears any standing backoff — try immediately.
@@ -128,6 +144,13 @@ public struct UsageService: Sendable {
         // 60s floor since the last attempt → skip, serve what we have.
         if !tokenChanged, let last = stored?.lastAttemptAt, now.timeIntervalSince(last) < Self.floorSeconds {
             return account.usage(latest, state: latest.map { .stale(since: $0.capturedAt) } ?? .noSource)
+        }
+
+        // Past every gate, so a `/usage` call is happening regardless: this is the moment to
+        // refresh a missing or expired name too, which keeps the `/profile` call inside the same
+        // backoff and floor that protect `/usage` instead of firing on every throttled tick.
+        if !identified {
+            account = await fetchIdentity(account, fingerprint: fingerprint, now: now)
         }
 
         switch await client.fetchUsage(
@@ -155,28 +178,34 @@ public struct UsageService: Sendable {
         }
     }
 
-    /// Ask `/profile` for the authoritative account UUID (plus email / display name) when no
-    /// local hint identified the account. Any failure keeps the provisional identity — a later
-    /// poll retries, and usage still works, just keyed per binding until it succeeds. Only ever
-    /// reached for a binding whose `config.json` carries no `lastKnownAccountUuid`, which for a
-    /// signed-in Desktop account is a transient state, so the extra call is not a per-tick cost
-    /// for the normal fleet.
-    private func reconcileIdentity(_ account: ResolvedAccount) async -> ResolvedAccount {
+    /// Ask `/profile` who this token belongs to, and store the answer. Costs one call per token
+    /// per `profileTTLSeconds` — and one immediately after a re-login, since the fingerprint that
+    /// keys the cache changes with the token.
+    ///
+    /// A failed lookup is not fatal: the account keeps whatever identity the local token gave it,
+    /// and the next poll tries again. Usage is still fetched and shown — just unnamed, and for a
+    /// binding with no account-UUID hint, still keyed provisionally.
+    private func fetchIdentity(
+        _ account: ResolvedAccount,
+        fingerprint: String,
+        now: Date
+    ) async -> ResolvedAccount {
         let fetched = await client.fetchProfile(
             token: account.token.token,
             marketingVersion: marketingVersion
         )
         guard case let .success(profile) = fetched else { return account }
-        var updated = account
-        updated.identity.uuid = profile.accountUUID
-        updated.identity.email = profile.email
-        updated.identity.displayName = profile.displayName
-        // The token's own values win — they're exact where `/profile` only exposes coarse flags.
-        updated.identity.organizationUuid = account.identity.organizationUuid ?? profile.organizationUUID
-        updated.identity.subscriptionType = account.identity.subscriptionType ?? profile.subscriptionType
-        updated.identity.rateLimitTier = account.identity.rateLimitTier ?? profile.rateLimitTier
-        updated.isProvisionalIdentity = false
-        return updated
+        let identity = AccountIdentity(
+            uuid: profile.accountUUID,
+            email: profile.email,
+            displayName: profile.displayName,
+            // The token's own values win — exact where `/profile` exposes only coarse flags.
+            organizationUuid: account.identity.organizationUuid ?? profile.organizationUUID,
+            subscriptionType: account.identity.subscriptionType ?? profile.subscriptionType,
+            rateLimitTier: account.identity.rateLimitTier ?? profile.rateLimitTier
+        )
+        await history.setProfile(identity, tokenFingerprint: fingerprint, fetchedAt: now)
+        return account.named(by: identity)
     }
 
     /// The per-account state a failure handler needs, bundled to keep the parameter list small.
@@ -287,5 +316,25 @@ private extension ResolvedAccount {
     /// Build an `AccountUsage` serving a stored sample (if any) with the given state.
     func usage(_ latest: UsageSample?, state: UsageState) -> AccountUsage {
         AccountUsage(identity: identity, snapshot: latest?.snapshot, state: state, bindingIDs: bindingIDs)
+    }
+
+    /// Merge a `/profile` identity in.
+    ///
+    /// A **hinted** account keeps its own uuid: that hint *is* the account UUID, written by Claude
+    /// itself, and every persistent row is already keyed on it — so it only adopts the naming
+    /// fields. A **provisional** account adopts the uuid too: that authoritative answer is exactly
+    /// what it was waiting for, and it stops being provisional.
+    func named(by profile: AccountIdentity) -> ResolvedAccount {
+        var updated = self
+        updated.identity.email = profile.email
+        updated.identity.displayName = profile.displayName
+        updated.identity.organizationUuid = identity.organizationUuid ?? profile.organizationUuid
+        updated.identity.subscriptionType = identity.subscriptionType ?? profile.subscriptionType
+        updated.identity.rateLimitTier = identity.rateLimitTier ?? profile.rateLimitTier
+        if isProvisionalIdentity {
+            updated.identity.uuid = profile.uuid
+            updated.isProvisionalIdentity = false
+        }
+        return updated
     }
 }

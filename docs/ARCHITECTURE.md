@@ -188,12 +188,23 @@ binding fails.
 **The org is never the account key.** A Team/Enterprise org holds many accounts, so keying
 on `organizationUUID` would collapse two profiles signed in as different users and render
 one account's limits for both. Without the local hint a binding therefore stands alone as a
-**provisional** identity, and `UsageService` settles it with one `/profile` call before
-anything persistent is keyed on it — which also fills in the email / display name. That
-matters twice over: the provisional key is the *binding id*, so it would otherwise flip the
-moment Claude writes the hint, orphaning the throttle window and every stored sample under
-the old key. The trade is deliberate — over-splitting costs one extra call for a moment,
-collapsing shows the wrong account's numbers.
+**provisional** identity, and `UsageService` settles it with a `/profile` call before
+anything persistent is keyed on it. That matters twice over: the provisional key is the
+*binding id*, so it would otherwise flip the moment Claude writes the hint, orphaning the
+throttle window and every stored sample under the old key. The trade is deliberate —
+over-splitting costs one extra call for a moment, collapsing shows the wrong account's
+numbers.
+
+**Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile`
+is also what ties a row to a real login (email / display name, surfaced in the Usage header
+and the sidebar tooltip). The answer is cached in `account_profiles` keyed by the **token
+fingerprint** — not the account uuid — so a re-login invalidates it for free, with no
+staleness rule to maintain; `UsageService.profileTTLSeconds` (24h) then covers what can
+change under an unchanged token. Reading that cache is free and happens on every pass, so a
+throttled account still renders with its name; the network call is made only when a `/usage`
+fetch is happening anyway, which keeps it inside the same floor and backoff — never once per
+throttled tick. A provisional identity is the one exception: it must ask immediately, since
+its storage key depends on the answer.
 
 **Token source — Electron safeStorage, no separate keychain entry.** Desktop tokens
 live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by

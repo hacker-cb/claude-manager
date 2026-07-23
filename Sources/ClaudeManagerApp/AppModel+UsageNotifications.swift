@@ -51,6 +51,6 @@ extension AppModel {
                 return managed.profile.displayName
             }
         }
-        return account.identity.email ?? "Claude account"
+        return account.identity.accountLabel ?? "Claude account"
     }
 }

@@ -17,30 +17,61 @@ extension UsageServiceTests {
         }
     }
 
-    /// Records call count; each call runs `handler(callIndex)` (1-based) → response or throw.
+    /// Records calls **per endpoint**; each call runs `handler(url, callIndex)` (1-based) →
+    /// response or throw. Counting per endpoint matters because every account is also identified
+    /// via `/profile`, so a bare total would conflate that with the `/usage` call a test means.
     final class ScriptedHTTP: HTTPClient, @unchecked Sendable {
         private let lock = NSLock()
         private var count = 0
-        private let handler: @Sendable (Int) throws -> HTTPResponse
-        init(_ handler: @escaping @Sendable (Int) throws -> HTTPResponse) {
+        private var perPath: [String: Int] = [:]
+        private let handler: @Sendable (URL, Int) throws -> HTTPResponse
+
+        init(_ handler: @escaping @Sendable (URL, Int) throws -> HTTPResponse) {
             self.handler = handler
+        }
+
+        /// Answers `/profile` with a valid identity and `/usage` with `body` — what most tests
+        /// want, since they assert on the usage side and only need identification to succeed.
+        convenience init(usage body: Data, accountUUID: String = "acct") {
+            self.init { url, _ in
+                if url.path.hasSuffix(CoreConstants.usageAPIProfilePath) {
+                    return HTTPResponse(status: 200, body: Self.profileBody(accountUUID))
+                }
+                return HTTPResponse(status: 200, body: body)
+            }
+        }
+
+        static func profileBody(_ uuid: String, email: String = "user@example.com") -> Data {
+            Data(#"{"account":{"uuid":"\#(uuid)","email":"\#(email)"}}"#.utf8)
         }
 
         var callCount: Int {
             lock.withLock { count }
         }
 
+        var usageCallCount: Int {
+            lock.withLock { perPath[CoreConstants.usageAPIUsagePath] ?? 0 }
+        }
+
+        var profileCallCount: Int {
+            lock.withLock { perPath[CoreConstants.usageAPIProfilePath] ?? 0 }
+        }
+
         /// Sync (non-async) so `NSLock` is legal — Swift 6 forbids `.lock()` in an async scope.
-        private func nextIndex() -> Int {
-            lock.withLock { count += 1; return count }
+        private func record(_ path: String) -> Int {
+            lock.withLock {
+                count += 1
+                perPath[path, default: 0] += 1
+                return count
+            }
         }
 
         func get(
-            url _: URL,
+            url: URL,
             headers _: [String: String],
             timeout _: TimeInterval
         ) async throws -> HTTPResponse {
-            try handler(nextIndex())
+            try handler(url, record(url.path))
         }
     }
 

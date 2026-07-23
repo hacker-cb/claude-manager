@@ -39,6 +39,15 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         uuid
     }
 
+    /// How to name this account to a person: the email, else the display name, else nothing.
+    /// Never the uuid — that's a storage key, not something worth showing. Nil until `/profile`
+    /// has answered for the account's token, so callers must treat it as optional rather than
+    /// rendering an empty slot.
+    public var accountLabel: String? {
+        let label = email ?? displayName
+        return (label?.isEmpty ?? true) ? nil : label
+    }
+
     /// Whether this account should show the per-model (scoped) weekly bar — only Max and
     /// Team plans have a scoped limit distinct from the weekly-all limit (mirrors the CLI's
     /// `Settings/Usage.tsx` rule; nil/unknown plan shows it, matching that source).

@@ -26,6 +26,15 @@ struct UsageModelTests {
     }
 
     @Test
+    func accountLabelPrefersEmailAndNeverFallsBackToTheUUID() {
+        #expect(AccountIdentity(uuid: "u", email: "a@b.co", displayName: "Ann").accountLabel == "a@b.co")
+        #expect(AccountIdentity(uuid: "u", displayName: "Ann").accountLabel == "Ann")
+        // Unnamed until /profile answers — nil, so the UI omits the slot rather than showing a uuid.
+        #expect(AccountIdentity(uuid: "u").accountLabel == nil)
+        #expect(AccountIdentity(uuid: "u", email: "").accountLabel == nil)
+    }
+
+    @Test
     func accountIdentityIsKeyedByUUID() {
         let a = AccountIdentity(uuid: "u1", email: "x@y")
         #expect(a.id == "u1")

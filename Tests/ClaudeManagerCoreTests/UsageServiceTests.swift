@@ -26,7 +26,7 @@ struct UsageServiceTests {
 
     @Test
     func freshFetchRecordsAndReturnsFresh() async {
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
@@ -37,13 +37,13 @@ struct UsageServiceTests {
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.state == .fresh)
         #expect(result.accounts.first?.snapshot?.weeklyAll?.utilization == 0.5)
-        #expect(http.callCount == 1)
+        #expect(http.usageCallCount == 1)
         #expect(await history.sampleCount(accountUUID: "acct") == 1)
     }
 
     @Test
     func dedupIssuesOneRequestForSharedAccount() async {
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(provider: StubProvider(results: [
             "p1": .success(token("p1", lastKnown: "acct")),
@@ -52,12 +52,12 @@ struct UsageServiceTests {
         let result = await service.refresh(bindings: [binding("p1"), binding("p2")], now: now)
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
-        #expect(http.callCount == 1)
+        #expect(http.usageCallCount == 1)
     }
 
     @Test
     func bindingFailuresAreReported() async {
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(provider: StubProvider(results: [
             "ok": .success(token("ok", lastKnown: "acct")),
@@ -74,10 +74,7 @@ struct UsageServiceTests {
     func provisionalIdentityIsReconciledViaProfile() async {
         // No `lastKnownAccountUuid` hint → the resolver keys by binding id and flags the identity
         // provisional; the service must settle it via `/profile` before storing anything.
-        let profileBody = Data(#"{"account":{"uuid":"acct-real","email":"a@b.co"}}"#.utf8)
-        let http = ScriptedHTTP { index in
-            HTTPResponse(status: 200, body: index == 1 ? profileBody : usageBody)
-        }
+        let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct-real")
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p"))]),
@@ -86,9 +83,10 @@ struct UsageServiceTests {
         )
         let result = await service.refresh(bindings: [binding("p")], now: now)
         #expect(result.accounts.first?.identity.uuid == "acct-real")
-        #expect(result.accounts.first?.identity.email == "a@b.co")
+        #expect(result.accounts.first?.identity.email == "user@example.com")
         #expect(result.accounts.first?.state == .fresh)
-        #expect(http.callCount == 2) // /profile, then /usage
+        #expect(http.profileCallCount == 1)
+        #expect(http.usageCallCount == 1)
         // Persisted under the authoritative uuid — not the binding id it started with.
         #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
         #expect(await history.sampleCount(accountUUID: "p") == 0)
@@ -98,8 +96,10 @@ struct UsageServiceTests {
     func profileFailureKeepsProvisionalIdentity() async {
         // `/profile` unreachable → keep the provisional key rather than dropping the account;
         // usage still works, just keyed per binding until a later poll settles it.
-        let http = ScriptedHTTP { index in
-            if index == 1 { return HTTPResponse(status: 500, body: Data()) }
+        let http = ScriptedHTTP { url, _ in
+            if url.path.hasSuffix(CoreConstants.usageAPIProfilePath) {
+                return HTTPResponse(status: 500, body: Data())
+            }
             return HTTPResponse(status: 200, body: usageBody)
         }
         let history = UsageHistoryStore(path: ":memory:")
@@ -114,14 +114,47 @@ struct UsageServiceTests {
         #expect(await history.sampleCount(accountUUID: "p") == 1)
     }
 
-    // A *hinted* identity needs no reconciliation: `freshFetchRecordsAndReturnsFresh` below
-    // passes `lastKnown` and asserts `callCount == 1`, which is exactly "no /profile call".
+    @Test
+    func storedProfileIsReusedInsteadOfRefetched() async {
+        // The name is cached per token, so a second pass costs no extra /profile call — and a
+        // hinted account keeps its own uuid, taking only the naming fields from /profile.
+        let http = ScriptedHTTP(usage: usageBody, accountUUID: "ignored-for-hinted")
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            http: http,
+            history: history
+        )
+        _ = await service.refresh(bindings: [binding("p")], now: now)
+        // Past the 60s floor so the second pass genuinely fetches usage again.
+        let later = now.addingTimeInterval(120)
+        let result = await service.refresh(bindings: [binding("p")], now: later)
+        #expect(result.accounts.first?.identity.uuid == "acct")
+        #expect(result.accounts.first?.identity.email == "user@example.com")
+        #expect(http.usageCallCount == 2)
+        #expect(http.profileCallCount == 1) // fetched once, reused after
+    }
+
+    @Test
+    func staleProfileIsRefetchedAfterTTL() async {
+        let http = ScriptedHTTP(usage: usageBody)
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            http: http,
+            history: history
+        )
+        _ = await service.refresh(bindings: [binding("p")], now: now)
+        let afterTTL = now.addingTimeInterval(UsageService.profileTTLSeconds + 60)
+        _ = await service.refresh(bindings: [binding("p")], now: afterTTL)
+        #expect(http.profileCallCount == 2) // the day-old answer is re-asked, not trusted
+    }
 
     // MARK: - Throttle / expiry
 
     @Test
     func expiredTokenSkipsFetchLoginNeeded() async {
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let expired = token("p", expiresAt: Date(timeIntervalSince1970: 1), lastKnown: "acct")
         let service = makeService(
@@ -131,12 +164,12 @@ struct UsageServiceTests {
         )
         let result = await service.refresh(bindings: [binding("p")], now: now)
         #expect(result.accounts.first?.state == .loginNeeded)
-        #expect(http.callCount == 0)
+        #expect(http.usageCallCount == 0)
     }
 
     @Test
     func floorSkipsRefetchWithinWindow() async {
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
@@ -145,7 +178,7 @@ struct UsageServiceTests {
         )
         _ = await service.refresh(bindings: [binding("p")], now: now)
         let second = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(30)) // < 60s
-        #expect(http.callCount == 1)
+        #expect(http.usageCallCount == 1)
         if case .stale = second.accounts.first?.state {} else {
             Issue.record("expected stale, got \(String(describing: second.accounts.first?.state))")
         }
@@ -153,7 +186,7 @@ struct UsageServiceTests {
 
     @Test
     func rateLimitedBacksOffAndSkipsWithinWindow() async {
-        let http = ScriptedHTTP { _ in
+        let http = ScriptedHTTP { _, _ in
             HTTPResponse(status: 429, body: Data(), headers: ["retry-after": "120"])
         }
         let history = UsageHistoryStore(path: ":memory:")
@@ -166,14 +199,14 @@ struct UsageServiceTests {
         #expect(first.accounts.first?.state == .rateLimited(until: now.addingTimeInterval(120)))
         // 60s later, still inside the 120s backoff → no new request.
         let second = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(60))
-        #expect(http.callCount == 1)
+        #expect(http.usageCallCount == 1)
         #expect(second.accounts.first?.state == .rateLimited(until: now.addingTimeInterval(120)))
     }
 
     @Test
     func unauthorizedIsTerminalUntilTokenChanges() async {
         let history = UsageHistoryStore(path: ":memory:")
-        let http401 = ScriptedHTTP { _ in HTTPResponse(status: 401, body: Data()) }
+        let http401 = ScriptedHTTP { _, _ in HTTPResponse(status: 401, body: Data()) }
         let serviceA = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
             http: http401,
@@ -181,25 +214,25 @@ struct UsageServiceTests {
         )
         let first = await serviceA.refresh(bindings: [binding("p")], now: now)
         #expect(first.accounts.first?.state == .loginNeeded)
-        #expect(http401.callCount == 1)
+        #expect(http401.usageCallCount == 1)
         // Same token much later → still parked, no new call.
         _ = await serviceA.refresh(bindings: [binding("p")], now: now.addingTimeInterval(100_000))
-        #expect(http401.callCount == 1)
+        #expect(http401.usageCallCount == 1)
         // A different token value (fingerprint change = re-login) → retries.
-        let httpOK = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let httpOK = ScriptedHTTP(usage: usageBody)
         let serviceB = makeService(
             provider: StubProvider(results: ["p": .success(token("p", value: "NEW", lastKnown: "acct"))]),
             http: httpOK,
             history: history
         )
         let retried = await serviceB.refresh(bindings: [binding("p")], now: now.addingTimeInterval(200_000))
-        #expect(httpOK.callCount == 1)
+        #expect(httpOK.usageCallCount == 1)
         #expect(retried.accounts.first?.state == .fresh)
     }
 
     @Test
     func transportFailureIsOffline() async {
-        let http = ScriptedHTTP { _ in throw URLError(.notConnectedToInternet) }
+        let http = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
@@ -214,13 +247,13 @@ struct UsageServiceTests {
     func transportBackoffDoesNotReadBackAsRateLimited() async {
         let history = UsageHistoryStore(path: ":memory:")
         // Seed a good sample so the later stale read has data.
-        let ok = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let ok = ScriptedHTTP(usage: usageBody)
         _ = await makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
             http: ok, history: history
         ).refresh(bindings: [binding("p")], now: now)
         // Transport failure > 60s later → offline backoff (with reason .offline).
-        let down = ScriptedHTTP { _ in throw URLError(.notConnectedToInternet) }
+        let down = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
             http: down, history: history
@@ -261,7 +294,7 @@ struct UsageServiceTests {
     @Test
     func fleetSelfHealRetriesWhenAllDecryptsFail() async {
         let history = UsageHistoryStore(path: ":memory:")
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         // One binding: pass 1 → .decryptFailed (all fail) → self-heal invalidates + retries →
         // pass 2 → success. If self-heal didn't run, the account would never resolve.
         let provider = TwoPassProvider(firstPassCount: 1, healed: token("p", lastKnown: "acct"))
@@ -280,7 +313,7 @@ struct UsageServiceTests {
     @Test
     func doesNotSelfHealOnMalformedCacheOnly() async {
         let history = UsageHistoryStore(path: ":memory:")
-        let http = ScriptedHTTP { _ in HTTPResponse(status: 200, body: usageBody) }
+        let http = ScriptedHTTP(usage: usageBody)
         // All bindings decrypt fine but the payload is malformed (key is correct) → no self-heal,
         // no retry: the failure is reported, not masked as a rotated key.
         let provider = StubProvider(results: ["p": .failure(.malformedCache)])
