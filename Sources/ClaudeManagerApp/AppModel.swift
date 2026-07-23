@@ -199,8 +199,8 @@ final class AppModel: ObservableObject {
         usageHistory = UsageHistoryStore(path: Self.usageDatabaseURL().path)
         usageTrackingEnabled = defaults.object(forKey: PreferenceKeys.usageTrackingEnabled) as? Bool ?? true
         // `object` distinguishes unset (→ 30) from an explicit 0 (manual-only).
-        usagePollIntervalMinutes = defaults
-            .object(forKey: PreferenceKeys.usagePollIntervalMinutes) as? Int ?? 30
+        let pollMinutes = defaults.object(forKey: PreferenceKeys.usagePollIntervalMinutes) as? Int
+        usagePollIntervalMinutes = pollMinutes ?? UsageService.defaultPollMinutes
         usageAdaptiveEnabled = defaults.object(forKey: PreferenceKeys.usageAdaptiveEnabled) as? Bool ?? true
         usageNotificationsEnabled = defaults
             .object(forKey: PreferenceKeys.usageNotificationsEnabled) as? Bool ?? true

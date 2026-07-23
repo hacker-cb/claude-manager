@@ -31,8 +31,10 @@ extension AppModel {
         usagePollTask = Task { @MainActor [weak self] in
             if let self { await pollUsageOnce() } // immediate, so returning users see usage now
             while !Task.isCancelled {
-                // Re-check weak self each iteration (don't hold it strong across the sleep).
-                let seconds = self?.usagePollSleepInterval() ?? (30 * 60)
+                // Read the cadence through weak self and drop it again before sleeping — the
+                // model must stay collectable across the wait, and if it's already gone there
+                // is nothing left to poll.
+                guard let seconds = self?.usagePollSleepInterval() else { return }
                 try? await Task.sleep(for: .seconds(seconds))
                 guard let self else { return }
                 await pollUsageOnce()

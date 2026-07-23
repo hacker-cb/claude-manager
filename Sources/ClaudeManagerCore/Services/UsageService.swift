@@ -36,6 +36,9 @@ public struct UsageService: Sendable {
     public static let retryAfterRange: ClosedRange<TimeInterval> = 60 ... 3600
     /// The adaptive fast lane: while an account is running, polls no slower than this.
     public static let adaptiveFloorSeconds: TimeInterval = 5 * 60
+    /// Background cadence when the user hasn't chosen one. The settings picker offers this
+    /// among its presets, so the two can't disagree about what "default" means.
+    public static let defaultPollMinutes = 30
 
     /// Seconds until the next poll for a given interval. `minutes` (floored at 1) in seconds,
     /// dropped to the adaptive 5-min lane while an account is running — bounded by the interval
