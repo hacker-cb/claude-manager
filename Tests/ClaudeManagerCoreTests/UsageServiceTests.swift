@@ -108,6 +108,22 @@ struct UsageServiceTests {
         }
     }
 
+    // MARK: - Poll cadence
+
+    @Test
+    func pollIntervalHonorsBaseAndAdaptiveLane() {
+        // Base interval in seconds; a sub-minute / manual (0) value floors to one minute.
+        #expect(UsageService
+            .pollIntervalSeconds(minutes: 30, adaptiveEnabled: false, anyRunning: false) == 1800)
+        #expect(UsageService.pollIntervalSeconds(minutes: 0, adaptiveEnabled: false, anyRunning: false) == 60)
+        // Adaptive drops to the 5-min lane only while an account is running…
+        #expect(UsageService.pollIntervalSeconds(minutes: 30, adaptiveEnabled: true, anyRunning: true) == 300)
+        #expect(UsageService
+            .pollIntervalSeconds(minutes: 30, adaptiveEnabled: true, anyRunning: false) == 1800)
+        // …and never makes an already-shorter interval slower.
+        #expect(UsageService.pollIntervalSeconds(minutes: 2, adaptiveEnabled: true, anyRunning: true) == 120)
+    }
+
     // MARK: - Fetch + persist
 
     @Test

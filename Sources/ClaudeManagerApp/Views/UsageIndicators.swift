@@ -87,7 +87,15 @@ struct UsageSidebarIndicator: View {
     let usage: AccountUsage?
 
     var body: some View {
-        if let usage, let limit = usage.displayLimit {
+        // Attention wins over the ring: a `loginNeeded` / `noSource` account can still carry a
+        // stale snapshot (so `displayLimit` is non-nil), but a normal-looking ring would hide the
+        // action the user must take. The stale numbers stay available in the detail pane.
+        if let usage, usage.needsAttention {
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .help(usage.stateNote)
+        } else if let usage, let limit = usage.displayLimit {
             HStack(spacing: 4) {
                 if let glyph = UsageDisplaySeverity.forFraction(limit.utilization).glyph {
                     Image(systemName: glyph)
@@ -100,11 +108,6 @@ struct UsageSidebarIndicator: View {
                     .foregroundStyle(.secondary)
             }
             .help(tooltip(limit: limit, usage: usage))
-        } else if let usage, usage.needsAttention {
-            Image(systemName: "person.crop.circle.badge.exclamationmark")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help(usage.stateNote)
         }
     }
 

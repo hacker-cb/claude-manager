@@ -25,8 +25,9 @@ struct UsageDetailSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if let subtitle = freshnessSubtitle {
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            if let note = stateNote {
+                Text(note.text).font(.caption)
+                    .foregroundStyle(note.warn ? Color.orange : Color.secondary)
             }
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
@@ -61,21 +62,31 @@ struct UsageDetailSection: View {
                     LimitRow(title: "Current week (\(scoped.scopeModelName ?? "scoped"))", limit: scoped)
                 }
             }
+            // Forward-compat: a window this build doesn't recognize is kept visible (the parser's
+            // "other" bucket) rather than silently dropped — so the detail can't disagree with the
+            // sidebar, which may already be surfacing it as the binding limit.
+            ForEach(snapshot.otherLimits, id: \.dedupKey) { other in
+                LimitRow(title: other.shortLabel, limit: other)
+            }
             if let extra = snapshot.extra {
                 ExtraUsageRow(extra: extra)
             }
         }
     }
 
-    /// A short freshness/state note for the header (age when stale, reason otherwise).
-    private var freshnessSubtitle: String? {
+    /// A short freshness/state note for the header: the data's age when current, otherwise the
+    /// reason it's stale. Warning states (`warn`) are tinted so a still-rendered snapshot from a
+    /// `loginNeeded` / `noSource` account can't read as up to date.
+    private var stateNote: (text: String, warn: Bool)? {
         guard let usage else { return nil }
         switch usage.state {
-        case .fresh: return usage.snapshot?.capturedAt.map { "updated \(UsageFormat.age($0))" }
-        case let .stale(since): return "stale · \(UsageFormat.age(since))"
-        case .rateLimited: return "rate limited"
-        case .offline: return "offline"
-        case .loginNeeded, .noSource: return nil
+        case .fresh:
+            return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0))", false) }
+        case let .stale(since): return ("stale · \(UsageFormat.age(since))", false)
+        case .rateLimited: return ("rate limited", true)
+        case .offline: return ("offline", false)
+        case .loginNeeded: return ("sign in to refresh", true)
+        case .noSource: return ("authorize keychain access", true)
         }
     }
 
