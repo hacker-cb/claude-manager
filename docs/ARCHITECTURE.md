@@ -195,6 +195,18 @@ throttle window and every stored sample under the old key. The trade is delibera
 over-splitting costs one extra call for a moment, collapsing shows the wrong account's
 numbers.
 
+**N launchers, one login — still one account.** Wanting several windows on one login is a
+normal reason to make several launchers, and nothing local ties them together until Claude
+writes `lastKnownAccountUuid` into each profile: each carries its own token, so they resolve
+as separate provisional accounts. `UsageService` therefore settles identities **before**
+fetching anything and then `AccountResolver.regroup` folds the ones sharing a uuid — union
+the bindings, re-elect the healthiest token, keep the named identity. Without that pass one
+login would issue N `/usage` calls on *every* poll (the differing token fingerprints read as
+a re-login, bypassing even the 60s floor), store N rows for one account, and never say
+"shared with N profiles". Identity itself is per-token, so the first pass does cost one
+`/profile` per launcher — that is exactly what reveals the shared account — and every later
+pass is served from cache.
+
 **Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile`
 is also what ties a row to a real login (email / display name, surfaced in the Usage header
 and the sidebar tooltip). The answer is cached in `account_profiles` keyed by the **token

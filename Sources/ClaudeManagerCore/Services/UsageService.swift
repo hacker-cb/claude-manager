@@ -88,11 +88,40 @@ public struct UsageService: Sendable {
             resolved = await resolver.resolve(bindings: bindings, interactive: interactive, now: now)
         }
 
+        // Settle identities *before* any usage is fetched, then fold the ones that turn out to be
+        // the same account. Order matters: N launchers on one login only reveal themselves as one
+        // account once `/profile` has answered, and folding after fetching would already have
+        // spent N calls and stored N rows for it.
+        let settled = await resolver.regroup(identified(resolved.accounts, now: now), now: now)
+
         var accounts: [AccountUsage] = []
-        for account in resolved.accounts {
+        for account in settled {
             await accounts.append(usage(for: account, now: now))
         }
         return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
+    }
+
+    // MARK: - Identity
+
+    /// Name each account from the stored `/profile` answer, asking the network only for the ones
+    /// that are still **provisional** — those have no usable storage key until it answers, and
+    /// nothing can be merged or persisted for them until it does. A named-but-stale account is
+    /// deliberately left alone here; `usage(for:)` refreshes it later, behind the throttle, so a
+    /// backed-off account doesn't call `/profile` on every tick.
+    private func identified(_ accounts: [ResolvedAccount], now: Date) async -> [ResolvedAccount] {
+        let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
+        var settled: [ResolvedAccount] = []
+        for account in accounts {
+            let fingerprint = Self.fingerprint(account.token.token)
+            if let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) {
+                settled.append(account.named(by: cached))
+            } else if account.isProvisionalIdentity {
+                await settled.append(fetchIdentity(account, fingerprint: fingerprint, now: now))
+            } else {
+                settled.append(account)
+            }
+        }
+        return settled
     }
 
     // MARK: - Per account
@@ -106,25 +135,13 @@ public struct UsageService: Sendable {
             return resolved.usage(stale, state: .loginNeeded)
         }
 
-        // Naming the account (email / display name) is the only way to tell which login a
-        // launcher holds. Reading the stored answer is free, so do it on every pass — a throttled
-        // account still renders with its name rather than losing it until the next fetch.
+        // The identity arrives already settled (see `identified`); all that's left is to notice
+        // whether it still lacks a *fresh* name, which is refreshed below — after the throttle
+        // gates, so it rides along with a `/usage` call instead of firing on a backed-off tick.
         let fingerprint = Self.fingerprint(token.token)
         let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
-        let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff)
-        var account = cached.map(resolved.named(by:)) ?? resolved
-        // Whether this pass still owes a `/profile` call — a cache hit settles it, and so does an
-        // attempt below (success or not), so an account is never asked twice in one pass.
-        var identified = cached != nil
-
-        // A provisional identity has no usable storage key until `/profile` answers, so it must
-        // ask now: the binding-id key it would otherwise use flips the moment Claude writes
-        // `lastKnownAccountUuid` (orphaning the throttle window and every stored sample) and
-        // can't tell two same-org accounts apart.
-        if account.isProvisionalIdentity {
-            account = await fetchIdentity(account, fingerprint: fingerprint, now: now)
-            identified = true
-        }
+        let named = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) != nil
+        var account = resolved
 
         let uuid = account.identity.uuid
         let stored = await history.throttle(accountUUID: uuid)
@@ -149,7 +166,7 @@ public struct UsageService: Sendable {
         // Past every gate, so a `/usage` call is happening regardless: this is the moment to
         // refresh a missing or expired name too, which keeps the `/profile` call inside the same
         // backoff and floor that protect `/usage` instead of firing on every throttled tick.
-        if !identified {
+        if !named {
             account = await fetchIdentity(account, fingerprint: fingerprint, now: now)
         }
 

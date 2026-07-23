@@ -79,6 +79,36 @@ public struct AccountResolver: Sendable {
         return ResolvedAccounts(accounts: accounts, failures: failures)
     }
 
+    /// Fold already-resolved accounts that share an identity uuid into one: union their bindings,
+    /// re-elect the healthiest token, and keep the richest identity. Run **after** `/profile`
+    /// settles provisional identities.
+    ///
+    /// This is what makes "N launchers, one login" cost one account. Until Claude writes
+    /// `lastKnownAccountUuid` into each profile there is nothing local tying those launchers
+    /// together — each carries its own token — so they resolve separately, and without this pass
+    /// one login would issue N `/usage` calls on *every* poll (differing token fingerprints even
+    /// read as a re-login, bypassing the 60s floor), store N rows for one account, and never show
+    /// "shared with N profiles".
+    public func regroup(_ accounts: [ResolvedAccount], now: Date) -> [ResolvedAccount] {
+        guard accounts.count > 1 else { return accounts }
+        return Dictionary(grouping: accounts, by: { $0.identity.uuid })
+            .map { _, group in merged(group, now: now) }
+            .sorted { $0.identity.uuid < $1.identity.uuid }
+    }
+
+    private func merged(_ group: [ResolvedAccount], now: Date) -> ResolvedAccount {
+        guard group.count > 1 else { return group[0] }
+        let elected = elect(group.map(\.token), now: now)
+        var result = group.first { $0.token.bindingID == elected.bindingID } ?? group[0]
+        result.token = elected
+        result.bindingIDs = group.flatMap(\.bindingIDs).sorted()
+        // Prefer an identity that `/profile` actually named; the uuid is shared by construction.
+        result.identity = group.first { $0.identity.accountLabel != nil }?.identity ?? result.identity
+        // Provisional only while *every* member still is — one settled answer settles the group.
+        result.isProvisionalIdentity = group.allSatisfy(\.isProvisionalIdentity)
+        return result
+    }
+
     /// The dedup key must identify the **account**, not the organization: in a Team/Enterprise
     /// org several profiles signed in as *different users* share one `organizationUUID` while
     /// being distinct accounts, so keying on the org collapses them and renders one account's

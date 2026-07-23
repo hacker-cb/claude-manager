@@ -53,6 +53,8 @@ struct UsageServiceTests {
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
         #expect(http.usageCallCount == 1)
+        // The hint already tied them together, so identity costs one lookup, not one per binding.
+        #expect(http.profileCallCount == 1)
     }
 
     @Test
@@ -90,6 +92,32 @@ struct UsageServiceTests {
         // Persisted under the authoritative uuid — not the binding id it started with.
         #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
         #expect(await history.sampleCount(accountUUID: "p") == 0)
+    }
+
+    @Test
+    func launchersSharingOneLoginCollapseToOneAccount() async {
+        // Three launchers, one login, wanting three windows — and no local hint tying them
+        // together (Claude writes lastKnownAccountUuid only after signing in). Each carries its
+        // own token, so nothing local can tell they're the same account; `/profile` must settle
+        // that before any usage is fetched, or one account is billed as three.
+        let http = ScriptedHTTP(usage: usageBody, accountUUID: "one-account")
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(provider: StubProvider(results: [
+            "p1": .success(token("p1")),
+            "p2": .success(token("p2")),
+            "p3": .success(token("p3"))
+        ]), http: http, history: history)
+        let result = await service.refresh(
+            bindings: [binding("p1"), binding("p2"), binding("p3")],
+            now: now
+        )
+        #expect(result.accounts.count == 1)
+        #expect(result.accounts.first?.bindingIDs == ["p1", "p2", "p3"])
+        #expect(result.accounts.first?.state == .fresh)
+        #expect(http.usageCallCount == 1) // one account → one /usage, however many launchers
+        // One identity lookup per token is unavoidable: that IS what reveals the shared account.
+        #expect(http.profileCallCount == 3)
+        #expect(await history.sampleCount(accountUUID: "one-account") == 1)
     }
 
     @Test
