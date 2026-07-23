@@ -75,16 +75,25 @@ public struct UsageLimitsParser: Sendable {
     private func typedWindow(_ any: Any?, kind: String) -> UsageLimit? {
         guard let dict = any as? [String: Any] else { return nil }
         let util = fraction(fromPercent: dict["utilization"])
+        let reset = dict["resets_at"]
         return UsageLimit(
             rawKind: kind,
             group: nil,
             utilization: util,
-            resetsAt: date(dict["resets_at"]),
+            resetsAt: date(reset),
             severity: .normal,
-            // Gate on a *real* reset time: JSONSerialization bridges `"resets_at": null`
-            // to NSNull (which is `!= nil`), so test the parsed date, not raw presence.
-            isActive: util > 0 || date(dict["resets_at"]) != nil
+            // A present, non-null resets_at means an active window — even a value we can't
+            // parse to a Date. Only null/absent counts as no reset (JSONSerialization bridges
+            // `null` to NSNull, a non-nil Any, so a raw `!= nil` check would wrongly pass).
+            // `present` is a cheap type check, so resets_at is parsed only once (for resetsAt:).
+            isActive: util > 0 || present(reset)
         )
+    }
+
+    /// True when a JSON value is present and not `null`.
+    private func present(_ any: Any?) -> Bool {
+        guard let any, !(any is NSNull) else { return false }
+        return true
     }
 
     // MARK: - extra_usage

@@ -1,7 +1,6 @@
 import Foundation
 
-/// A minimal HTTP response — status, body, and lower-cased header names (so `retry-after`
-/// lookups don't depend on the server's casing).
+/// A minimal HTTP response — status, body, and headers.
 public struct HTTPResponse: Sendable, Equatable {
     public var status: Int
     public var body: Data
@@ -13,9 +12,11 @@ public struct HTTPResponse: Sendable, Equatable {
         self.headers = headers
     }
 
-    /// Case-insensitive header lookup.
+    /// Case-insensitive header lookup — scans keys rather than assuming a lower-cased map, so a
+    /// value holds regardless of the producer's casing (e.g. a mock injecting `Retry-After`).
     public func header(_ name: String) -> String? {
-        headers[name.lowercased()]
+        if let exact = headers[name] { return exact }
+        return headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
     }
 }
 

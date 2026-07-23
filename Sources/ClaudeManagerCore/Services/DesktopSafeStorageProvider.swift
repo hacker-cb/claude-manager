@@ -45,24 +45,19 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.malformedCache)
         }
 
+        // No side effects on failure here: the key store is shared across the whole fleet,
+        // so invalidating it because *one* binding's blob won't decrypt would drop a key that
+        // decrypts every other account fine (causing repeated keychain prompts). Rotated-key
+        // self-heal is handled fleet-wide by UsageService — invalidate once only when *every*
+        // binding fails to decrypt — where the whole-fleet view can tell rotation from a single
+        // corrupt blob.
         let plaintext: Data
         switch decryptor.decrypt(v10Blob: blob, key: key) {
-        case let .success(data):
-            plaintext = data
-        case let .failure(error):
-            // Drop the cached key so a *rotated* safeStorage password (Desktop reinstall,
-            // keychain item recreated) self-heals on the next poll instead of failing for
-            // every account until relaunch. A genuinely corrupt blob just re-derives the
-            // same key next time — a cheap, silent keychain read minutes apart.
-            await keyStore.invalidate()
-            return .failure(.decryptFailed(error))
+        case let .success(data): plaintext = data
+        case let .failure(error): return .failure(.decryptFailed(error))
         }
 
         guard let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {
-            // Decrypted to non-JSON — almost always a wrong/stale key (a rotated password
-            // whose wrong key yielded coincidentally-valid PKCS7 padding + garbage). Drop
-            // it so a rotated key self-heals, same as the decrypt-failure path above.
-            await keyStore.invalidate()
             return .failure(.malformedCache)
         }
 

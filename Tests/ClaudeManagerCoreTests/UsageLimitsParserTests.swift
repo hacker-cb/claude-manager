@@ -207,6 +207,16 @@ struct UsageLimitsParserTests {
         #expect(snap.session?.isActive == true)
     }
 
+    @Test
+    func typedFallbackPresentButUnparseableResetIsStillActive() throws {
+        // A present, non-null reset time keeps the window active even if we can't parse it —
+        // only null/absent is inactive.
+        let json = #"{ "five_hour": {"utilization": 0.0, "resets_at": "present-but-unparseable"} }"#
+        let snap = try #require(parser.parse(data(json)))
+        #expect(snap.session?.resetsAt == nil)
+        #expect(snap.session?.isActive == true)
+    }
+
     // MARK: - Date parsing
 
     @Test

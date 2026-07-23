@@ -13,24 +13,6 @@ struct DesktopSafeStorageProviderTests {
         }
     }
 
-    /// Returns a different secret on each successive read (last one sticks) — models a
-    /// rotated safeStorage password so the self-heal path can be exercised.
-    private final class SequenceKeychain: KeychainReading, @unchecked Sendable {
-        private let secrets: [Data]
-        private let lock = NSLock()
-        private var index = 0
-        init(_ secrets: [Data]) {
-            self.secrets = secrets
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            lock.lock(); defer { lock.unlock() }
-            let value = secrets[Swift.min(index, secrets.count - 1)]
-            index += 1
-            return value
-        }
-    }
-
     private let clientID = CoreConstants.oauthClientID
     private let org = "11111111-2222-3333-4444-555555555555"
     private let password = Data("kc-password".utf8)
@@ -202,30 +184,6 @@ struct DesktopSafeStorageProviderTests {
             let result = await provider(keychain: StubKeychain(result: .success(password)))
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
             #expect(result == .failure(.noUsableEntry))
-        }
-    }
-
-    @Test
-    func decryptFailureInvalidatesKeyEnablingSelfHeal() async throws {
-        try await withTempDir { dir in
-            // config.json is encrypted under the CORRECT password.
-            let cache: [String: Any] = [inferenceCompositeKey(): [
-                "token": "T",
-                "expiresAt": 1_785_320_075_857
-            ]]
-            let url = try writeConfig(cache: cache, into: dir)
-            // Keychain first hands back a WRONG password (stale key → decrypt fails), then
-            // the correct one (rotation healed). Without invalidate() the wrong key would
-            // stay cached and the second call would fail too.
-            let keychain = SequenceKeychain([Data("stale-password".utf8), password])
-            let provider = DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
-            let binding = TokenBinding(id: "p", configURL: url)
-
-            let first = await provider.token(for: binding, interactive: false)
-            if case .success = first { Issue.record("expected first (stale key) to fail, got \(first)") }
-
-            let second = try await provider.token(for: binding, interactive: false).get()
-            #expect(second.token == "T")
         }
     }
 

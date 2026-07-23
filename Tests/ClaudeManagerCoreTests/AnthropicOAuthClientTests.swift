@@ -70,6 +70,15 @@ struct AnthropicOAuthClientTests {
     }
 
     @Test
+    func rateLimitedParsesMixedCaseRetryAfterHeader() async {
+        // A producer that preserves server casing must still be honored.
+        let result = await client { _, _, _ in
+            HTTPResponse(status: 429, body: Data(), headers: ["Retry-After": "90"])
+        }.fetchUsage(token: "T", marketingVersion: version)
+        #expect(result == .failure(.rateLimited(retryAfter: 90)))
+    }
+
+    @Test
     func rateLimitedWithoutHeaderHasNilRetryAfter() async {
         let result = await client { _, _, _ in HTTPResponse(status: 429, body: Data()) }
             .fetchUsage(token: "T", marketingVersion: version)

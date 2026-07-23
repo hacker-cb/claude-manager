@@ -67,6 +67,18 @@ struct AccountResolverTests {
     }
 
     @Test
+    func sameOrgDifferentAccountsAreNotCollapsed() async {
+        // Two profiles in one Team/Enterprise org, signed in as different users: same org UUID,
+        // different account UUIDs. They must stay separate accounts, not collapse to one.
+        let result = await resolve([
+            "userA": .success(token(binding: "userA", org: "shared-org", lastKnown: "acct-A")),
+            "userB": .success(token(binding: "userB", org: "shared-org", lastKnown: "acct-B"))
+        ])
+        #expect(result.accounts.count == 2)
+        #expect(Set(result.accounts.map(\.identity.uuid)) == ["acct-A", "acct-B"])
+    }
+
+    @Test
     func groupsByLastKnownWhenNoOrg() async {
         let result = await resolve([
             "p1": .success(token(binding: "p1", org: nil, lastKnown: "acct-9")),

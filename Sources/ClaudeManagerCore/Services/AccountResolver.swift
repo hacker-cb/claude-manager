@@ -69,10 +69,14 @@ public struct AccountResolver: Sendable {
         return ResolvedAccounts(accounts: accounts, failures: failures)
     }
 
-    /// The dedup key: the token's organization UUID (authoritative, from the signed cache),
-    /// then the config's account-UUID hint, then the binding id (its own group — can't dedup).
+    /// The dedup key must identify the **account**, not the organization: in a Team/Enterprise
+    /// org, several profiles signed in as different users share one `organizationUUID` but are
+    /// distinct accounts, so keying on the org would collapse them and hide all but the elected
+    /// one. Prefer the config's account-UUID hint (`lastKnownAccountUuid`), fall back to the org
+    /// only when it's absent (a personal plan, where org == account 1:1), then the binding id.
+    /// `/profile` (in `UsageService`) later provides the authoritative account UUID to re-key on.
     private func groupingKey(for token: DesktopToken) -> String {
-        token.organizationUUID ?? token.lastKnownAccountUUID ?? token.bindingID
+        token.lastKnownAccountUUID ?? token.organizationUUID ?? token.bindingID
     }
 
     private func resolvedAccount(
