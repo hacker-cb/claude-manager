@@ -56,7 +56,8 @@ final class AppModel: ObservableObject {
 
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
     /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
-    private var inflight = 0 {
+    /// Non-private so the `AppModel+Perform` extension (another file) can drive it.
+    var inflight = 0 {
         didSet { isBusy = inflight > 0 }
     }
 
@@ -90,6 +91,53 @@ final class AppModel: ObservableObject {
     /// overlapping runs can't both `open -n` a duplicate default. See `openReal`.
     /// Non-private so the `AppModel+PrimaryProfile` extension (another file) can reach it.
     var isOpeningReal = false
+
+    // MARK: - Plan-usage statistics (see AppModel+Usage)
+
+    /// Durable stores held for the process lifetime: the SQLite history/throttle store and the
+    /// safeStorage key cache (one keychain read for the whole fleet). Non-private for the
+    /// `AppModel+Usage` extension.
+    let usageHistory: UsageHistoryStore
+    let safeStorageKeys = SafeStorageKeyStore()
+
+    /// Latest usage per **binding** id (profile launcher path / default-account id) — a shared
+    /// account appears under each of its bindings, so a view keyed by profile reads it directly.
+    /// Non-`private(set)` so the `AppModel+Usage` extension (another file) can update it.
+    @Published var usageByBinding: [String: AccountUsage] = [:]
+    /// Per-binding token failures (login-needed / no-source), for a profile row's state.
+    @Published var usageBindingFailures: [String: TokenProviderError] = [:]
+
+    /// The background usage poll; mirrors `monitorTask`. Non-private for `AppModel+Usage`.
+    var usagePollTask: Task<Void, Never>?
+    /// Single-flights `refreshUsage`: `@MainActor` makes the check-and-set atomic so a manual
+    /// Refresh overlapping a scheduled poll can't both fetch (the throttle read+write aren't
+    /// atomic across ticks). Non-private for `AppModel+Usage`.
+    var isRefreshingUsage = false
+
+    @Published var usageTrackingEnabled: Bool {
+        didSet {
+            defaults.set(usageTrackingEnabled, forKey: PreferenceKeys.usageTrackingEnabled)
+            guard didFinishInit else { return }
+            applyUsageTrackingChange()
+        }
+    }
+
+    /// Background poll interval in minutes; `0` = manual only. Presets in Settings.
+    @Published var usagePollIntervalMinutes: Int {
+        didSet {
+            defaults.set(usagePollIntervalMinutes, forKey: PreferenceKeys.usagePollIntervalMinutes)
+            guard didFinishInit else { return }
+            restartUsagePolling()
+        }
+    }
+
+    @Published var usageAdaptiveEnabled: Bool {
+        didSet {
+            defaults.set(usageAdaptiveEnabled, forKey: PreferenceKeys.usageAdaptiveEnabled)
+            guard didFinishInit else { return }
+            restartUsagePolling()
+        }
+    }
 
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
@@ -139,6 +187,12 @@ final class AppModel: ObservableObject {
         badgeStyle = Self.loadBadgeStyle(from: defaults)
         // On by default: `object` distinguishes "never set" (→ true) from an explicit off.
         deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
+        usageHistory = UsageHistoryStore(path: Self.usageDatabaseURL().path)
+        usageTrackingEnabled = defaults.object(forKey: PreferenceKeys.usageTrackingEnabled) as? Bool ?? true
+        // `object` distinguishes unset (→ 30) from an explicit 0 (manual-only).
+        usagePollIntervalMinutes = defaults
+            .object(forKey: PreferenceKeys.usagePollIntervalMinutes) as? Int ?? 30
+        usageAdaptiveEnabled = defaults.object(forKey: PreferenceKeys.usageAdaptiveEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
         // Wire the AppKit deep-link sink and run the launch tasks. Both are deferred to the
@@ -212,19 +266,13 @@ final class AppModel: ObservableObject {
         await applyDeepLinkBroker()
     }
 
-    private func currentConfiguration() -> ProfileStoreConfiguration? {
+    func currentConfiguration() -> ProfileStoreConfiguration? {
         guard let real = realClaude else { return nil }
         var config = ProfileStoreConfiguration.makeDefault(realClaude: real)
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
         config.defaultProfilesDirectory = effectiveProfilesDirectory
         config.badgeStyle = badgeStyle
         return config
-    }
-
-    /// Build a store for synchronous, non-blocking calls (e.g. `draft`).
-    func makeStore() -> ProfileStore? {
-        guard let real = realClaude, let config = currentConfiguration() else { return nil }
-        return ProfileStore(realClaude: real, configuration: config)
     }
 
     // MARK: - Reads
@@ -400,6 +448,7 @@ final class AppModel: ObservableObject {
     func stopMonitoring() {
         monitorTask?.cancel()
         monitorTask = nil
+        stopUsagePolling()
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil
@@ -445,53 +494,5 @@ final class AppModel: ObservableObject {
             stagedUpdate = nil
         }
         locateError = located.error
-    }
-
-    // MARK: - Plumbing
-
-    /// Run a store operation off the main actor — it may block or suspend (e.g. the
-    /// async `stop`) — surfacing errors as an alert. Returns `nil` on failure.
-    /// Non-private so type extensions in other files (e.g. `AppModel+PrimaryProfile`)
-    /// share the one dispatch path.
-    func perform<T: Sendable>(
-        _ body: @Sendable @escaping (ProfileStore) async throws -> T
-    ) async -> T? {
-        guard let real = realClaude, let config = currentConfiguration() else {
-            currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
-            return nil
-        }
-        inflight += 1
-        defer { inflight -= 1 }
-        do {
-            return try await Task.detached {
-                let store = ProfileStore(realClaude: real, configuration: config)
-                return try await body(store)
-            }.value
-        } catch {
-            currentError = AppError(error)
-            return nil
-        }
-    }
-
-    /// Like `perform`, but re-throws instead of routing the error to `currentError`.
-    /// The caller (the editor) presents the failure in its own sheet-level alert.
-    private func performThrowing<T: Sendable>(
-        _ body: @Sendable @escaping (ProfileStore) async throws -> T
-    ) async throws -> T {
-        guard let real = realClaude, let config = currentConfiguration() else {
-            // Preserve the specific locate reason (mirrors `perform`'s alert) rather
-            // than a generic realClaudeNotFound, since the editor shows this directly.
-            throw MessageError(message: locateError ?? "Real Claude.app was not found.")
-        }
-        inflight += 1
-        defer { inflight -= 1 }
-        return try await Task.detached {
-            let store = ProfileStore(realClaude: real, configuration: config)
-            return try await body(store)
-        }.value
-    }
-
-    private nonisolated static func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }
