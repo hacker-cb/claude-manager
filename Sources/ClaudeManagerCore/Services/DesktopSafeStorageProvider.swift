@@ -47,11 +47,22 @@ public struct DesktopSafeStorageProvider: TokenProvider {
 
         let plaintext: Data
         switch decryptor.decrypt(v10Blob: blob, key: key) {
-        case let .success(data): plaintext = data
-        case let .failure(error): return .failure(.decryptFailed(error))
+        case let .success(data):
+            plaintext = data
+        case let .failure(error):
+            // Drop the cached key so a *rotated* safeStorage password (Desktop reinstall,
+            // keychain item recreated) self-heals on the next poll instead of failing for
+            // every account until relaunch. A genuinely corrupt blob just re-derives the
+            // same key next time — a cheap, silent keychain read minutes apart.
+            await keyStore.invalidate()
+            return .failure(.decryptFailed(error))
         }
 
         guard let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {
+            // Decrypted to non-JSON — almost always a wrong/stale key (a rotated password
+            // whose wrong key yielded coincidentally-valid PKCS7 padding + garbage). Drop
+            // it so a rotated key self-heals, same as the decrypt-failure path above.
+            await keyStore.invalidate()
             return .failure(.malformedCache)
         }
 
@@ -107,13 +118,16 @@ public struct DesktopSafeStorageProvider: TokenProvider {
     }
 
     /// Scopes are the space-separated tail after the audience in the composite key. Matched
-    /// on the host (`anthropic.com:`) so it doesn't depend on the scheme; falls back to any
-    /// space-delimited `user:*` tokens if the audience shape ever changes.
+    /// on the host (`anthropic.com:`) so it doesn't depend on the scheme.
     private func scopes(fromComposite key: String) -> [String] {
         if let range = key.range(of: "anthropic.com:") {
             return key[range.upperBound...].split(separator: " ").map(String.init)
         }
-        return key.split(separator: " ").map(String.init).filter { $0.hasPrefix("user:") }
+        // Fallback if the audience shape ever changes: the first scope may be fused onto the
+        // audience segment (`…:user:inference`), so a `hasPrefix("user:")` split would drop
+        // it. Match the scopes we actually gate on by substring, which can't lose them.
+        return [CoreConstants.oauthInferenceScope, CoreConstants.oauthProfileScope]
+            .filter(key.contains)
     }
 
     /// The organization UUID is the 36 chars immediately after `"<clientID>:"`.

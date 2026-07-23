@@ -81,7 +81,9 @@ public struct UsageLimitsParser: Sendable {
             utilization: util,
             resetsAt: date(dict["resets_at"]),
             severity: .normal,
-            isActive: util > 0 || dict["resets_at"] != nil
+            // Gate on a *real* reset time: JSONSerialization bridges `"resets_at": null`
+            // to NSNull (which is `!= nil`), so test the parsed date, not raw presence.
+            isActive: util > 0 || date(dict["resets_at"]) != nil
         )
     }
 
@@ -91,7 +93,7 @@ public struct UsageLimitsParser: Sendable {
         guard let dict else { return nil }
         let limitMinor = int(dict["monthly_limit"])
         // utilization is a percent when present; nil when unlimited/unreported.
-        let util: Double? = dict["utilization"].flatMap(number).map { ($0 / 100).clamped01() }
+        let util: Double? = dict["utilization"].flatMap(number).map { ($0 / 100).clamped(to: 0 ... 1) }
         return ExtraUsage(
             isEnabled: bool(dict["is_enabled"]),
             usedMinor: int(dict["used_credits"]) ?? 0,
@@ -133,7 +135,7 @@ public struct UsageLimitsParser: Sendable {
     /// API percent (0…100) → clamped fraction (0…1); a missing/odd value is 0.
     private func fraction(fromPercent any: Any?) -> Double {
         guard let percent = number(any) else { return 0 }
-        return (percent / 100).clamped01()
+        return (percent / 100).clamped(to: 0 ... 1)
     }
 
     private func date(_ any: Any?) -> Date? {
@@ -161,11 +163,5 @@ public struct UsageLimitsParser: Sendable {
         fallback.timeZone = TimeZone(identifier: "UTC")
         fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXXXX"
         return fallback.date(from: raw)
-    }
-}
-
-private extension Double {
-    func clamped01() -> Double {
-        min(max(self, 0), 1)
     }
 }

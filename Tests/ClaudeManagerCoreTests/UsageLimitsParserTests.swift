@@ -190,6 +190,23 @@ struct UsageLimitsParserTests {
         #expect(scoped.first?.utilization == 0.05)
     }
 
+    @Test
+    func typedFallbackNullResetIsNotActive() throws {
+        // JSONSerialization bridges `null` to NSNull (!= nil): a 0%-usage window with an
+        // explicit null reset must NOT be flagged active.
+        let json = #"{ "five_hour": {"utilization": 0.0, "resets_at": null} }"#
+        let snap = try #require(parser.parse(data(json)))
+        #expect(snap.session?.utilization == 0.0)
+        #expect(snap.session?.isActive == false)
+    }
+
+    @Test
+    func typedFallbackRealResetIsActive() throws {
+        let json = #"{ "five_hour": {"utilization": 0.0, "resets_at": "2026-07-23T19:00:00.000000+00:00"} }"#
+        let snap = try #require(parser.parse(data(json)))
+        #expect(snap.session?.isActive == true)
+    }
+
     // MARK: - Date parsing
 
     @Test
