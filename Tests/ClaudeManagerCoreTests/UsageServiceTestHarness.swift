@@ -88,6 +88,8 @@ extension UsageServiceTests {
 
         func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
             lock.lock(); defer { lock.unlock() }
+            // Empty sequence → surface a clean keychain miss, not an index underflow crash.
+            guard !secrets.isEmpty else { throw KeychainError.notFound }
             let value = secrets[Swift.min(index, secrets.count - 1)]
             index += 1
             return value
