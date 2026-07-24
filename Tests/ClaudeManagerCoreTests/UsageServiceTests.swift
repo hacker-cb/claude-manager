@@ -207,9 +207,11 @@ struct UsageServiceTests {
         _ = await service.refresh(bindings: [binding("p")], now: now)
         let second = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(30)) // < 60s
         #expect(http.usageCallCount == 1)
-        if case .stale = second.accounts.first?.state {} else {
-            Issue.record("expected stale, got \(String(describing: second.accounts.first?.state))")
-        }
+        // Skipped, not degraded: inside the floor we already hold the newest values the API would
+        // return, so this reports as current (aged by capturedAt) rather than as staleness — which
+        // is reserved for a refresh that genuinely couldn't happen.
+        #expect(second.accounts.first?.state == .fresh)
+        #expect(second.accounts.first?.snapshot?.weeklyAll?.utilization == 0.5)
     }
 
     @Test

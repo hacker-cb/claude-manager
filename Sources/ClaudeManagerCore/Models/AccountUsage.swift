@@ -4,9 +4,11 @@ import Foundation
 /// reason we're not fetching). Every non-`fresh` case still carries whatever snapshot the
 /// store had, so the UI shows the last known numbers rather than blanking.
 public enum UsageState: Sendable, Equatable {
-    /// Just fetched.
+    /// The newest values we have: either just fetched, or re-served within the per-account floor
+    /// because there was no reason to ask again. `snapshot.capturedAt` carries the age either way.
     case fresh
-    /// Serving the last stored sample, captured at this time (offline / throttled / skipped).
+    /// Serving the last stored sample because a refresh genuinely couldn't happen — offline, or
+    /// inside an error backoff. Reserved for that: a deliberate skip is not staleness.
     case stale(since: Date)
     /// Token expired or the API rejected it (401/403) — the account needs a fresh login.
     case loginNeeded

@@ -158,9 +158,12 @@ public struct UsageService: Sendable {
             }
             return account.usage(latest, state: state)
         }
-        // 60s floor since the last attempt → skip, serve what we have.
+        // Inside the 60s floor: we already hold the newest values the API would hand back, and
+        // chose not to re-ask. Nothing failed, so this is *not* staleness — reporting it as such
+        // made a normal poll cadence read as a problem ("stale · 4 min ago" on data that was
+        // simply as fresh as the floor allows). The age still shows, via `capturedAt`.
         if !tokenChanged, let last = stored?.lastAttemptAt, now.timeIntervalSince(last) < Self.floorSeconds {
-            return account.usage(latest, state: latest.map { .stale(since: $0.capturedAt) } ?? .noSource)
+            return account.usage(latest, state: latest == nil ? .noSource : .fresh)
         }
 
         // Past every gate, so a `/usage` call is happening regardless: this is the moment to

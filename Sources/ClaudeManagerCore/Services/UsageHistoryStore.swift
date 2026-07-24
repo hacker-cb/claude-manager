@@ -25,13 +25,25 @@ private final class SQLiteConnection: @unchecked Sendable {
 /// schema is a *cache*, not a contract: on any `user_version` mismatch the tables are dropped
 /// and recreated (early-stage — no migrations to maintain).
 ///
-/// The SQLite primitives are `static` (nonisolated) helpers over an explicit handle, so the
-/// synchronous `init` can open + bootstrap without touching actor-isolated methods; the actor
-/// only serializes access to the `db` handle it holds.
+/// The SQLite primitives are `static` (nonisolated) helpers over an explicit handle, so opening
+/// and bootstrapping needs no actor-isolated state; the actor only serializes access to the `db`
+/// handle it holds.
 public actor UsageHistoryStore {
-    private let connection: SQLiteConnection
+    private let path: String
+    private var connection: SQLiteConnection?
+
+    /// Opens on **first use**, on the actor's own executor — never on the caller's thread.
+    /// `AppModel` builds this store from its `init` on the main actor, and opening there would
+    /// block the first frame: `sqlite3_open_v2` plus the bootstrap PRAGMAs, and on a schema bump
+    /// a full DROP/CREATE/VACUUM that can take seconds over a large history.
+    ///
+    /// A failed open is remembered as a connection with a nil handle rather than retried on every
+    /// call, so a broken path degrades once (to the in-memory fallbacks) instead of thrashing.
     private var db: OpaquePointer? {
-        connection.handle
+        if let connection { return connection.handle }
+        let opened = SQLiteConnection(handle: Self.open(path: path))
+        connection = opened
+        return opened.handle
     }
 
     /// In-memory fallbacks used **only when the DB can't be opened**. History (samples) is
@@ -45,11 +57,12 @@ public actor UsageHistoryStore {
     /// tick instead of once a day.
     private var memoryProfiles: [String: (identity: AccountIdentity, fetchedAt: Date)] = [:]
 
-    /// Open (and bootstrap) the store at `path`. Pass `":memory:"` for a throwaway store in
-    /// tests. A failed open leaves the store inert (every method no-ops / returns empty); the
-    /// handle is closed by `SQLiteConnection.deinit` when the store is released.
+    /// Note the store at `path`; the file is opened and bootstrapped on the first call that needs
+    /// it, not here. Pass `":memory:"` for a throwaway store in tests. A failed open leaves the
+    /// store inert (every method no-ops / returns empty); the handle is closed by
+    /// `SQLiteConnection.deinit` when the store is released.
     public init(path: String) {
-        connection = SQLiteConnection(handle: Self.open(path: path))
+        self.path = path
     }
 
     // MARK: - Samples
