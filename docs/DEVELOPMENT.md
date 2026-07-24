@@ -95,15 +95,19 @@ codesign --verify --strict "build/Build/Products/Debug/Claude Manager.app"
 ls "build/Build/Products/Debug/Claude Manager.app/Contents/_CodeSignature/CodeResources"
 ```
 
-One behavioural gap comes with it: Xcode prints `note: Disabling hardened runtime with
-ad-hoc codesigning` and drops `ENABLE_HARDENED_RUNTIME` for a local build, so `make run`
-runs **unhardened** while the shipped app does not (`scripts/build-app.sh` signs the release
-with `--options runtime` and fails it if the exported signature lacks the flag). Don't hand
-it back here via `OTHER_CODE_SIGN_FLAGS`: hardened runtime brings library validation, and
-the embedded `Sparkle.framework` is re-sealed at copy time with a team-less ad-hoc
-identity — a pairing nothing in this repo exercises. Anything that only breaks under the
-Hardened Runtime must be reproduced against a Developer ID archive (`make archive`, signing
-env required).
+One behavioural gap comes with it, and it is **Debug-only**. `make run` (Debug) embeds an
+injected `Claude Manager.debug.dylib`, which Hardened Runtime's library validation would
+refuse to load — so Xcode prints `note: Disabling hardened runtime with ad-hoc
+codesigning` and drops `ENABLE_HARDENED_RUNTIME`, and the Debug build runs **unhardened**
+(`flags=0x2(adhoc)`). The ad-hoc **Release** build keeps it: `make build-app CONFIG=Release`
+carries no debug dylib and comes out `flags=0x10002(adhoc,runtime)`, framework and XPC
+helpers included. So the ad-hoc + team-less + Hardened-Runtime pairing is *not* untested —
+CI builds it on every PR, and `make run CONFIG=Release` reproduces it locally with no
+Developer ID. Don't try to hand Hardened Runtime back to the *Debug* build via
+`OTHER_CODE_SIGN_FLAGS`: the debug dylib is why it is off, and forcing it on breaks the
+launch it exists to speed up. The one thing neither local path exercises is a **notarized**
+signature; anything that only surfaces under notarization needs a Developer ID archive
+(`make archive`, signing env required).
 
 Neither the seal nor the dev/release identity split is visible to `swift test` — both are
 properties of the built product, not of any Swift source — so CI asserts them with scripts

@@ -32,6 +32,10 @@
 #   make build-app CONFIG=Release
 #   make build-app CONFIG=Debug
 #   bash scripts/assert-build-signed.sh
+# CI's use is the reason both are built. Running the Release line locally now produces a
+# *runnable* bundle under the shipped identity in build/, so follow with `make clean` when
+# done — see docs/DEVELOPMENT.md § Dev builds carry a separate identity for why a stray
+# Release-identity build can hijack the installed app's login item and claude:// handler.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,9 +49,11 @@ fail=0
 # The literal artifact of the regression: no signing step ran, so no seal was written.
 # Kept separate from the `codesign --verify` check below so the two failure modes stay
 # legible — "never sealed" (here) points at the build's signing flags, "sealed but broken"
-# (there) points at something writing into the bundle after signing. The app draws the
-# same distinction one level down, for launchers: Doctor reports an unsigned launcher and
-# a broken signature as separate errors over `CodeSigner.isValidlySigned`.
+# (there) points at something writing into the bundle after signing. The app draws the same
+# two-error distinction one level down, for launchers, though it keys each on a different
+# signal: Doctor reports "unsigned" off the wrapper version (`launcher.isUnrunnable`, below
+# `CoreConstants.minimumRunnableWrapperVersion`) and "signature is broken" off
+# `CodeSigner.isValidlySigned` (see Doctor.swift).
 check_has_seal() { # <label> <app>
   if [ -f "$2/Contents/_CodeSignature/CodeResources" ]; then
     echo "  ✓ $1 has a bundle seal (Contents/_CodeSignature/CodeResources)"
@@ -77,11 +83,13 @@ check_verifies() { # <label> <app>
   fi
 }
 
-# Report-only, never a gate: every signature state this could reject is already rejected
-# above (a `linker-signed` Mach-O has no Contents/_CodeSignature at all, so both checks
-# have failed by the time we get here). Its job is to make the CI log say WHICH signature
-# was found, and to name the trap explicitly when it is the linker's, so a failure reads
-# as one cause rather than three.
+# Report-only, and reached ONLY for a bundle that already passed both checks above (see
+# assert_sealed). That precondition is load-bearing: a "sealed but broken" bundle — the
+# post-signing-write regression — still reports `Signature=adhoc` under `codesign -dv`, so
+# printing "signed ad-hoc — expected for a dev or CI build" beneath its ✗ would annotate the
+# exact failure this guard exists to catch as normal. Because the bundle passed, only the
+# ad-hoc and Developer ID branches are live; the first two are defensive and unreachable
+# here. Its job is to make the CI log say WHICH valid signature was found.
 report_signature_kind() { # <label> <app>
   local info status=0
   info="$(codesign --display --verbose=2 "$2" 2>&1)" || status=$?
@@ -98,9 +106,13 @@ report_signature_kind() { # <label> <app>
 
 assert_sealed() { # <label> <app>
   echo "$1 ($2):"
+  local before="$fail"
   check_has_seal "$1" "$2"
   check_verifies "$1" "$2"
-  report_signature_kind "$1" "$2"
+  # Name the signature kind only when both checks passed. On a failure check_verifies has
+  # already printed codesign's real output, and the reassuring "signed ad-hoc" line would
+  # mislabel the regression (see report_signature_kind).
+  [ "$fail" = "$before" ] && report_signature_kind "$1" "$2"
 }
 
 # Preflight both inputs first. `codesign` exits 1 for "no such file" exactly as it does

@@ -92,5 +92,10 @@ jobs:
       - name: Assert dev and release identities stay isolated
         run: bash scripts/assert-build-identities.sh
 
+      # `!cancelled()` so a failure in the identity assert above does not skip this one: the
+      # two invariants are orthogonal, and both should be reported in a single run rather than
+      # costing a second CI cycle to surface the second after the first is fixed. Both builds
+      # have run by here, so it never fires against a missing product on their account.
       - name: Assert both built apps are validly signed
+        if: ${{ !cancelled() }}
         run: bash scripts/assert-build-signed.sh

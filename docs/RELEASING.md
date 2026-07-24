@@ -103,12 +103,13 @@ nested-Sparkle signing or enclosure-format issue surfaces.
 The **Launch at login** toggle (Settings → Startup) registers the app itself as a login
 item via `SMAppService.mainApp` — no helper bundle, since the app is non-sandboxed. It
 needs no extra entitlement, but macOS only honours the registration for a **Developer ID
-signed + notarized** build, which is exactly what the release pipeline produces. A local
-build is only **ad-hoc** signed — enough for macOS to *run* it, nowhere near that — and
-must not add a login item under the dev identity anyway, so the toggle is **disabled in
-non-distribution builds** (`AppBuild.isDistribution`, keyed on the `MARKETING_VERSION` the
-release injects) with a caption explaining why — so a released build shows a working toggle
-and a dev build never lands in the user's Login Items. See [DEVELOPMENT.md](DEVELOPMENT.md) § Dev builds carry a
+signed + notarized** build, which is exactly what the release pipeline produces. The gate
+is **not** the signature — a local `make archive` is Developer ID signed too, yet still must
+not add a login item under the dev identity — so the toggle keys on
+`AppBuild.isDistribution` (the `MARKETING_VERSION` placeholder the release injects, not any
+signing fact) and is **disabled in non-distribution builds** with a caption explaining why,
+so a released build shows a working toggle and any local build — ad-hoc `make run` or
+Developer ID `make archive` alike — never lands in the user's Login Items. See [DEVELOPMENT.md](DEVELOPMENT.md) § Dev builds carry a
 separate identity for the broader identity split.
 
 ## Cutting a release
