@@ -58,11 +58,14 @@ extension UsageServiceTests {
         }
 
         /// Sync (non-async) so `NSLock` is legal — Swift 6 forbids `.lock()` in an async scope.
+        /// Returns the **per-endpoint** 1-based index (not the global total), so a handler can key
+        /// on "first `/profile` call" vs "first `/usage` call" without depending on how the two
+        /// interleave; `count` still tracks the global total for `callCount`.
         private func record(_ path: String) -> Int {
             lock.withLock {
                 count += 1
                 perPath[path, default: 0] += 1
-                return count
+                return perPath[path] ?? 1
             }
         }
 

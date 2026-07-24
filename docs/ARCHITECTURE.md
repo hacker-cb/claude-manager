@@ -178,50 +178,52 @@ documented in [README.md](../README.md) and [SECURITY.md](../SECURITY.md).
 
 **The account owns usage, not the profile.** Limits belong to the Anthropic
 subscription, so N launchers on one account must issue **one** `/usage` call.
-`AccountResolver` decrypts every binding's token locally first, groups by the config's
-account-UUID hint (`lastKnownAccountUuid`), and elects one binding per account: valid
-(unexpired + `user:inference`) → latest `expiresAt` → stable id. The default account is a
-first-class peer, resolved from its own user-data-dir. A binding whose token can't be read
-maps to a login-needed / no-source UI state; an account is only "login needed" if **every**
-binding fails.
+`AccountResolver` decrypts every binding's token locally first, then merges only what is
+*provably* one account — bindings holding the **identical token** (same fingerprint, e.g. a
+cloned user-data dir) — electing one binding per group: valid (unexpired + `user:inference`)
+→ latest `expiresAt` → stable id. The default account is a first-class peer, resolved from its
+own user-data-dir. A binding whose token can't be read maps to a login-needed / no-source UI
+state; an account is only "login needed" if **every** binding fails.
 
-**The org is never the account key.** A Team/Enterprise org holds many accounts, so keying
-on `organizationUUID` would collapse two profiles signed in as different users and render
-one account's limits for both. Without the local hint a binding therefore stands alone as a
-**provisional** identity, and `UsageService` settles it with a `/profile` call before
-anything persistent is keyed on it. That matters twice over: the provisional key is the
-*binding id*, so it would otherwise flip the moment Claude writes the hint, orphaning the
-throttle window and every stored sample under the old key. The trade is deliberate —
-over-splitting costs one extra call for a moment, collapsing shows the wrong account's
-numbers.
+**Neither the org nor a config hint is an account key.** A Team/Enterprise org holds many
+accounts, so keying on `organizationUUID` would collapse two profiles signed in as different
+users. The config's `lastKnownAccountUuid` is no safer — it can lag the actual token (a
+re-login, a copied dir), so merging on it would file one account's usage under another; it is
+deliberately not read at all. So distinct tokens are **never** merged locally — each stands
+alone as a **provisional** account keyed by its token fingerprint — and `UsageService` settles
+the real account with a `/profile` call. The fingerprint is a stable placeholder (a changed
+token changes it), so it can't flip mid-life the way a hint could; and the moment `/profile`
+first resolves the real uuid, `UsageHistoryStore.reassignAccount` moves the throttle window,
+samples, and notification ledger off the fingerprint onto it — so the key promotion orphans
+nothing.
 
 **N launchers, one login — still one account.** Wanting several windows on one login is a
-normal reason to make several launchers, and nothing local ties them together until Claude
-writes `lastKnownAccountUuid` into each profile: each carries its own token, so they resolve
-as separate provisional accounts. `UsageService` therefore settles identities **before**
-fetching anything and then `AccountResolver.regroup` folds the ones sharing a uuid — union
-the bindings, re-elect the healthiest token, keep the named identity. Without that pass one
-login would issue N `/usage` calls on *every* poll (the differing token fingerprints read as
-a re-login, bypassing even the 60s floor), store N rows for one account, and never say
-"shared with N profiles". Identity itself is per-token, so the first pass does cost one
-`/profile` per launcher — that is exactly what reveals the shared account — and every later
-pass is served from cache.
+normal reason to make several launchers; each carries its own token, so they resolve as
+separate provisional accounts. `UsageService` settles identities **before** fetching anything,
+then `AccountResolver.regroup` folds the ones whose `/profile` returned the **same authoritative
+uuid** — the only signal that proves two different tokens share an account — union the bindings,
+re-elect the healthiest token, keep the named identity. Election lives here, not in the local
+merge (which only ever sees identical tokens). Without this pass one login would issue N
+`/usage` calls on *every* poll, store N rows for one account, and never say "shared with N
+profiles". The trade is deliberate — over-splitting costs one extra `/profile` per token for a
+moment, collapsing on a fallible hint would show the wrong account's numbers.
 
-**Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile`
-is also what ties a row to a real login (email / display name, surfaced in the Usage header
-and the sidebar tooltip). The answer is cached in `account_profiles` and looked up **by account uuid**
-whenever that is known — the name belongs to the account, not to the token that asked, so
-sibling launchers share one lookup instead of paying one each. A binding whose account is still
-unknown falls back to the token fingerprint, which is all it has before `/profile` answers.
-`UsageService.profileTTLSeconds` (24h) bounds staleness either way.
+**Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile` is
+also what ties a row to a real login (email / display name, surfaced in the Usage header and the
+sidebar tooltip). The answer is cached in `account_profiles` keyed by the **token fingerprint** —
+the only local id that authoritatively maps to an account — so a re-login (new token → new
+fingerprint) simply misses and re-fetches, with no stale-hint risk. `UsageService.profileTTLSeconds`
+(24h) bounds staleness. Each distinct token costs one `/profile` per day; a cloned sibling shares
+the token, hence a cache hit and no extra call.
 
-`/profile` is also **authoritative about which account a token belongs to** — its uuid wins even
-over the config hint, which is only a cached guess and goes stale when a launcher is signed out
-and back in as someone else. Reading that cache is free and happens on every pass, so a
-throttled account still renders with its name; the network call is made only when a `/usage`
-fetch is happening anyway, which keeps it inside the same floor and backoff — never once per
-throttled tick. A provisional identity is the one exception: it must ask immediately, since
-its storage key depends on the answer.
+`/profile` is **authoritative about which account a token belongs to**, and identity comes only
+from the token — its fingerprint locally, `/profile`'s uuid authoritatively — never a config
+hint. Reading the cache is free and happens on every pass, so a throttled account still renders
+with its name; the network call is made only when a `/usage` fetch is happening anyway, which
+keeps it inside the same floor and backoff — never once per throttled tick. When identity can't
+be refreshed (offline, or an expired token past its TTL), it is recovered from any stored
+`/profile` row for the fingerprint — that mapping never goes stale — so serve-stale, the
+throttle, and the ledger still key on the real account.
 
 **Token source — Electron safeStorage, no separate keychain entry.** Desktop tokens
 live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by
