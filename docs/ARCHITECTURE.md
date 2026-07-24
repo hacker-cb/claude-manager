@@ -290,9 +290,10 @@ an in-memory fallback for throttle/ledger so a dead DB can't strip backoff and h
 API. `CoreConstants.usageSchemaVersion` is bumped when the schema changes.
 
 **Thresholds (`LimitEvaluator`, pure).** A time-relative model (warn when utilization is
-high *and* the window is early: 5h (0.90, 0.72), 7d (0.75, 0.60)) plus an absolute
-near-exhaustion tier (0.90 warning / 0.95 critical), floored at 0.70, firing only the
-single most-severe tier per limit. `LimitNotifier` posts via `UNUserNotificationCenter`,
+high *and* the window is early: 5h (0.80, 0.72), 7d (0.75, 0.60) — each tier sits below the
+0.90 absolute or it could never fire) plus an absolute near-exhaustion tier (0.90 warning /
+0.95 critical), floored at 0.70, firing only the single most-severe tier per limit. The app
+layer (`AppModel+UsageNotifications`) posts the warnings via `UNUserNotificationCenter`,
 deduped against `notified_thresholds` so each threshold fires once per reset window.
 
 ## macOS facts baked into the code
