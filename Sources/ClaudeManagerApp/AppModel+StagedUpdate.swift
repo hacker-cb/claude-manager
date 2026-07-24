@@ -56,7 +56,7 @@ extension AppModel {
         let content = UNMutableNotificationContent()
         content.title = "Claude \(staged.stagedVersion) is ready to install"
         content.body = "The update is downloaded but blocked by open profiles. "
-            + "Use “Apply update to all profiles.”"
+            + "Use “Apply to all profiles.”"
         try? await center.add(UNNotificationRequest(
             identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
         ))

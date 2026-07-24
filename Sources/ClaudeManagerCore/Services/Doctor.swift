@@ -94,7 +94,7 @@ public struct Doctor {
         return [Diagnostic(
             severity: .warning,
             title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
-            detail: "Use “Apply update to all profiles” to quit every profile, swap, and reopen"
+            detail: "Use “Apply to all profiles” to quit every profile, swap, and reopen"
         )]
     }
 

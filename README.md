@@ -15,10 +15,10 @@ Each profile is a ~1 MB launcher `.app` with its own badge icon and name. Openin
 it starts the *real* `/Applications/Claude.app` with a dedicated `--user-data-dir`,
 so every profile is fully isolated and can hold its own Claude account. Because the
 real, Apple-notarized app runs untouched, notifications, Keychain access, and
-virtualization features all keep working. Claude's own updates keep working too — Claude Manager just **coordinates**
-them across profiles (so they don't each download the same build) and can **route
-`claude://` login links** to the profile you choose. See [Deep links](#deep-links)
-and [Updates](#updates).
+virtualization features all keep working. Claude's own updates keep working too —
+Claude Manager just **coordinates** them across profiles (so they don't each
+download the same build) and can **route `claude://` login links** to the profile
+you choose. See [Deep links](#deep-links) and [Updates](#updates).
 
 ## Requirements
 
@@ -83,9 +83,10 @@ The first time you re-activate an *already-running* profile, macOS asks for
 
 - **Launcher apps** — one `<Name>.app` next to Claude.app (default `/Applications`).
   Configurable in **Settings → Launcher install location**.
-- **Profile data** — each profile's isolated `--user-data-dir`, default
+- **Profile data** — each *launcher* profile's isolated `--user-data-dir`, default
   `~/Library/Application Support/Claude Manager/Profiles/<name>`. Configurable in
-  **Settings → New profile data**.
+  **Settings → New profile data**. The **Default profile** is not one of these: it
+  keeps Claude's own `~/Library/Application Support/Claude`, untouched.
 - **App metadata** — a small JSON file of GUI-only state (ordering, notes) in
   `~/Library/Application Support/Claude Manager`. It is always optional: the launcher
   apps themselves are the source of truth.
@@ -178,13 +179,10 @@ Open the **Doctor** tab for a health report. Common findings:
   regardless of what clones are running. Removing the raw `Claude.app` from your Dock
   avoids the trap entirely.
 
-- **A `claude://` link can't reach a profile that's already open.** macOS delivers
-  deep links only at launch, so if the profile you want is running, quit it first and
-  reopen the link. See [Deep links](#deep-links).
-
 ## Uninstall
 
-1. In Claude Manager, **remove each profile** (this deletes its launcher app).
+1. In Claude Manager, **remove each launcher profile** (this deletes its launcher
+   app). The **Default profile** has no launcher and nothing to remove.
 2. Quit and drag **Claude Manager** to the Trash.
 3. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
    and app metadata).

@@ -64,7 +64,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
     /// A Claude update ShipIt has staged but not applied (any open profile blocks the
-    /// swap) — drives the "Apply update to all profiles" affordance. `nil` when none.
+    /// swap) — drives the "Apply to all profiles" affordance. `nil` when none.
     @Published private(set) var stagedUpdate: StagedUpdate?
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
