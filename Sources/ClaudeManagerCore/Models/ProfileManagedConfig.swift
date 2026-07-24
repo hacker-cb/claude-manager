@@ -1,19 +1,19 @@
 import Foundation
 
-/// The Claude-Manager-owned managed-config overlay for a single Claude account (a
-/// cloned profile or the default account).
+/// The Claude-Manager-owned managed-config overlay for a single Claude profile (a
+/// cloned profile or the default profile).
 ///
 /// Claude Desktop resolves a *tiered* "managed config"; its per-userData **local
 /// tier** lives at `<userData>-3p/configLibrary` and is honored when no MDM
 /// managed-preferences plist is present. We pre-seed that tier so a clone starts with
 /// its Squirrel auto-updater disabled (clones share the one on-disk
-/// `/Applications/Claude.app`, so only the default account needs to update).
+/// `/Applications/Claude.app`, so only the default profile needs to update).
 ///
 /// The `claude://` handler is **not** managed here. Claude Manager owns the scheme via
 /// the event-driven ``LaunchServicesHandlerGuard``, never by writing
 /// `disableDeepLinkRegistration`: that key makes Claude *drop* every forwarded non-auth
 /// deep link (`dropping deep link (disableDeepLinkRegistration)`) — the very hand-off the
-/// broker performs to route a link to a chosen account. It survives only in ``managedKeys``
+/// broker performs to route a link to a chosen profile. It survives only in ``managedKeys``
 /// so a reconcile removes one an earlier build wrote into a clone.
 ///
 /// The on-disk form is a **flat** JSON object of enterprise-policy keys (verified
@@ -32,7 +32,7 @@ public struct ProfileManagedConfig: Equatable, Sendable {
         self.disableAutoUpdates = disableAutoUpdates
     }
 
-    /// The overlay a cloned profile gets: the updater is the default account's job, so a
+    /// The overlay a cloned profile gets: the updater is the default profile's job, so a
     /// clone always disables its own. The `claude://` handler is held by the guard, not
     /// written here — a forwarded deep link must reach the clone, and
     /// `disableDeepLinkRegistration` would make Claude drop it.
@@ -40,12 +40,12 @@ public struct ProfileManagedConfig: Equatable, Sendable {
         ProfileManagedConfig(disableAutoUpdates: true)
     }
 
-    /// The overlay the **default account** gets: **always empty**. The default is the
+    /// The overlay the **default profile** gets: **always empty**. The default is the
     /// update leader (auto-update stays on), and Claude Manager holds `claude://` for it
     /// via the event-driven handler guard — never by writing `disableDeepLinkRegistration`
-    /// into the default account. This empty overlay still drives a reconcile that
+    /// into the default profile. This empty overlay still drives a reconcile that
     /// *removes* any such key left by an earlier build.
-    public static let defaultAccount = ProfileManagedConfig()
+    public static let defaultProfile = ProfileManagedConfig()
 
     /// Flat enterprise-policy keys this overlay currently wants *present* → their
     /// JSON values. A disabled/`false` flag is omitted, so the reconcile deletes a

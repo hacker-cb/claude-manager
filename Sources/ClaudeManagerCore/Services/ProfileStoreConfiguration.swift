@@ -12,12 +12,12 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     /// MDM managed-preferences plists whose presence overrides our local config tier.
     /// Injectable so tests stay hermetic (never read the host's real machine state).
     public var managedPreferencesURLs: [URL]
-    /// The default account's Electron user-data dir (`~/Library/Application
+    /// The default profile's Electron user-data dir (`~/Library/Application
     /// Support/Claude`). Its `-3p` sibling is reconciled to stay overlay-free — the broker
     /// holds `claude://` for the default via the guard, never a written key; the reconcile
     /// only removes a `disableDeepLinkRegistration` an earlier build may have left.
     /// Injectable so tests never touch the real default.
-    public var defaultAccountUserDataPath: String
+    public var defaultProfileUserDataPath: String
     /// ShipIt state file that names a staged Claude update (`ShipItState.plist`).
     /// Injectable so tests never read the host's real ShipIt cache.
     public var shipItStatePath: String
@@ -28,7 +28,7 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         badgeStyle: BadgeStyle = .default,
         managedPreferencesURLs: [URL] = CoreConstants.claudeManagedPreferencesPaths
             .map { URL(fileURLWithPath: $0) },
-        defaultAccountUserDataPath: String = ProfileStoreConfiguration.systemDefaultAccountUserDataPath,
+        defaultProfileUserDataPath: String = ProfileStoreConfiguration.systemDefaultProfileUserDataPath,
         shipItStatePath: String = CoreConstants.shipItStatePath(
             forBundleID: CoreConstants.realClaudeBundleIDs[0]
         )
@@ -37,16 +37,16 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
         self.defaultProfilesDirectory = defaultProfilesDirectory
         self.badgeStyle = badgeStyle
         self.managedPreferencesURLs = managedPreferencesURLs
-        self.defaultAccountUserDataPath = defaultAccountUserDataPath
+        self.defaultProfileUserDataPath = defaultProfileUserDataPath
         self.shipItStatePath = shipItStatePath
     }
 
-    /// `~/Library/Application Support/Claude` — the real default account's user-data dir.
-    public static var systemDefaultAccountUserDataPath: String {
+    /// `~/Library/Application Support/Claude` — the real default profile's user-data dir.
+    public static var systemDefaultProfileUserDataPath: String {
         let fileManager = FileManager.default
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return support.appendingPathComponent(CoreConstants.defaultAccountUserDataDirName).path
+        return support.appendingPathComponent(CoreConstants.defaultProfileUserDataDirName).path
     }
 
     public static func makeDefault(

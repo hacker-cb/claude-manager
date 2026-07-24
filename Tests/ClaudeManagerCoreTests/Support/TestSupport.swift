@@ -305,9 +305,9 @@ struct StoreEnv {
     /// (never reads the host's real managed-preferences). A probe asserting on the
     /// store's on-disk overlay must use these same paths.
     let managedPreferencesURLs: [URL]
-    /// A **temp** stand-in for the default account's user-data dir, so deep-link tests
+    /// A **temp** stand-in for the default profile's user-data dir, so deep-link tests
     /// never touch the real `~/Library/Application Support/Claude`.
-    let defaultAccountUserDataPath: String
+    let defaultProfileUserDataPath: String
     /// A **temp** stand-in for ShipIt's state file, so staged-update tests never read the
     /// host's real ShipIt cache. A test arms an update by writing this path + a bundle.
     let shipItStatePath: String
@@ -347,7 +347,7 @@ func makeStoreEnv(
         : [CoreConstants.iconutilPath]
     let runner = RecordingCommandRunner.delegating(delegated, stub: stub)
     let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
-    let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
+    let defaultProfileUserDataPath = root.appendingPathComponent("default-profile/Claude").path
     let shipItStatePath = root.appendingPathComponent("ShipItState.plist").path
     let store = ProfileStore(
         realClaude: real,
@@ -355,7 +355,7 @@ func makeStoreEnv(
             installDirectory: installDir,
             defaultProfilesDirectory: profilesDir,
             managedPreferencesURLs: managedPreferencesURLs,
-            defaultAccountUserDataPath: defaultAccountUserDataPath,
+            defaultProfileUserDataPath: defaultProfileUserDataPath,
             shipItStatePath: shipItStatePath
         ),
         runner: runner,
@@ -366,7 +366,7 @@ func makeStoreEnv(
         root: root, installDir: installDir, profilesDir: profilesDir,
         real: real, runner: runner, store: store, token: token,
         managedPreferencesURLs: managedPreferencesURLs,
-        defaultAccountUserDataPath: defaultAccountUserDataPath,
+        defaultProfileUserDataPath: defaultProfileUserDataPath,
         shipItStatePath: shipItStatePath
     )
 }

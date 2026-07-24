@@ -13,7 +13,7 @@ public enum DeepLinkDeliveryFailure: Error, Equatable, Sendable {
     case sendFailed(code: Int)
 }
 
-/// The pure orchestration behind forwarding one `claude://` link to one account: the
+/// The pure orchestration behind forwarding one `claude://` link to one profile: the
 /// running-vs-cold branch, the bounded pid poll after a cold launch, and mapping the raw
 /// launch/deliver results into a single `Outcome` the app turns into user-facing state.
 ///
@@ -24,7 +24,7 @@ public enum DeepLinkDeliveryFailure: Error, Equatable, Sendable {
 /// and can forward several URLs.
 ///
 /// **Serialization note.** The `launch`/`release` pair models a scoped launch slot: for the
-/// untouched default account the app must not `open -n` two instances on one user-data-dir
+/// untouched default profile the app must not `open -n` two instances on one user-data-dir
 /// (no `shlock` guards it — it would corrupt the LevelDB). The forwarder calls `launch`
 /// **only on the cold path** (a running instance is delivered to directly, never launched),
 /// and calls `release` exactly once **after** the poll + deliver of a launch that reported
@@ -60,7 +60,7 @@ public struct DeepLinkForwarder: Sendable {
     }
 
     /// Default cold-launch pid-poll budget: how many probes, and the gap between them, to
-    /// wait for a freshly `open -n`'d default-account instance to become visible to `ps`.
+    /// wait for a freshly `open -n`'d default-profile instance to become visible to `ps`.
     /// Exposed and shared so the toolbar `openReal` launch and this forwarder's cold path
     /// hold the identical window before giving up (#38). ~40 × 300 ms ≈ 12 s.
     public static let coldLaunchPollAttempts = 40

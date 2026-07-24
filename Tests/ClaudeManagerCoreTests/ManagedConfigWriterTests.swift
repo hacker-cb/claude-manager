@@ -207,7 +207,7 @@ struct ManagedConfigWriterTests {
         #expect(config["foreignKey"] as? String == "keep")
     }
 
-    // MARK: - Preserve-untouched (default account)
+    // MARK: - Preserve-untouched (default profile)
 
     @Test
     func reconcilePreservingUntouchedSkipsEmptyOverlayWhenAbsent() throws {
@@ -217,7 +217,7 @@ struct ManagedConfigWriterTests {
             fileManager: fm,
             managedPreferencesURLs: [scene.root.appendingPathComponent("absent.plist")]
         )
-        // Empty overlay + no existing tier → nothing written (account left untouched).
+        // Empty overlay + no existing tier → nothing written (profile left untouched).
         let outcome = try writer.reconcilePreservingUntouched(
             ProfileManagedConfig(), userDataPath: scene.userDataPath
         )
@@ -239,7 +239,7 @@ struct ManagedConfigWriterTests {
         #expect(writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))
         // ...an empty overlay still runs on it, dropping our keys (the restore).
         let outcome = try writer.reconcilePreservingUntouched(
-            .defaultAccount, userDataPath: scene.userDataPath
+            .defaultProfile, userDataPath: scene.userDataPath
         )
         #expect(outcome != nil)
         #expect(!writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))

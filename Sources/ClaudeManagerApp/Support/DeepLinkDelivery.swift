@@ -5,7 +5,7 @@ import Foundation
 /// Delivers a `claude://` deep link to a **specific** Claude instance by sending it the
 /// same Apple event macOS/LaunchServices uses to open a URL — a `GURL`/`GURL`
 /// (`kInternetEventClass`/`kAEGetURL`) event addressed to that process's pid. Electron's
-/// `app.on('open-url')` handles it and routes the link internally (the account "sorts out"
+/// `app.on('open-url')` handles it and routes the link internally (the profile "sorts out"
 /// which window/mode to open it in).
 ///
 /// Why a raw Apple event rather than `open`: every managed profile's Claude runs the real,
@@ -18,7 +18,7 @@ import Foundation
 /// TCC: sending an Apple event to another app needs a one-time Automation grant
 /// ("Claude Manager" → "Claude"); the app ships the `com.apple.security.automation.apple-events`
 /// entitlement and an `NSAppleEventsUsageDescription`. All profiles share the target bundle
-/// id, so a single grant covers every account.
+/// id, so a single grant covers every profile.
 enum DeepLinkDelivery {
     /// FourCharCode `'GURL'` — both the `kInternetEventClass` and the `kAEGetURL` id.
     private static let gurl = AEEventClass(0x4755_524C)

@@ -132,7 +132,7 @@ struct SettingsView: View {
 
     private var deepLinkSection: some View {
         Section("Deep links") {
-            Toggle("Route claude:// links to a chosen account", isOn: $model.deepLinkBrokerEnabled)
+            Toggle("Route claude:// links to a chosen profile", isOn: $model.deepLinkBrokerEnabled)
                 .disabled(!AppBuild.canBrokerDeepLinks)
             if !AppBuild.canBrokerDeepLinks {
                 Text(
@@ -143,15 +143,15 @@ struct SettingsView: View {
             }
             Text(
                 "On by default: Claude Manager is the default handler for claude:// links "
-                    + "and shows a picker so a login or SSO callback opens in the account you "
+                    + "and shows a picker so a login or SSO callback opens in the profile you "
                     + "choose — not always the default one."
             )
             .font(.caption).foregroundStyle(.secondary)
             Text(
-                "Your default account is never modified — Claude Manager just holds the "
+                "Your default profile is never modified — Claude Manager just holds the "
                     + "handler while it runs, and hands it straight back to Claude when you turn "
                     + "this off (or when Claude Manager is removed). It delivers the link to the "
-                    + "account you pick whether or not it's already open (macOS asks once to allow "
+                    + "profile you pick whether or not it's already open (macOS asks once to allow "
                     + "controlling Claude). Keep Claude Manager running — e.g. Launch at login — so "
                     + "links always route through the picker."
             )

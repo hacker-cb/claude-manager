@@ -102,11 +102,11 @@ public enum CoreConstants {
     /// all overlay parsing is defensive (nil/skip on failure) rather than trusted.
     public static let claudeManagedConfigValidatedVersion = "1.20186.1"
 
-    /// The default account's Electron user-data dir name under Application Support
+    /// The default profile's Electron user-data dir name under Application Support
     /// (`~/Library/Application Support/Claude`). Its managed-config local tier is the
     /// `-3p` sibling; the broker keeps it overlay-free (the default's `claude://` handler
     /// is held by the guard, not a written key) and only cleans up a stray key there.
-    public static let defaultAccountUserDataDirName = "Claude"
+    public static let defaultProfileUserDataDirName = "Claude"
 
     /// The custom URL scheme Claude Desktop owns and the broker takes over.
     public static let claudeURLScheme = "claude"

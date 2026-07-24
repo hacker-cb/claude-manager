@@ -126,8 +126,8 @@ struct ProfileStoreManagedConfigTests {
         // ...and never carries disableDeepLinkRegistration, which would make Claude drop the
         // deep links the broker forwards to it.
         #expect(overlay["disableDeepLinkRegistration"] == nil)
-        // The default account is never written — its handler is held by the guard.
-        #expect(!probe(env).overlayExists(userDataPath: env.defaultAccountUserDataPath))
+        // The default profile is never written — its handler is held by the guard.
+        #expect(!probe(env).overlayExists(userDataPath: env.defaultProfileUserDataPath))
     }
 
     @Test
@@ -150,15 +150,15 @@ struct ProfileStoreManagedConfigTests {
     }
 
     @Test
-    func reconcileStripsStaleDeepLinkKeyFromTheDefaultAccount() throws {
-        // Same cleanup for the default account — its handler is held by the guard, never a key.
+    func reconcileStripsStaleDeepLinkKeyFromTheDefaultProfile() throws {
+        // Same cleanup for the default profile — its handler is held by the guard, never a key.
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         try seedRawOverlay(
             ["disableDeepLinkRegistration": true],
-            userDataPath: env.defaultAccountUserDataPath
+            userDataPath: env.defaultProfileUserDataPath
         )
-        _ = try env.store.reconcileDefaultAccountConfig()
-        #expect(rawOverlay(env.defaultAccountUserDataPath)?["disableDeepLinkRegistration"] == nil)
+        _ = try env.store.reconcileDefaultProfileConfig()
+        #expect(rawOverlay(env.defaultProfileUserDataPath)?["disableDeepLinkRegistration"] == nil)
     }
 }

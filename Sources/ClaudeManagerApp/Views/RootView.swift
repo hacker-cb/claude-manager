@@ -4,7 +4,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
-    @State private var selection: Account.ID?
+    @State private var selection: ProfileEntry.ID?
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
     /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
@@ -73,18 +73,18 @@ struct RootView: View {
             Text(error.message)
         }
         .confirmationDialog(
-            model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all accounts?" }
+            model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all profiles?" }
                 ?? "Apply the staged Claude update?",
             isPresented: $confirmingStagedApply,
             titleVisibility: .visible
         ) {
-            Button("Quit & Update All Accounts") {
+            Button("Quit & Update All Profiles") {
                 Task { await model.applyStagedUpdate() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "Every open account is quit and reopened to install the update — "
+                "Every open profile is quit and reopened to install the update — "
                     + "any active session is interrupted, so save your work first."
             )
         }
@@ -112,10 +112,10 @@ struct RootView: View {
     private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
-            Text("Claude \(staged.stagedVersion) is downloaded but not applied — open accounts block it.")
+            Text("Claude \(staged.stagedVersion) is downloaded but not applied — open profiles block it.")
                 .font(.callout)
             Spacer()
-            Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all accounts") {
+            Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all profiles") {
                 confirmingStagedApply = true
             }
             .disabled(model.isApplyingStagedUpdate)
@@ -125,19 +125,19 @@ struct RootView: View {
     }
 
     @ViewBuilder private var detail: some View {
-        // Gate on `realClaude` too (mirrors `accounts`): if Claude vanished while the default
+        // Gate on `realClaude` too (mirrors `profileEntries`): if Claude vanished while the default
         // row was selected, the row is gone from the sidebar, so fall through to the empty
-        // state rather than stranding a hollow default-account pane.
-        if selection == Account.primaryID, model.realClaude != nil {
-            PrimaryAccountDetailView()
+        // state rather than stranding a hollow default-profile pane.
+        if selection == ProfileEntry.primaryID, model.realClaude != nil {
+            PrimaryProfileDetailView()
         } else if let id = selection, let managed = model.profiles.first(where: { $0.id == id }) {
             ProfileDetailView(managed: managed, editor: $editor)
                 .id(managed.id)
         } else {
             ContentUnavailableView {
-                Label("No account selected", systemImage: "square.stack.3d.up")
+                Label("No profile selected", systemImage: "square.stack.3d.up")
             } description: {
-                Text("Select an account on the left, or create a launcher.")
+                Text("Select a profile on the left, or create a launcher.")
             } actions: {
                 Button("New Profile…") { editor = .add }
             }
@@ -149,10 +149,10 @@ struct RootView: View {
             Button { editor = .add } label: { Label("New Profile", systemImage: "plus") }
                 .help("Create a new launcher profile")
         }
-        // No dedicated "Open Claude" toolbar button: the default account is now the first
-        // sidebar row and is opened like any other account (select → Open, or right-click →
-        // Open), with the menu-bar extra's "Default account" item as the windowless quick
-        // launch. A per-account toolbar shortcut only for the default broke that symmetry.
+        // No dedicated "Open Claude" toolbar button: the default profile is now the first
+        // sidebar row and is opened like any other profile (select → Open, or right-click →
+        // Open), with the menu-bar extra's "Default profile" item as the windowless quick
+        // launch. A per-profile toolbar shortcut only for the default broke that symmetry.
         ToolbarItem {
             Button { Task { await model.refresh() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")

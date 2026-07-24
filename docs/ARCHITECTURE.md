@@ -22,7 +22,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 
 ClaudeManagerApp (SwiftUI — thin)
 ├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
-└─ DeepLinkService + DeepLinkPresenter — claude:// hold + account picker
+└─ DeepLinkService + DeepLinkPresenter — claude:// hold + profile picker
 ```
 
 Everything the app does lives in `ClaudeManagerCore`; the SwiftUI layer is a thin
@@ -90,11 +90,11 @@ nil/skip on anything unexpected, never a crash.
 
 A `claude://` URL — a Cowork shared-artifact, a session `resume`, a login / SSO /
 MCP-auth callback — is handed by macOS to whichever Claude owns the scheme, not the
-account you meant. Claude Manager registers itself as the **default `claude://` handler**
-(on by default) and, on each inbound link, shows an account picker (`DeepLinkPresenter` —
+profile you meant. Claude Manager registers itself as the **default `claude://` handler**
+(on by default) and, on each inbound link, shows a profile picker (`DeepLinkPresenter` —
 its own floating window, since a menu-bar app may have none) to route it to a chosen
-profile or the default account. The URL carries no account identity, so routing is
-**always** a user choice; the account then resolves the link's contents itself.
+clone or the default profile. The URL carries no profile identity, so routing is
+**always** a user choice; the profile then resolves the link's contents itself.
 
 **Holding the scheme.** Claude re-grabs it on every launch
 (`setAsDefaultProtocolClient`), so a one-time registration isn't enough.
@@ -107,7 +107,7 @@ mechanism, so CM must be running to intercept; while it's down a freshly-launche
 can grab the scheme, and its own links then land there directly (no picker).
 
 **Delivery is a `GURL` Apple event addressed by pid** (`DeepLinkDelivery`), *not* argv.
-After a launcher `exec`s the real binary, every account's Claude shares bundle id
+After a launcher `exec`s the real binary, every profile's Claude shares bundle id
 `com.anthropic.claudefordesktop`, so `open`/bundle-id addressing can't disambiguate two
 running instances — but a pid can. And Claude reads deep links **only** from the
 `open-url` event (it does *not* scan `argv` for the scheme), so the old
@@ -115,13 +115,13 @@ running instances — but a pid can. And Claude reads deep links **only** from t
 `GURL` straight to its pid; a **not-running** one is cold-launched, its pid polled for,
 then sent the `GURL`. Sending an Apple event to another app needs a one-time TCC
 Automation grant ("Claude Manager" → "Claude"); the app ships the
-`com.apple.security.automation.apple-events` entitlement, and all accounts share the
+`com.apple.security.automation.apple-events` entitlement, and all profiles share the
 target bundle id so one grant covers them all.
 `AEDeterminePermissionToAutomateTarget` is checked *first* so a denied hand-off surfaces
 actionable guidance rather than vanishing — a `.noReply` `GURL` send reports success even
 when TCC has silently blocked it.
 
-**No account is muted with `disableDeepLinkRegistration`.** That key (Claude's "disable
+**No profile is muted with `disableDeepLinkRegistration`.** That key (Claude's "disable
 `claude://` handling") makes Claude *drop* every forwarded non-auth link
 (`dropping deep link (disableDeepLinkRegistration)`) — exactly the hand-off the broker
 performs — so writing it would defeat forwarding. `ProfileManagedConfig` keeps it only in
@@ -129,7 +129,7 @@ performs — so writing it would defeat forwarding. `ProfileManagedConfig` keeps
 managed config **at launch**, so a clone already running when the key is stripped keeps
 dropping until it is restarted once; fresh launches are clean.
 
-**The default account is never written.** Its handler is held only by the guard, which
+**The default profile is never written.** Its handler is held only by the guard, which
 stops the moment CM isn't running — so removing Claude Manager (or toggling the broker
 off) hands `claude://` straight back to Claude and can't leave the default's links
 broken. `stopHoldingAndRestore` re-asserts Claude both while actively holding *and*
@@ -144,7 +144,7 @@ buffered and silently dropped.
 
 ## Applying a staged Claude update
 
-When the default account downloads an update while any account is open, ShipIt
+When the default profile downloads an update while any profile is open, ShipIt
 (Squirrel.Mac) can't swap `/Applications/Claude.app` and the update stalls ("Update
 didn't complete"). Claude Manager clears this — it never swaps the app itself;
 **ShipIt does, and only with zero running real-Claude instances.**
@@ -156,16 +156,16 @@ app's real bundle id so a legacy-id install is found too). An armed job names an
 only when it's a genuine upgrade over the installed one.
 
 `applyStagedUpdateToAll` snapshots the running set, then: **Gate 1** gracefully quits
-every account (SIGTERM only — never SIGKILL a possibly-active conversation) and waits
+every profile (SIGTERM only — never SIGKILL a possibly-active conversation) and waits
 until nothing blocks the swap; **Gate 2** lets ShipIt swap and polls the on-disk
 version (`>=`, since ShipIt may land a build newer than the one staged). It then
-relaunches exactly the snapshotted set. If an account won't quit it **aborts before
+relaunches exactly the snapshotted set. If a profile won't quit it **aborts before
 the swap** and reopens what it stopped; on every path it restores the set, so you never
-end with fewer accounts than you had. Two sharp edges: the gate counts **only
+end with fewer profiles than you had. Two sharp edges: the gate counts **only
 processes at the real Claude binary path** (`ProcessProbe` matches CM's own "Claude
 Manager" too — ppid 1, "Claude" in the path — so `blockingInstances` filters to
 `realClaude.binaryURL.path` or the gate never passes); and every relaunch is guarded on
-the account being **currently down** (a second `open -n` on a live default duplicates
+the profile being **currently down** (a second `open -n` on a live default duplicates
 it on one user-data-dir and corrupts LevelDB — and ShipIt often relaunches the default
 itself after a swap).
 

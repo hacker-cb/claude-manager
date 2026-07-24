@@ -10,10 +10,10 @@ struct DoctorScene {
     let installDir: URL
     let profilesDir: URL
     let real: RealClaude
-    /// A temp stand-in for the default account, so the default-account overlay checks
+    /// A temp stand-in for the default profile, so the default-profile overlay checks
     /// never read the host's real `~/Library/Application Support/Claude`.
-    var defaultAccountPath: String {
-        root.appendingPathComponent("default-account/Claude").path
+    var defaultProfilePath: String {
+        root.appendingPathComponent("default-profile/Claude").path
     }
 
     var noMDM: [URL] {
@@ -69,7 +69,7 @@ func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .d
         configuration: ProfileStoreConfiguration(
             installDirectory: scene.installDir,
             defaultProfilesDirectory: scene.profilesDir,
-            defaultAccountUserDataPath: scene.defaultAccountPath,
+            defaultProfileUserDataPath: scene.defaultProfilePath,
             shipItStatePath: scene.shipItStatePath
         ),
         bundle: LauncherBundle(runner: runner),
@@ -109,7 +109,7 @@ struct DoctorTests {
             realClaude: nil,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
@@ -129,7 +129,7 @@ struct DoctorTests {
             realClaude: broken,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
@@ -205,7 +205,7 @@ struct DoctorTests {
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
@@ -231,7 +231,7 @@ struct DoctorTests {
             realClaude: scene.real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: scene.installDir, defaultProfilesDirectory: scene.profilesDir,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),

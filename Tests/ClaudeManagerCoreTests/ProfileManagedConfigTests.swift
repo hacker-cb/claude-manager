@@ -26,9 +26,9 @@ struct ProfileManagedConfigTests {
     }
 
     @Test
-    func defaultAccountOverlayIsAlwaysEmpty() {
-        // The default account is never written to — its handler is held by the guard, so
+    func defaultProfileOverlayIsAlwaysEmpty() {
+        // The default profile is never written to — its handler is held by the guard, so
         // its overlay is always empty (nothing to orphan if Claude Manager is removed).
-        #expect(ProfileManagedConfig.defaultAccount.flatEntries.isEmpty)
+        #expect(ProfileManagedConfig.defaultProfile.flatEntries.isEmpty)
     }
 }

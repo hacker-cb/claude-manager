@@ -1,6 +1,6 @@
 import Foundation
 
-/// Coordinated apply of a staged Claude update across every account. ShipIt can only swap
+/// Coordinated apply of a staged Claude update across every profile. ShipIt can only swap
 /// `/Applications/Claude.app` when **zero** `com.anthropic.claudefordesktop` instances run
 /// (Gate 1 blocks until termination; Gate 2 aborts if any instance is live during the ~4 s
 /// swap), so any open clone stalls it. This quits the whole set, waits for the swap, and
@@ -22,16 +22,16 @@ public extension ProfileStore {
         }
 
         public let outcome: Outcome
-        /// Accounts reopened afterward (profile display names, plus "default account").
+        /// Profiles reopened afterward (profile display names, plus "default profile").
         public let relaunched: [String]
     }
 
-    /// Quit every running account (clones + default), wait for ShipIt to swap in the staged
+    /// Quit every running profile (clones + default), wait for ShipIt to swap in the staged
     /// bundle, then relaunch the previously-open set. Graceful stops only (never SIGKILL an
     /// active conversation); if an instance won't exit, aborts **before** the swap window
     /// and reports it rather than risking a Gate 2 failure or data loss. Relaunches the
-    /// accounts that did stop even on abort or swap-timeout, so the user is never left with
-    /// fewer accounts than they had.
+    /// profiles that did stop even on abort or swap-timeout, so the user is never left with
+    /// fewer profiles than they had.
     func applyStagedUpdateToAll(
         stopPollInterval: TimeInterval = 0.5,
         stopMaxPolls: Int = 20,
@@ -47,7 +47,7 @@ public extension ProfileStore {
         let runningClones = list().filter(\.isRunning).map(\.profile)
         let defaultWasRunning = runningDefaultPID() != nil
 
-        // Graceful stop of every account.
+        // Graceful stop of every profile.
         for clone in runningClones {
             _ = await stop(clone, force: false, pollInterval: stopPollInterval, maxPolls: stopMaxPolls)
         }
@@ -58,9 +58,9 @@ public extension ProfileStore {
         // ShipIt gates on *zero* real-Claude instances — if any won't exit, abort before
         // the swap but still reopen whatever *did* stop, so the working set isn't lost.
         guard await pollUntilNoBlockingInstances(interval: stopPollInterval, maxPolls: stopMaxPolls) else {
-            // Capture the blockers *before* relaunching — otherwise an account that did quit
+            // Capture the blockers *before* relaunching — otherwise a profile that did quit
             // and we reopen here can reappear in `ps` and be misreported as one that
-            // "wouldn't quit gracefully", inflating the count and blaming a healthy account.
+            // "wouldn't quit gracefully", inflating the count and blaming a healthy profile.
             let stillRunning = blockingInstanceNames()
             let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
             return ApplyStagedUpdateResult(
@@ -92,27 +92,27 @@ public extension ProfileStore {
     }
 
     /// Friendly names for the still-running blockers — a clone's display name where the
-    /// user-data dir maps to a known launcher, else "default account".
+    /// user-data dir maps to a known launcher, else "default profile".
     private func blockingInstanceNames() -> [String] {
         let displayByProfile = Dictionary(
             list().map { ($0.profile.profilePath, $0.profile.displayName) },
             uniquingKeysWith: { first, _ in first }
         )
         return blockingInstances().map { instance in
-            guard let profile = instance.profilePath else { return "default account" }
+            guard let profile = instance.profilePath else { return "default profile" }
             return displayByProfile[profile] ?? profile
         }
     }
 
-    /// Relaunch each snapshotted account that is currently **down**. Skipping still-running
-    /// accounts matters most for the default: reopening a live default with `open -n` would
+    /// Relaunch each snapshotted profile that is currently **down**. Skipping still-running
+    /// profiles matters most for the default: reopening a live default with `open -n` would
     /// spawn a duplicate on its user-data-dir and corrupt LevelDB (ShipIt itself often
     /// relaunches the default after a swap). A still-running clone is a launcher-dedup no-op
     /// but is skipped for symmetry.
     private func relaunchSnapshot(clones: [Profile], defaultWasRunning: Bool) -> [String] {
         var relaunched: [String] = []
-        if defaultWasRunning, runningDefaultPID() == nil, relaunchDefaultAccount() {
-            relaunched.append("default account")
+        if defaultWasRunning, runningDefaultPID() == nil, relaunchDefaultProfile() {
+            relaunched.append("default profile")
         }
         for clone in clones where runningPID(for: clone) == nil && (try? open(clone)) != nil {
             relaunched.append(clone.displayName)
@@ -120,7 +120,7 @@ public extension ProfileStore {
         return relaunched
     }
 
-    /// Reopen the default account, returning whether it launched. A plain `open` (which
+    /// Reopen the default profile, returning whether it launched. A plain `open` (which
     /// de-dups) is safe unless a **non-default** real-Claude instance is running: if nothing
     /// runs it launches the default, and if only the default itself is up — e.g. ShipIt
     /// relaunched it in the race window between `relaunchSnapshot`'s `runningDefaultPID()`
@@ -129,7 +129,7 @@ public extension ProfileStore {
     /// `--user-data-dir` instance is running, since there a plain `open` would merely activate
     /// *that* instance (all share the one bundle id) instead of starting the default. The
     /// default's own instance carries no `--user-data-dir`, so it has a `nil` profile path.
-    private func relaunchDefaultAccount() -> Bool {
+    private func relaunchDefaultProfile() -> Bool {
         let nonDefaultRunning = blockingInstances().contains { $0.profilePath != nil }
         if nonDefaultRunning {
             return (try? openReal()) != nil

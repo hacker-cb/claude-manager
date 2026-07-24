@@ -105,7 +105,7 @@ targets:
         SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
         # The deep-link broker: declaring the claude:// scheme makes Claude Manager an
         # eligible default handler. The broker is ON by default, so CM becomes the default
-        # handler and forwards links to a chosen account; disabling it in Settings hands
+        # handler and forwards links to a chosen profile; disabling it in Settings hands
         # claude:// back to Claude.
         #
         # Only the Release identity declares `claude` — a Debug build declares the private
