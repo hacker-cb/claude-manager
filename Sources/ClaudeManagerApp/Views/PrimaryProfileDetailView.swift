@@ -1,14 +1,14 @@
 import ClaudeManagerCore
 import SwiftUI
 
-/// Detail pane for the default account — the untouched real Claude run without a launcher.
-/// A peer of `ProfileDetailView`, but deliberately reduced: the default account has no
+/// Detail pane for the default profile — the untouched real Claude run without a launcher.
+/// A peer of `ProfileDetailView`, but deliberately reduced: the default profile has no
 /// launcher to edit, rebuild, or remove, and its updates are owned by Claude's own updater.
-struct PrimaryAccountDetailView: View {
+struct PrimaryProfileDetailView: View {
     @EnvironmentObject private var model: AppModel
 
-    private var status: PrimaryAccountStatus? {
-        model.primaryAccount
+    private var status: PrimaryProfileStatus? {
+        model.primaryProfile
     }
 
     var body: some View {
@@ -23,7 +23,7 @@ struct PrimaryAccountDetailView: View {
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle("Default account")
+        .navigationTitle("Default profile")
     }
 
     private var header: some View {
@@ -36,7 +36,7 @@ struct PrimaryAccountDetailView: View {
                 .frame(width: 88, height: 88)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Default account").font(.title2).bold()
+                Text("Default profile").font(.title2).bold()
                 HStack(spacing: 8) {
                     StatusDot(isRunning: status?.isRunning ?? false)
                     Text(runningLabel).foregroundStyle(.secondary)
@@ -63,10 +63,10 @@ struct PrimaryAccountDetailView: View {
             .disabled(model.isApplyingStagedUpdate)
 
             if status?.isRunning == true {
-                Button { Task { await model.stopDefaultAccount(force: false) } } label: {
+                Button { Task { await model.stopDefaultProfile(force: false) } } label: {
                     Label("Stop", systemImage: "stop.fill")
                 }
-                Button { Task { await model.stopDefaultAccount(force: true) } } label: {
+                Button { Task { await model.stopDefaultProfile(force: true) } } label: {
                     Label("Force", systemImage: "bolt.fill")
                 }
             }
@@ -104,7 +104,7 @@ struct PrimaryAccountDetailView: View {
                     }
                 }
             }
-            Text("This is your primary Claude account, launched without a Claude Manager "
+            Text("This is your primary Claude profile, launched without a Claude Manager "
                 + "launcher. Its updates are managed by Claude's own updater — there's nothing "
                 + "to edit or rebuild here.")
                 .font(.caption)

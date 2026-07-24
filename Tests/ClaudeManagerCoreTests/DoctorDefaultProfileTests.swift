@@ -2,21 +2,21 @@ import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
-/// Doctor checks on the **default account**'s overlay — its own file/suite so neither it nor
+/// Doctor checks on the **default profile**'s overlay — its own file/suite so neither it nor
 /// `DoctorTests` exceeds the type-body / file-length budgets. Reuses the file-level Doctor
 /// fixture (`makeDoctorScene`, `runDoctor`) from `DoctorTests.swift`.
-struct DoctorDefaultAccountTests {
+struct DoctorDefaultProfileTests {
     let fm = FileManager.default
 
     @Test
-    func warnsWhenDefaultAccountIsSuppressed() throws {
+    func warnsWhenDefaultProfileIsSuppressed() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        // The default account should never carry disableDeepLinkRegistration (guard-based).
+        // The default profile should never carry disableDeepLinkRegistration (guard-based).
         // A leftover key (e.g. from an earlier build) must be flagged.
         try seedRawOverlay(
             ["disableDeepLinkRegistration": true],
-            userDataPath: scene.defaultAccountPath,
+            userDataPath: scene.defaultProfilePath,
             fileManager: fm
         )
 
@@ -26,7 +26,7 @@ struct DoctorDefaultAccountTests {
                 installDirectory: scene.installDir,
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: scene.noMDM,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
@@ -40,15 +40,15 @@ struct DoctorDefaultAccountTests {
     }
 
     @Test
-    func warnsWhenDefaultAccountAutoUpdatesDisabled() throws {
+    func warnsWhenDefaultProfileAutoUpdatesDisabled() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        // The default account is the update leader — it must never carry disableAutoUpdates.
-        // A stray key silently breaks the update model for every account, so Doctor must warn.
+        // The default profile is the update leader — it must never carry disableAutoUpdates.
+        // A stray key silently breaks the update model for every profile, so Doctor must warn.
         try ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
             .reconcile(
                 ProfileManagedConfig(disableAutoUpdates: true),
-                userDataPath: scene.defaultAccountPath
+                userDataPath: scene.defaultProfilePath
             )
 
         let diags = Doctor(
@@ -57,7 +57,7 @@ struct DoctorDefaultAccountTests {
                 installDirectory: scene.installDir,
                 defaultProfilesDirectory: scene.profilesDir,
                 managedPreferencesURLs: scene.noMDM,
-                defaultAccountUserDataPath: scene.defaultAccountPath,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
                 shipItStatePath: scene.shipItStatePath
             ),
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
@@ -71,10 +71,10 @@ struct DoctorDefaultAccountTests {
     }
 
     @Test
-    func noSuppressionWarningWhenDefaultAccountClean() throws {
+    func noSuppressionWarningWhenDefaultProfileClean() throws {
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        // Broker on (runDoctor's default), default account never written → no false positive.
+        // Broker on (runDoctor's default), default profile never written → no false positive.
         let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
         #expect(!diags.contains { $0.title.contains("deep-link registration is suppressed") })
     }

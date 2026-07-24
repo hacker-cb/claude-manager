@@ -101,14 +101,14 @@ public struct ProfileStore {
 
     // MARK: - Read
 
-    /// The launcher list *and* the default-account status from a single `ps` sweep, so a
+    /// The launcher list *and* the default-profile status from a single `ps` sweep, so a
     /// refresh pays for one process scan instead of two (`list` and the default-pid probe
     /// each swept the table independently). The one read the app's `refresh` uses.
     public func snapshot(measuringSizes: Bool = false) -> StoreSnapshot {
         let mains = processProbe.allClaudeMains()
         return StoreSnapshot(
             profiles: list(measuringSizes: measuringSizes, mains: mains),
-            primaryAccount: PrimaryAccountStatus(pid: defaultPID(in: mains))
+            primaryProfile: PrimaryProfileStatus(pid: defaultPID(in: mains))
         )
     }
 
@@ -120,7 +120,7 @@ public struct ProfileStore {
     }
 
     /// `list`, but reusing an already-fetched process sweep for the running-version map — so
-    /// `snapshot` can share one `ps` across the launcher list and the default-account status.
+    /// `snapshot` can share one `ps` across the launcher list and the default-profile status.
     /// `private`: an implementation detail shared only by `snapshot` and the no-arg `list`.
     private func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
@@ -240,7 +240,7 @@ public struct ProfileStore {
             // A failed add must leave nothing behind: without this the profile dir we
             // just created outlives the failure and Doctor reports it as an orphan the
             // user never made. Only ever removes a dir this call created and left
-            // empty — never pre-existing account data.
+            // empty — never pre-existing profile data.
             if !profileDirExisted, !directoryHasContents(profile.profilePath) {
                 try? fileManager.removeItem(at: profile.profileURL)
             }
@@ -337,7 +337,7 @@ public struct ProfileStore {
                 // independently of the data dir, so remove it even if the data dir is
                 // already gone (removeOverlay no-ops when absent). Guard a name collision:
                 // if another launcher's user-data dir *is* that `-3p` path, it's that
-                // account's data, not our overlay — leave it alone.
+                // profile's data, not our overlay — leave it alone.
                 let overlayPath = ManagedConfigWriter
                     .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
                 let overlayIsAnothersData = survivors.contains {

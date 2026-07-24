@@ -3,7 +3,7 @@ import SwiftUI
 
 /// A one-time nudge toward "Launch at login" when the deep-link broker is on but the app
 /// isn't resident. The broker only holds `claude://` while Claude Manager runs, so a closed
-/// app can let an account you open take over the scheme and stop links routing through the
+/// app can let a profile you open take over the scheme and stop links routing through the
 /// picker. Shown at most once (a persisted flag); `Doctor`'s residency warning is the standing
 /// reminder afterward, and Settings › Startup is always available.
 ///
@@ -48,7 +48,7 @@ struct DeepLinkResidencyNudge: ViewModifier {
                 if showNudge, !show { nudged = true }
                 showNudge = show
             }
-            .alert("Keep deep links routing to the right account?", isPresented: $showNudge) {
+            .alert("Keep deep links routing to the right profile?", isPresented: $showNudge) {
                 // `nudged = true` is load-bearing under the bidirectional binding: it's what
                 // stops a just-dismissed alert from immediately re-raising while conditions
                 // still hold. Keep it in every button.
@@ -60,7 +60,7 @@ struct DeepLinkResidencyNudge: ViewModifier {
             } message: {
                 Text(
                     "Claude Manager routes claude:// links only while it's running. Launch it at "
-                        + "login so a link always opens in the account you pick. You can change "
+                        + "login so a link always opens in the profile you pick. You can change "
                         + "this anytime in Settings › Startup."
                 )
             }

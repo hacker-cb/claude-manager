@@ -1,6 +1,6 @@
 # Claude Manager — project context
 
-Native macOS (SwiftUI) app to run multiple Claude Desktop accounts via **thin
+Native macOS (SwiftUI) app to run multiple Claude Desktop profiles via **thin
 launcher apps**. This file holds the working rules for changing code here; the
 deeper material lives in dedicated docs:
 

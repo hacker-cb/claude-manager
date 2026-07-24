@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Picks which Claude account should receive an inbound `claude://` link. The URL carries
-/// no account identity, so this choice can't be automated.
+/// Picks which Claude profile should receive an inbound `claude://` link. The URL carries
+/// no profile identity, so this choice can't be automated.
 struct DeepLinkPickerView: View {
     let url: URL
     let targets: [DeepLinkTarget]
@@ -10,7 +10,7 @@ struct DeepLinkPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Open this link in which account?")
+            Text("Open this link in which profile?")
                 .font(.headline)
             Text(url.absoluteString)
                 .font(.callout)
@@ -50,7 +50,7 @@ struct DeepLinkPickerView: View {
     }
 
     private func icon(for target: DeepLinkTarget) -> String {
-        if case .defaultAccount = target { return "person.crop.circle" }
+        if case .defaultProfile = target { return "person.crop.circle" }
         return "square.stack.3d.up"
     }
 }

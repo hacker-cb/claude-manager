@@ -27,16 +27,16 @@ struct MenuBarContent: View {
                     .disabled(true)
                 } else {
                     // A submenu, not a one-click button: applying quits and relaunches every
-                    // open account (interrupting live sessions), so it must never fire from a
+                    // open profile (interrupting live sessions), so it must never fire from a
                     // single click. Opening the submenu and clicking the explicit item is the
                     // menu-bar's confirmation (a `.confirmationDialog` can't present from a menu).
                     Menu {
-                        Button("Quit & Update All Accounts") {
+                        Button("Quit & Update All Profiles") {
                             Task { await model.applyStagedUpdate() }
                         }
                     } label: {
                         Label(
-                            "Apply Claude \(staged.stagedVersion) to all accounts…",
+                            "Apply Claude \(staged.stagedVersion) to all profiles…",
                             systemImage: "arrow.down.circle.fill"
                         )
                     }
@@ -44,15 +44,15 @@ struct MenuBarContent: View {
                 Divider()
             }
 
-            // Accounts — the default account first, then each clone, as one uniform list.
+            // Profiles — the default profile first, then each clone, as one uniform list.
             // The default keeps its own person glyph (filled when running, mirroring the
             // clones' filled/empty circle) so it reads as a peer, not a special case.
             Button {
                 Task { await model.openReal() }
             } label: {
                 Label(
-                    "Default account\(model.primaryAccount?.isRunning == true ? " — running" : "")",
-                    systemImage: model.primaryAccount?.isRunning == true
+                    "Default profile\(model.primaryProfile?.isRunning == true ? " — running" : "")",
+                    systemImage: model.primaryProfile?.isRunning == true
                         ? "person.crop.circle.fill" : "person.crop.circle"
                 )
             }
@@ -74,15 +74,15 @@ struct MenuBarContent: View {
                 }
             }
 
-            // Stop — every running account, the default account included.
+            // Stop — every running profile, the default profile included.
             let runningClones = model.profiles.filter(\.isRunning)
-            let defaultRunning = model.primaryAccount?.isRunning == true
+            let defaultRunning = model.primaryProfile?.isRunning == true
             if defaultRunning || !runningClones.isEmpty {
                 Divider()
                 Menu("Stop") {
                     if defaultRunning {
-                        Button("Default account") {
-                            Task { await model.stopDefaultAccount(force: false) }
+                        Button("Default profile") {
+                            Task { await model.stopDefaultProfile(force: false) }
                         }
                     }
                     ForEach(runningClones) { managed in

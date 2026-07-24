@@ -56,7 +56,7 @@ public struct Doctor {
     /// A warning the **app** appends when the deep-link broker is on but the app isn't set to
     /// launch at login. It can't live in `run()` — both inputs are app-layer, not core state.
     /// The broker's `claude://` hold is held only while Claude Manager runs, so with it closed
-    /// an account you open can take the scheme over and its links stop routing through the
+    /// a profile you open can take the scheme over and its links stop routing through the
     /// picker; keeping the app resident (launch at login) closes that gap. `nil` when the
     /// broker is off or launch-at-login is already on.
     public static func deepLinkResidencyDiagnostic(
@@ -67,8 +67,8 @@ public struct Doctor {
         return Diagnostic(
             severity: .warning,
             title: "Deep links need Claude Manager running — turn on Launch at login",
-            detail: "While Claude Manager is closed, an account you open can take over claude:// "
-                + "and its links stop going through the account picker."
+            detail: "While Claude Manager is closed, a profile you open can take over claude:// "
+                + "and its links stop going through the profile picker."
         )
     }
 
@@ -94,7 +94,7 @@ public struct Doctor {
         return [Diagnostic(
             severity: .warning,
             title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
-            detail: "Use “Apply update to all accounts” to quit every account, swap, and reopen"
+            detail: "Use “Apply update to all profiles” to quit every profile, swap, and reopen"
         )]
     }
 
@@ -224,10 +224,10 @@ public struct Doctor {
     /// the updater — a best-effort write that silently failed, or a profile predating
     /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
     private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        // Nothing on disk to manage: no clones and no default-account overlay to check.
-        // Keyed on actual state, not the broker flag — the default account is never
+        // Nothing on disk to manage: no clones and no default-profile overlay to check.
+        // Keyed on actual state, not the broker flag — the default profile is never
         // written, so an on-by-default broker alone is not something to report.
-        let defaultPath = configuration.defaultAccountUserDataPath
+        let defaultPath = configuration.defaultProfileUserDataPath
         guard !discovered.isEmpty
             || managedConfigWriter.overlayExists(userDataPath: defaultPath) else { return [] }
 
@@ -240,7 +240,7 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(path)
             )]
         }
-        return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
+        return cloneOverlayDiagnostics(discovered) + defaultProfileOverlayDiagnostics(defaultPath)
     }
 
     /// Warn once per distinct clone user-data-dir whose overlay is wrong: the updater not
@@ -261,14 +261,14 @@ public struct Doctor {
                 )
             }
             // Satisfies `.clone()` (updater disabled) but an older build also left the deep-link
-            // key — Claude drops forwarded links until this account is restarted. Reopening CM
+            // key — Claude drops forwarded links until this profile is restarted. Reopening CM
             // reconciles the file; the running instance still needs a restart to pick it up.
             if managedConfigWriter.hasFlag(
                 ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: profilePath
             ) {
                 return Diagnostic(
                     severity: .warning,
-                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this account",
+                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this profile",
                     detail: PathUtils.abbreviatingHome(profilePath)
                 )
             }
@@ -276,20 +276,20 @@ public struct Doctor {
         }
     }
 
-    /// The default account's overlay should be **empty**: it's the update leader (auto-update
+    /// The default profile's overlay should be **empty**: it's the update leader (auto-update
     /// stays on) and its `claude://` handler is held by the event-driven guard, never by a
     /// written key. Warn if either CM-owned key is present anyway (left by an earlier build or
     /// a manual edit) — a stray `disableAutoUpdates` silently breaks the update model for every
-    /// account, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
+    /// profile, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
     /// links. A reconcile (reopening Claude Manager) removes them.
-    private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
+    private func defaultProfileOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
         var diagnostics: [Diagnostic] = []
         if managedConfigWriter.isSatisfied(
             ProfileManagedConfig(disableAutoUpdates: true), userDataPath: defaultPath
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,
-                title: "Default account: auto-updates are disabled — reopen Claude Manager to restore them",
+                title: "Default profile: auto-updates are disabled — reopen Claude Manager to restore them",
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }
@@ -298,7 +298,7 @@ public struct Doctor {
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,
-                title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
+                title: "Default profile: deep-link registration is suppressed — reopen Claude Manager to restore it",
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }

@@ -71,7 +71,7 @@ public struct ManagedConfigWriter {
 
     /// Whether a local tier already exists for this user-data dir (its `_meta.json` is
     /// present). Lets a caller avoid *materializing* an empty overlay in an
-    /// otherwise-untouched account (e.g. the default account when the broker is off).
+    /// otherwise-untouched profile (e.g. the default profile when the broker is off).
     public func overlayExists(userDataPath: String) -> Bool {
         let meta = Self.configLibraryURL(forUserDataPath: userDataPath)
             .appendingPathComponent("_meta.json")
@@ -125,9 +125,9 @@ public struct ManagedConfigWriter {
         return .reconciled(configLibrary: configLibrary, appliedID: appliedID)
     }
 
-    /// Reconcile, but never *materialize* an overlay in an otherwise-untouched account:
+    /// Reconcile, but never *materialize* an overlay in an otherwise-untouched profile:
     /// when `config` sets nothing and no overlay exists yet, do nothing (return `nil`).
-    /// Used for the default account so a broker-off fresh install leaves it alone, while
+    /// Used for the default profile so a broker-off fresh install leaves it alone, while
     /// a broker-off *restore* still runs on an existing overlay to drop our keys — and it
     /// merges (never deletes the tier), preserving any keys Claude itself keeps there.
     @discardableResult

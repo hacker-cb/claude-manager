@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Presents the deep-link account picker in a small floating window. A menu-bar app may
+/// Presents the deep-link profile picker in a small floating window. A menu-bar app may
 /// have no window open when a link arrives, so the picker brings its own (rather than a
 /// sheet that would need a host).
 ///
@@ -56,7 +56,7 @@ final class DeepLinkPresenter: NSObject, NSWindowDelegate {
             onCancel: { [weak self] in self?.window?.close() }
         )
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-        window.title = "Open in Claude account"
+        window.title = "Open in Claude profile"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.level = .floating

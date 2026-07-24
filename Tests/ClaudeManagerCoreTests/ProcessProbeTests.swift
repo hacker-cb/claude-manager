@@ -155,7 +155,7 @@ struct ProcessProbeTests {
     @Test
     func isRealClaudeBinaryMatchesOnlyTheRealBinary() {
         let real = RealClaude(appURL: URL(fileURLWithPath: "/Applications/Claude.app"))
-        // The default account and every clone exec the real binary — all count as blockers.
+        // The default profile and every clone exec the real binary — all count as blockers.
         let defaultMain = ClaudeInstance(pid: 1, executablePath: realBinary, profilePath: nil)
         let clone = ClaudeInstance(pid: 2, executablePath: realBinary, profilePath: "/data/work")
         #expect(defaultMain.isRealClaudeBinary(real))

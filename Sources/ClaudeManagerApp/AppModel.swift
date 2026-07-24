@@ -33,21 +33,21 @@ struct MessageError: LocalizedError {
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var profiles: [ManagedProfile] = []
-    /// Observable state of the default account (the untouched real app), shown as the first
-    /// row of the account lists. `nil` when Claude.app can't be located.
-    @Published private(set) var primaryAccount: PrimaryAccountStatus?
+    /// Observable state of the default profile (the untouched real app), shown as the first
+    /// row of the profile lists. `nil` when Claude.app can't be located.
+    @Published private(set) var primaryProfile: PrimaryProfileStatus?
     @Published private(set) var realClaude: RealClaude?
     @Published private(set) var realClaudeVersion: String?
 
-    /// The sidebar's account rows: the default account first (whenever Claude is located —
-    /// provisionally "stopped" until the next status probe fills `primaryAccount` in), then
-    /// each managed clone. Keyed off `realClaude`, not `primaryAccount`, so a Retry that
+    /// The sidebar's profile rows: the default profile first (whenever Claude is located —
+    /// provisionally "stopped" until the next status probe fills `primaryProfile` in), then
+    /// each managed clone. Keyed off `realClaude`, not `primaryProfile`, so a Retry that
     /// re-finds Claude shows the default row at once instead of waiting for a refresh. The
     /// menu bar renders the same ordering directly, since its per-item affordances differ.
-    var accounts: [Account] {
-        guard realClaude != nil else { return profiles.map(Account.clone) }
-        let primary = primaryAccount ?? PrimaryAccountStatus(pid: nil)
-        return [.primary(primary)] + profiles.map(Account.clone)
+    var profileEntries: [ProfileEntry] {
+        guard realClaude != nil else { return profiles.map(ProfileEntry.clone) }
+        let primary = primaryProfile ?? PrimaryProfileStatus(pid: nil)
+        return [.primary(primary)] + profiles.map(ProfileEntry.clone)
     }
 
     @Published var locateError: String?
@@ -63,8 +63,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
-    /// A Claude update ShipIt has staged but not applied (any open account blocks the
-    /// swap) — drives the "Apply update to all accounts" affordance. `nil` when none.
+    /// A Claude update ShipIt has staged but not applied (any open profile blocks the
+    /// swap) — drives the "Apply update to all profiles" affordance. `nil` when none.
     @Published private(set) var stagedUpdate: StagedUpdate?
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
@@ -88,7 +88,7 @@ final class AppModel: ObservableObject {
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
     /// overlapping runs can't both `open -n` a duplicate default. See `openReal`.
-    /// Non-private so the `AppModel+PrimaryAccount` extension (another file) can reach it.
+    /// Non-private so the `AppModel+PrimaryProfile` extension (another file) can reach it.
     var isOpeningReal = false
 
     @Published var measureSizes: Bool {
@@ -188,7 +188,7 @@ final class AppModel: ObservableObject {
         } catch {
             realClaude = nil
             realClaudeVersion = nil
-            primaryAccount = nil
+            primaryProfile = nil
             // A vanished Claude has no staged update to apply; clear it so the banner doesn't
             // outlive the app it refers to (refresh, its only other writer, bails while nil).
             stagedUpdate = nil
@@ -198,7 +198,7 @@ final class AppModel: ObservableObject {
 
     /// User-driven re-detect (the missing-Claude banner's Retry and Settings' Re-detect):
     /// locate synchronously, then — only if Claude was found — refresh so it repopulates the
-    /// account list (the default-account row included) without waiting for the next poll.
+    /// profile list (the default-profile row included) without waiting for the next poll.
     /// Skipping refresh when locate still fails avoids `perform` surfacing a redundant
     /// "Claude not found" alert on top of the banner that already says so.
     func relocate() async {
@@ -231,12 +231,12 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let sizes = measureSizes
-        // One process sweep yields both the launcher list and the default-account status.
+        // One process sweep yields both the launcher list and the default-profile status.
         guard let snapshot = await perform({ store in store.snapshot(measuringSizes: sizes) }) else { return }
         profiles = snapshot.profiles
-        primaryAccount = snapshot.primaryAccount
+        primaryProfile = snapshot.primaryProfile
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
-        // there are none — the default account can still have one staged).
+        // there are none — the default profile can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
@@ -290,7 +290,7 @@ final class AppModel: ObservableObject {
     /// Bring the app that owns `pid` to the front, returning whether it was activated.
     /// `false` means no running app owns `pid` (just quit / not yet registered) or the
     /// activation request was refused — either way the caller falls back to a launch.
-    /// Non-private and shared by the managed-profile and primary-account focus paths.
+    /// Non-private and shared by the managed-profile and primary-profile focus paths.
     ///
     /// `.activateAllWindows` raises every window of the target, not just main/key — the
     /// robust choice when focusing another app from our own menu-bar extra. macOS 14
@@ -437,11 +437,11 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
-        // A vanished Claude leaves no default account and no staged update to apply;
+        // A vanished Claude leaves no default profile and no staged update to apply;
         // `reconcile` returns before `refresh` could recompute them, so clear the stale
         // primary row and staged-update banner here.
         if located.real == nil {
-            primaryAccount = nil
+            primaryProfile = nil
             stagedUpdate = nil
         }
         locateError = located.error
@@ -451,7 +451,7 @@ final class AppModel: ObservableObject {
 
     /// Run a store operation off the main actor — it may block or suspend (e.g. the
     /// async `stop`) — surfacing errors as an alert. Returns `nil` on failure.
-    /// Non-private so type extensions in other files (e.g. `AppModel+PrimaryAccount`)
+    /// Non-private so type extensions in other files (e.g. `AppModel+PrimaryProfile`)
     /// share the one dispatch path.
     func perform<T: Sendable>(
         _ body: @Sendable @escaping (ProfileStore) async throws -> T

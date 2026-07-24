@@ -41,7 +41,7 @@ struct ProfileDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "The launcher goes to the Trash. Deleting profile data removes this account's login and settings — irreversible."
+                "The launcher goes to the Trash. Deleting profile data removes this profile's login and settings — irreversible."
             )
         }
     }
