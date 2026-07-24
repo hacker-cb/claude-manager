@@ -53,7 +53,7 @@ extension AppModel {
 
     /// A human name for the account: the default account, else a bound profile's display name.
     func accountDisplayName(for account: AccountUsage) -> String {
-        if account.bindingIDs.contains(TokenBinding.defaultID) { return "Default account" }
+        if account.bindingIDs.contains(TokenBinding.defaultID) { return "Default profile" }
         for id in account.bindingIDs {
             if let managed = profiles.first(where: { $0.profile.id == id }) {
                 return managed.profile.displayName

@@ -109,13 +109,13 @@ struct SettingsView: View {
                 Text(cadenceCaption).font(.caption).foregroundStyle(.secondary)
 
                 Toggle(
-                    "Check open accounts every \(Self.adaptiveMinutes) minutes",
+                    "Check open profiles every \(Self.adaptiveMinutes) minutes",
                     isOn: $model.usageAdaptiveEnabled
                 )
                 .disabled(model.usagePollIntervalMinutes == 0)
-                Text("While an account is running you're spending limits, so it's checked on the "
-                    + "faster \(Self.adaptiveMinutes)-minute cadence instead of the interval above. "
-                    + "Idle accounts keep the interval.")
+                Text("While a profile is running you're spending that account's limits, so it's checked "
+                    + "on the faster \(Self.adaptiveMinutes)-minute cadence instead of the interval above. "
+                    + "Idle profiles keep the interval.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Toggle("Notify before limits are reached", isOn: $model.usageNotificationsEnabled)
@@ -134,7 +134,7 @@ struct SettingsView: View {
 
     private var cadenceCaption: String {
         guard model.usagePollIntervalMinutes > 0 else {
-            return "No background checks at all. Use the Refresh button in an account's Usage "
+            return "No background checks at all. Use the Refresh button in a profile's Usage "
                 + "section when you want current numbers — that's also what grants keychain "
                 + "access the first time."
         }

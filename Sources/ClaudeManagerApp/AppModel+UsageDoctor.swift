@@ -17,8 +17,8 @@ extension AppModel {
             return Diagnostic(
                 severity: .warning,
                 title: "Usage tracking needs keychain access",
-                detail: "Claude Manager couldn't read an account token from your keychain. Open an "
-                    + "account and use its Usage \u{201C}Refresh\u{201D} button, then choose "
+                detail: "Claude Manager couldn't read an account token from your keychain. Open a "
+                    + "profile and use its Usage \u{201C}Refresh\u{201D} button, then choose "
                     + "\u{201C}Always Allow\u{201D} when macOS asks."
             )
         }
@@ -26,7 +26,7 @@ extension AppModel {
             return Diagnostic(
                 severity: .warning,
                 title: "An account needs to sign in again",
-                detail: "A token has expired or was rejected. Open the account, sign in, then Refresh."
+                detail: "A token has expired or was rejected. Open the profile, sign in, then Refresh."
             )
         }
         return anyFresh ? Diagnostic(severity: .ok, title: "Usage tracking is active") : nil

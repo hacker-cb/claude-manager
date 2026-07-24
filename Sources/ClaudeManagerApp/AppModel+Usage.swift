@@ -77,7 +77,7 @@ extension AppModel {
     /// Seconds until the next poll — the cadence math lives in (and is tested in) the core; the
     /// app only supplies the running-accounts fact it can't compute headless.
     func usagePollSleepInterval() -> TimeInterval {
-        let anyRunning = primaryAccount?.isRunning == true || profiles.contains(where: \.isRunning)
+        let anyRunning = primaryProfile?.isRunning == true || profiles.contains(where: \.isRunning)
         return UsageService.pollIntervalSeconds(
             minutes: usagePollIntervalMinutes,
             adaptiveEnabled: usageAdaptiveEnabled,
@@ -98,7 +98,7 @@ extension AppModel {
         // The running set decides the cadence, and the sleeping poll task computed its interval
         // before that changed. Opening an account would otherwise wait out the whole idle
         // interval — up to an hour — before the 5-minute lane the settings promise kicks in.
-        let running = primaryAccount?.isRunning == true || profiles.contains(where: \.isRunning)
+        let running = primaryProfile?.isRunning == true || profiles.contains(where: \.isRunning)
         if running != lastKnownAnyRunning {
             lastKnownAnyRunning = running
             if usageAdaptiveEnabled { restartUsagePolling() }
@@ -209,7 +209,7 @@ extension AppModel {
     private func usageBindings(config: ProfileStoreConfiguration) -> [TokenBinding] {
         var bindings = [TokenBinding(
             id: TokenBinding.defaultID,
-            configURL: URL(fileURLWithPath: config.defaultAccountUserDataPath)
+            configURL: URL(fileURLWithPath: config.defaultProfileUserDataPath)
                 .appendingPathComponent("config.json")
         )]
         for managed in profiles {
