@@ -209,10 +209,15 @@ pass is served from cache.
 
 **Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile`
 is also what ties a row to a real login (email / display name, surfaced in the Usage header
-and the sidebar tooltip). The answer is cached in `account_profiles` keyed by the **token
-fingerprint** — not the account uuid — so a re-login invalidates it for free, with no
-staleness rule to maintain; `UsageService.profileTTLSeconds` (24h) then covers what can
-change under an unchanged token. Reading that cache is free and happens on every pass, so a
+and the sidebar tooltip). The answer is cached in `account_profiles` and looked up **by account uuid**
+whenever that is known — the name belongs to the account, not to the token that asked, so
+sibling launchers share one lookup instead of paying one each. A binding whose account is still
+unknown falls back to the token fingerprint, which is all it has before `/profile` answers.
+`UsageService.profileTTLSeconds` (24h) bounds staleness either way.
+
+`/profile` is also **authoritative about which account a token belongs to** — its uuid wins even
+over the config hint, which is only a cached guess and goes stale when a launcher is signed out
+and back in as someone else. Reading that cache is free and happens on every pass, so a
 throttled account still renders with its name; the network call is made only when a `/usage`
 fetch is happening anyway, which keeps it inside the same floor and backoff — never once per
 throttled tick. A provisional identity is the one exception: it must ask immediately, since

@@ -158,15 +158,15 @@ public actor UsageHistoryStore {
 
     // MARK: - Throttle state
 
-    public func throttle(accountUUID: String) -> ThrottleState? {
-        guard let db else { return memoryThrottle[accountUUID] }
+    public func throttle(scope: String) -> ThrottleState? {
+        guard let db else { return memoryThrottle[scope] }
         let sql = """
         SELECT last_attempt_at, backoff_until, backoff_reason, token_fingerprint
-        FROM throttle_state WHERE account_uuid=?1
+        FROM throttle_state WHERE scope_key=?1
         """
         guard let stmt = Self.prepare(db, sql) else { return nil }
         defer { sqlite3_finalize(stmt) }
-        Self.bind(stmt, 1, text: accountUUID)
+        Self.bind(stmt, 1, text: scope)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return ThrottleState(
             lastAttemptAt: Self.optionalDate(stmt, 0),
@@ -176,19 +176,19 @@ public actor UsageHistoryStore {
         )
     }
 
-    public func setThrottle(_ state: ThrottleState, accountUUID: String) {
-        guard let db else { memoryThrottle[accountUUID] = state; return }
+    public func setThrottle(_ state: ThrottleState, scope: String) {
+        guard let db else { memoryThrottle[scope] = state; return }
         let sql = """
-        INSERT INTO throttle_state (account_uuid, last_attempt_at, backoff_until, backoff_reason, token_fingerprint)
+        INSERT INTO throttle_state (scope_key, last_attempt_at, backoff_until, backoff_reason, token_fingerprint)
         VALUES (?1,?2,?3,?4,?5)
-        ON CONFLICT(account_uuid) DO UPDATE SET
+        ON CONFLICT(scope_key) DO UPDATE SET
             last_attempt_at=excluded.last_attempt_at,
             backoff_until=excluded.backoff_until,
             backoff_reason=excluded.backoff_reason,
             token_fingerprint=excluded.token_fingerprint
         """
         guard let stmt = Self.prepare(db, sql) else { return }
-        Self.bind(stmt, 1, text: accountUUID)
+        Self.bind(stmt, 1, text: scope)
         Self.bind(stmt, 2, int: state.lastAttemptAt.map(Self.millis))
         Self.bind(stmt, 3, int: state.backoffUntil.map(Self.millis))
         Self.bind(stmt, 4, text: state.backoffReason?.rawValue)
@@ -279,10 +279,18 @@ public actor UsageHistoryStore {
         SELECT account_uuid, email, display_name, organization_uuid, subscription_type, rate_limit_tier
         FROM account_profiles WHERE token_fingerprint=?1 AND fetched_at>=?2 LIMIT 1
         """
-        guard let stmt = Self.prepare(db, sql) else { return nil }
+        return readProfile(sql) { stmt in
+            Self.bind(stmt, 1, text: tokenFingerprint)
+            Self.bind(stmt, 2, int: Self.millis(fetchedAfter))
+        }
+    }
+
+    /// Run a prepared `account_profiles` SELECT (both lookups share the column list) and decode
+    /// the row into an identity.
+    private func readProfile(_ sql: String, bind: (OpaquePointer) -> Void) -> AccountIdentity? {
+        guard let db, let stmt = Self.prepare(db, sql) else { return nil }
         defer { sqlite3_finalize(stmt) }
-        Self.bind(stmt, 1, text: tokenFingerprint)
-        Self.bind(stmt, 2, int: Self.millis(fetchedAfter))
+        bind(stmt)
         guard sqlite3_step(stmt) == SQLITE_ROW, let uuid = Self.text(stmt, 0) else { return nil }
         return AccountIdentity(
             uuid: uuid,
@@ -292,6 +300,31 @@ public actor UsageHistoryStore {
             subscriptionType: Self.text(stmt, 4),
             rateLimitTier: Self.text(stmt, 5)
         )
+    }
+
+    /// The stored `/profile` answer for an **account**, whichever token fetched it.
+    ///
+    /// The name is a property of the account, not of the token that asked, so N launchers sharing
+    /// one login should cost one lookup rather than one each. Callers that already know the
+    /// account uuid (it came from the config hint, or a sibling already settled it) use this and
+    /// skip the network entirely; only a binding whose account is still unknown has to fall back
+    /// to the fingerprint key, which is all it has before `/profile` answers.
+    public func profile(accountUUID: String, fetchedAfter: Date) -> AccountIdentity? {
+        guard let db else {
+            let hit = memoryProfiles.values
+                .filter { $0.identity.uuid == accountUUID && $0.fetchedAt >= fetchedAfter }
+                .max { $0.fetchedAt < $1.fetchedAt }
+            return hit?.identity
+        }
+        let sql = """
+        SELECT account_uuid, email, display_name, organization_uuid, subscription_type, rate_limit_tier
+        FROM account_profiles WHERE account_uuid=?1 AND fetched_at>=?2
+        ORDER BY fetched_at DESC LIMIT 1
+        """
+        return readProfile(sql) { stmt in
+            Self.bind(stmt, 1, text: accountUUID)
+            Self.bind(stmt, 2, int: Self.millis(fetchedAfter))
+        }
     }
 
     /// Remember a `/profile` answer so the fleet costs one lookup per token, not one per poll.

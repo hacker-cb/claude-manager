@@ -94,13 +94,13 @@ final class AppModel: ObservableObject {
 
     // MARK: - Plan-usage statistics (see AppModel+Usage)
 
-    /// Durable stores held for the process lifetime: the SQLite history/throttle store and the
-    /// safeStorage key cache (one keychain read for the whole fleet).
+    /// Durable for the process lifetime: the SQLite history/throttle store, and the safeStorage
+    /// key cache (one keychain read for the whole fleet).
     let usageHistory: UsageHistoryStore
     let safeStorageKeys = SafeStorageKeyStore()
 
-    /// Latest usage per **binding** id (profile launcher path / default-account id) — a shared
-    /// account appears under each of its bindings, so a view keyed by profile reads it directly.
+    /// Latest usage per **binding** id (launcher path / default-account id); a shared account
+    /// appears under each of its bindings, so a view keyed by profile reads it directly.
     @Published var usageByBinding: [String: AccountUsage] = [:]
     /// Per-binding token failures (login-needed / no-source), for a profile row's state.
     @Published var usageBindingFailures: [String: TokenProviderError] = [:]
@@ -110,11 +110,11 @@ final class AppModel: ObservableObject {
     /// Single-flights `refreshUsage`: `@MainActor` makes the check-and-set atomic, so a manual
     /// Refresh overlapping a scheduled poll can't both fetch.
     var isRefreshingUsage = false
-    /// Set when an interactive Refresh arrives mid-flight, so the current pass runs one more
-    /// interactive round — a poll must not swallow the user's only path to the keychain prompt.
+    /// Set when an interactive Refresh arrives mid-flight, so one more interactive round follows.
     var pendingInteractiveRefresh = false
-    /// Launcher ids, and whether anything was running, as of the last usage resolve — so a
-    /// changed binding set or a changed cadence can be spotted.
+    /// The usage pass in flight, so the master switch can cancel it mid-fleet. The two `lastKnown`
+    /// values are the previous resolve's launcher set and running-state, to spot a change.
+    var usageRefreshTask: Task<UsageRefreshResult, Never>?
     var lastKnownBindingIDs: Set<String> = []
     var lastKnownAnyRunning = false
 

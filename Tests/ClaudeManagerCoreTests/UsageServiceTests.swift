@@ -144,9 +144,10 @@ struct UsageServiceTests {
 
     @Test
     func storedProfileIsReusedInsteadOfRefetched() async {
-        // The name is cached per token, so a second pass costs no extra /profile call — and a
-        // hinted account keeps its own uuid, taking only the naming fields from /profile.
-        let http = ScriptedHTTP(usage: usageBody, accountUUID: "ignored-for-hinted")
+        // The name is cached, so a second pass costs no extra /profile call. The uuid comes from
+        // /profile even though the config carried a hint: the hint is a cached guess and can be
+        // stale, while /profile is authoritative about which account the token belongs to.
+        let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct-authoritative")
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
             provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
@@ -157,7 +158,7 @@ struct UsageServiceTests {
         // Past the 60s floor so the second pass genuinely fetches usage again.
         let later = now.addingTimeInterval(120)
         let result = await service.refresh(bindings: [binding("p")], now: later)
-        #expect(result.accounts.first?.identity.uuid == "acct")
+        #expect(result.accounts.first?.identity.uuid == "acct-authoritative")
         #expect(result.accounts.first?.identity.email == "user@example.com")
         #expect(http.usageCallCount == 2)
         #expect(http.profileCallCount == 1) // fetched once, reused after

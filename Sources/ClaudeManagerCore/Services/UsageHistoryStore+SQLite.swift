@@ -50,7 +50,7 @@ extension UsageHistoryStore {
         _ = exec(db, "CREATE INDEX idx_samples_account_time ON usage_samples(account_uuid, captured_at)")
         _ = exec(db, """
         CREATE TABLE throttle_state (
-            account_uuid TEXT PRIMARY KEY,
+            scope_key TEXT PRIMARY KEY,
             last_attempt_at INTEGER,
             backoff_until INTEGER,
             backoff_reason TEXT,

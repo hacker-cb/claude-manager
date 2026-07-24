@@ -128,7 +128,7 @@ public enum CoreConstants {
     /// `UsageSnapshot` shape or the DB schema changes** — the store drops-and-recreates on
     /// mismatch (early-stage: history is a cache, not a contract). Mirrors the intent of
     /// `currentWrapperVersion`, but for the stats DB rather than the launcher format.
-    public static let usageSchemaVersion = 3
+    public static let usageSchemaVersion = 4
 
     /// Base URL for the OAuth usage/profile endpoints. The whole core had no networking
     /// before plan-usage stats; this is the single place that host is named.

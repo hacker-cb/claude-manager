@@ -73,16 +73,17 @@ struct UsageDetailSection: View {
             }
             // Keyed by position, not `dedupKey`: two scoped windows whose model name is missing
             // (or two unknown kinds sharing a rawKind) collapse to the same dedupKey, and a
-            // duplicate ForEach id silently drops a row. Position is unique and these lists are
-            // rendered as-is, never reordered.
-            if usage?.identity.showsScopedWeeklyLimit == true {
-                ForEach(Array(snapshot.weeklyScoped.enumerated()), id: \.offset) { _, scoped in
-                    LimitRow(
-                        title: "Current week (\(scoped.scopeModelName ?? "scoped"))",
-                        limit: scoped,
-                        now: now
-                    )
-                }
+            // duplicate ForEach id silently drops a row.
+            //
+            // Rendered whenever the server sent one, with no plan-shaped gate. `bindingLimit` —
+            // what the sidebar ring and the menu bar quote — can pick a scoped window, and gating
+            // the row here meant the headline number had no matching row anywhere in the pane.
+            ForEach(Array(snapshot.weeklyScoped.enumerated()), id: \.offset) { _, scoped in
+                LimitRow(
+                    title: "Current week (\(scoped.scopeModelName ?? "scoped"))",
+                    limit: scoped,
+                    now: now
+                )
             }
             // Forward-compat: a window this build doesn't recognize is kept visible (the parser's
             // "other" bucket) rather than silently dropped — so the detail can't disagree with the

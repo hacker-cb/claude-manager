@@ -235,6 +235,14 @@ extension AccountUsage {
         snapshot?.bindingLimit
     }
 
+    /// Whether the numbers are current enough to quote as a bare percentage on a compact surface
+    /// (the menu bar, a menu row). Anything else — stale, offline, rate-limited, needing a
+    /// sign-in — is shown as its state instead: a frozen figure with a live countdown beside it
+    /// reads as live, and there is no room there to say otherwise.
+    var isQuotableNow: Bool {
+        state == .fresh
+    }
+
     /// Whether the account needs a user action (a re-login / authorization) — surfaced even
     /// without a snapshot to show.
     var needsAttention: Bool {

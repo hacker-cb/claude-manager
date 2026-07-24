@@ -65,6 +65,10 @@ extension AppModel {
             startUsagePolling()
         } else {
             stopUsagePolling()
+            // Also stop a pass already in flight: it would otherwise finish its remaining
+            // per-account calls and write their rows after the user said stop.
+            usageRefreshTask?.cancel()
+            usageRefreshTask = nil
             usageByBinding = [:]
             usageBindingFailures = [:]
         }
@@ -102,8 +106,15 @@ extension AppModel {
 
         let current = Set(profiles.map(\.profile.id))
         guard current != lastKnownBindingIDs else { return }
+        guard usageTrackingEnabled, usagePollIntervalMinutes > 0 else {
+            lastKnownBindingIDs = current // nothing to fetch in this mode; don't re-check forever
+            return
+        }
+        // Committed only once the refresh has actually run. Recording it up front meant a pass
+        // dropped by the single-flight guard consumed the change, and the new launcher was never
+        // fetched at all.
+        guard !isRefreshingUsage else { return }
         lastKnownBindingIDs = current
-        guard usageTrackingEnabled, usagePollIntervalMinutes > 0 else { return }
         await refreshUsage(interactive: false)
     }
 
@@ -123,9 +134,15 @@ extension AppModel {
         }
         isRefreshingUsage = true
 
-        let result = await makeUsageService().refresh(
-            bindings: usageBindings(config: config), interactive: interactive
-        )
+        // Run the pass as a tracked child task so the master switch can cancel it. The poll loop
+        // is cancellable on its own, but a manual Refresh runs in a task the view owns, and the
+        // service checks `Task.isCancelled` between accounts.
+        let service = makeUsageService()
+        let bindings = usageBindings(config: config)
+        let task = Task { await service.refresh(bindings: bindings, interactive: interactive) }
+        usageRefreshTask = task
+        let result = await task.value
+        usageRefreshTask = nil
 
         // The master switch can flip off during the await; honor it so we neither repopulate the
         // state `applyUsageTrackingChange` just cleared nor fire notifications after "off".
@@ -135,6 +152,17 @@ extension AppModel {
                 for bindingID in account.bindingIDs {
                     byBinding[bindingID] = account
                 }
+            }
+            // A binding whose token couldn't be read this pass (a keychain that locked mid-session,
+            // say) is absent from `result.accounts`. Replacing wholesale would blank its numbers,
+            // which is the opposite of the serve-stale promise — so keep the last snapshot, but
+            // restate it as `.noSource`: the figures stay, and both the detail pane and the
+            // sidebar say an action is needed rather than passing them off as current.
+            for id in result.bindingFailures.keys {
+                guard byBinding[id] == nil, var kept = usageByBinding[id],
+                      kept.snapshot != nil else { continue }
+                kept.state = .noSource
+                byBinding[id] = kept
             }
             usageByBinding = byBinding
             usageBindingFailures = result.bindingFailures
@@ -152,13 +180,13 @@ extension AppModel {
 
     /// The worst active limit across all accounts, as `7d 54%` — the at-a-glance value shown in
     /// the status bar. Nil when tracking is off or there's no data yet.
-    /// Accounts needing a sign-in are skipped, mirroring the sidebar: their snapshot is kept for
-    /// the detail pane but is frozen at whatever was last fetched, and a status-bar percentage
-    /// carries no hint that it stopped moving days ago.
+    /// Only accounts whose numbers are current are quoted here: a status-bar percentage carries
+    /// no hint that it stopped moving, so a stale, offline, rate-limited or signed-out account
+    /// must not contribute one.
     var menuBarUsageSummary: (label: String, fraction: Double)? {
         guard usageTrackingEnabled else { return nil }
         let worst = usageByBinding.values
-            .filter { !$0.needsAttention }
+            .filter(\.isQuotableNow)
             .compactMap(\.displayLimit)
             .max { $0.utilization < $1.utilization }
         guard let worst else { return nil }

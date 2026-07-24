@@ -134,9 +134,10 @@ struct MenuBarContent: View {
     /// countdown here is current without a ticker.
     private func usageSuffix(_ bindingID: String) -> String {
         guard model.usageTrackingEnabled, let usage = model.usage(forBinding: bindingID) else { return "" }
-        // An account that needs signing in keeps a frozen snapshot for the detail pane; showing
-        // that percentage here would read as current. Say what's actually needed instead.
-        guard !usage.needsAttention else { return "  ·  \(usage.stateNote)" }
+        // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
+        // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
+        // countdown, with no room to qualify it — would read as current, so say the state instead.
+        guard usage.isQuotableNow else { return "  ·  \(usage.stateNote)" }
         guard let limit = usage.displayLimit else { return "" }
         var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
         if let resets = UsageFormat.resets(limit.resetsAt) { suffix += " · \(resets)" }

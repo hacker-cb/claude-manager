@@ -82,22 +82,22 @@ struct UsageHistoryStoreTests {
     @Test
     func throttleStateRoundTrips() async {
         await withStore { store in
-            #expect(await store.throttle(accountUUID: "acc") == nil)
+            #expect(await store.throttle(scope: "acc") == nil)
             let state = ThrottleState(
                 lastAttemptAt: Date(timeIntervalSince1970: 1000),
                 backoffUntil: Date(timeIntervalSince1970: 1300),
                 backoffReason: .rateLimited,
                 tokenFingerprint: "abc123"
             )
-            await store.setThrottle(state, accountUUID: "acc")
-            #expect(await store.throttle(accountUUID: "acc") == state)
+            await store.setThrottle(state, scope: "acc")
+            #expect(await store.throttle(scope: "acc") == state)
             // Upsert overwrites.
             let updated = ThrottleState(
                 lastAttemptAt: Date(timeIntervalSince1970: 2000),
                 tokenFingerprint: "def456"
             )
-            await store.setThrottle(updated, accountUUID: "acc")
-            #expect(await store.throttle(accountUUID: "acc") == updated)
+            await store.setThrottle(updated, scope: "acc")
+            #expect(await store.throttle(scope: "acc") == updated)
         }
     }
 
@@ -221,8 +221,8 @@ struct UsageHistoryStoreTests {
             backoffReason: .rateLimited,
             tokenFingerprint: "fp"
         )
-        await store.setThrottle(state, accountUUID: "acc")
-        #expect(await store.throttle(accountUUID: "acc") == state)
+        await store.setThrottle(state, scope: "acc")
+        #expect(await store.throttle(scope: "acc") == state)
 
         #expect(await store
             .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == false)
