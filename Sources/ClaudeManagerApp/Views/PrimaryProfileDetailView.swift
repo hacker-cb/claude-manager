@@ -72,6 +72,18 @@ struct PrimaryProfileDetailView: View {
             }
 
             Spacer()
+
+            // The trailing overflow menu `ProfileDetailView` has, minus everything the
+            // default profile can't do (edit / rebuild / remove): only the reveal is left,
+            // but it belongs in the same place so both panes are discoverable alike —
+            // mirroring the sidebar row's context menu.
+            Menu {
+                Button("Reveal Claude.app in Finder") { model.revealRealClaude() }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
     }
 
