@@ -1,6 +1,58 @@
 import CoreGraphics
 import Foundation
+import Security
 @testable import ClaudeManagerCore
+
+/// Reads a bundle's signature through the public Security API — deliberately not by
+/// inspecting the `codesign` invocation, so a test asserts the on-disk result rather
+/// than echoing the call that produced it. Equivalent to what
+/// `codesign --verify --strict` + `codesign -dv` report.
+enum SignatureProbe {
+    /// Strictly validate the bundle's signature (every sealed resource included) and
+    /// confirm it is ad-hoc. False if the bundle is unsigned, tampered with, or signed
+    /// with an identity.
+    static func isValidAdHoc(_ bundleURL: URL) -> Bool {
+        let strict = SecCSFlags(rawValue: kSecCSStrictValidate)
+        guard let code = staticCode(bundleURL),
+              SecStaticCodeCheckValidity(code, strict, nil) == errSecSuccess,
+              let flags = signingFlags(code)
+        else { return false }
+        return flags & SecCodeSignatureFlags.adhoc.rawValue != 0
+    }
+
+    /// True when the path carries any signature at all (valid or not) — lets a test
+    /// tell "never signed" apart from "signed, then invalidated".
+    static func isSigned(_ bundleURL: URL) -> Bool {
+        guard let code = staticCode(bundleURL) else { return false }
+        return signingFlags(code) != nil
+    }
+
+    private static func staticCode(_ bundleURL: URL) -> SecStaticCode? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, [], &code) == errSecSuccess else { return nil }
+        return code
+    }
+
+    private static func signingFlags(_ code: SecStaticCode) -> UInt32? {
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, [], &info) == errSecSuccess,
+              let dictionary = info as? [String: Any],
+              let flags = dictionary[kSecCodeInfoFlags as String] as? UInt32
+        else { return nil }
+        return flags
+    }
+}
+
+/// A runner whose `codesign` always fails, for driving `LauncherBundle`'s
+/// signing-failure path. Every other tool succeeds silently.
+func failingCodesignRunner() -> RecordingCommandRunner {
+    RecordingCommandRunner { executable, arguments in
+        if executable == CoreConstants.codesignPath {
+            return CommandOutput(exitCode: 1, standardOutput: "", standardError: "test: signing refused")
+        }
+        return idleStub(executable, arguments)
+    }
+}
 
 /// A `CommandRunner` that records every invocation and returns programmable
 /// output. Optionally delegates specific executables (e.g. `iconutil`) to the real
@@ -44,9 +96,11 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
     }
 
     /// Runner that delegates `delegated` executables to the real system and routes
-    /// everything else through `stub`.
+    /// everything else through `stub`. `codesign` is delegated by default alongside
+    /// `iconutil`: a launcher that is not really signed would not really run, so the
+    /// suites exercise the same signing path the app does (on temp bundles only).
     static func delegating(
-        _ delegated: Set<String> = [CoreConstants.iconutilPath],
+        _ delegated: Set<String> = [CoreConstants.iconutilPath, CoreConstants.codesignPath],
         stub: @escaping @Sendable (String, [String]) -> CommandOutput
     ) -> RecordingCommandRunner {
         let system = SystemCommandRunner()

@@ -17,6 +17,7 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case iconGenerationFailed(String)
     case installDirectoryNotWritable(path: String)
     case markerMissing(path: String)
+    case codeSigningFailed(path: String, exitCode: Int32, message: String)
 
     public var errorDescription: String? {
         switch self {
@@ -49,6 +50,11 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "Cannot write launchers to \(path). Check permissions or choose another location."
         case let .markerMissing(path):
             return "\(path) is not a Claude Manager launcher (no marker in Info.plist)."
+        case let .codeSigningFailed(path, exitCode, message):
+            // Not cosmetic: macOS refuses to execute a launcher without a valid
+            // signature, so an unsigned bundle would look like it "hangs and never opens".
+            let detail = message.isEmpty ? "" : " — \(message)"
+            return "Could not ad-hoc sign the launcher at \(path) (codesign exited \(exitCode))\(detail)."
         }
     }
 }

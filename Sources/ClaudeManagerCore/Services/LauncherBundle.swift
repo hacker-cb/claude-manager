@@ -4,9 +4,11 @@ import Foundation
 /// Info.plist marker is the source of truth; `scan` reconstructs profiles from it.
 public struct LauncherBundle {
     let fileManager: FileManager
+    let codeSigner: CodeSigner
 
-    public init(fileManager: FileManager = .default) {
+    public init(fileManager: FileManager = .default, runner: CommandRunner = SystemCommandRunner()) {
         self.fileManager = fileManager
+        codeSigner = CodeSigner(runner: runner)
     }
 
     /// A launcher discovered on disk together with its parsed marker.
@@ -89,6 +91,19 @@ public struct LauncherBundle {
             profile: profile,
             marker: marker
         )
+
+        // Ad-hoc sign LAST — macOS refuses to execute a launcher that has no valid
+        // signature (see `CodeSigner`), and the signature seals the script, the
+        // Info.plist and the icon: any write into the bundle after this point breaks it,
+        // and a *broken* signature is refused harder than a missing one. So `build`
+        // stays the single writer, and nothing may be added below this line.
+        //
+        // Signing the staging copy rather than the installed path keeps the build
+        // atomic: the bundle is swapped into place already sealed, so a launcher is
+        // never observable unsigned, and a signing failure leaves the previous working
+        // launcher untouched. The signature survives the swap because it lives in
+        // `Contents/_CodeSignature/` — ordinary files that move with the directory.
+        try codeSigner.signAdHoc(bundleURL: tempURL)
 
         if fileManager.fileExists(atPath: appURL.path) {
             _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)

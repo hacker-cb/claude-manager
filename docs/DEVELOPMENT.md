@@ -80,6 +80,12 @@ parsing, launcher bundle building, marker round-trips, badge/`.icns` rendering
 through the real `iconutil`, and the `ProfileStore` / `Doctor` orchestration against
 temp directories with a mocked command runner.
 
+Launcher bundles are **really ad-hoc signed** in those tests — `codesign` is delegated to
+the real system alongside `iconutil` (no certificate and no network needed; see
+[ARCHITECTURE.md](ARCHITECTURE.md) § macOS facts) and the resulting signature is verified
+through the public Security reader API. It stays hermetic: every bundle lives in a temp
+install dir, and nothing signs or touches anything outside it.
+
 An **opt-in live test** runs against the real Claude.app on disk — LaunchServices
 lookup, version read, and the icon/badge pipeline — installing into a temp directory
 and never launching Claude:

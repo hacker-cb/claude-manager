@@ -85,7 +85,7 @@ public struct ProfileStore {
         self.runner = runner
         self.fileManager = fileManager
         self.signalSender = signalSender
-        bundle = LauncherBundle(fileManager: fileManager)
+        bundle = LauncherBundle(fileManager: fileManager, runner: runner)
         processProbe = ProcessProbe(runner: runner)
         iconCache = IconCache(runner: runner, fileManager: fileManager)
         iconPipeline = IconPipeline(packer: IcnsPacker(runner: runner, fileManager: fileManager))

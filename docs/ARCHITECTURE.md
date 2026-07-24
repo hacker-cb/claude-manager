@@ -11,6 +11,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 │                ProfileManagedConfig (overlay desired-state), StagedUpdate
 ├─ RealClaude    locate the real app (LaunchServices + fallbacks), version, icon
 ├─ Launcher      LauncherBundle (build/scan/remove) + LauncherScript (bash launcher, duplicate guard)
+│                + CodeSigner (ad-hoc signing — macOS refuses to run an unsigned launcher)
 ├─ Icons         BadgeRenderer (CoreGraphics) → IcnsPacker (iconutil) → IconCache
 ├─ Process       ProcessProbe — pgrep/ps main-process detection (ppid==1 filter)
 ├─ ManagedConfig ManagedConfigWriter — the per-clone `-3p` overlay (disable update / deep-link reg)
@@ -184,8 +185,9 @@ itself after a swap).
   are flagged stale by the wrapper-version check (below) and updated via **Rebuild** /
   **Apply to all launchers**.
 - **Bump `CoreConstants.currentWrapperVersion` when the generated launcher changes.**
-  Whenever the output of `LauncherScript.render` (the bash script) or
-  `LauncherBundle.writeInfoPlist` (keys/values) changes, increment it. Every launcher
+  Whenever the output of `LauncherScript.render` (the bash script), of
+  `LauncherBundle.writeInfoPlist` (keys/values), or of the bundle `LauncherBundle.build`
+  assembles changes, increment it. Every launcher
   stamps the version into its marker at build time, so a bundle whose stored version
   is lower reads back as *stale* (`Discovered.isStale` / `ManagedProfile.needsRebuild`),
   and the app surfaces a rebuild (per-launcher **Rebuild**, Settings **Apply to all
@@ -209,8 +211,29 @@ itself after a swap).
   instead of spawning a second instance that would corrupt the profile's LevelDB. The
   guard uses `shlock` (an atomic, PID-aware lock) to close the TOCTOU window between
   the check and the `exec`, with a best-effort `pgrep` fallback if `shlock` is absent.
-- **Locally-created launchers are not quarantined**, so the unsigned bash launcher
-  runs without Gatekeeper prompts — no per-launcher signing needed.
+- **Every launcher must be ad-hoc signed, or macOS will not run it.** Locally created
+  bundles are *not* quarantined (they carry `com.apple.provenance`, not
+  `com.apple.quarantine`), so Gatekeeper never prompts — but AppleSystemPolicy still
+  refuses to **execute** code with no valid signature. An unsigned launcher registers
+  with LaunchServices, appears in the Dock, and is then killed (`ASP: Security policy
+  would not allow process` in `log show`), which reads to the user as "it hangs and
+  never opens". So `LauncherBundle.build` ad-hoc signs the bundle — content hashes with
+  no identity: no certificate, no Apple Developer account, no network, so it works the
+  same locally and on CI. `CodeSigner` runs `/usr/bin/codesign --force --sign -` through
+  the injected `CommandRunner`; the in-process `SecCodeSigner` API was tried and rejected
+  (it deadlocks under a saturated thread pool — see [DECISIONS.md](DECISIONS.md)).
+- **Sign last, and re-sign on every rebuild.** The signature seals the script, the
+  Info.plist and the icon, so *any* write into the bundle after signing invalidates it —
+  and an invalid signature is refused harder than a missing one. `build` is the single
+  writer and signs as its final step, on the staging copy **before** the atomic swap: a
+  launcher is never observable unsigned, and a signing failure leaves the previous
+  working bundle in place. (The signature survives the swap because it lives in
+  `Contents/_CodeSignature/`, ordinary files that move with the directory.)
+  `IconCache.refresh` is safe — `lsregister -f` and `touch` change mtime, not content.
+  Note that `spctl -a -t exec` still reports `rejected` for an ad-hoc signed bundle: it
+  assesses *notarization*, not execution policy, so it is not a useful success signal
+  here. `codesign --verify --strict` (or `SecStaticCodeCheckValidity`) plus an actual
+  launch is.
 - **An MDM managed-preferences plist wins over our local overlay tier.** If
   `/Library/Managed Preferences/<claude-bundle-id>.plist` exists, Claude ignores the
   `-3p` local tier, so `ManagedConfigWriter` detects it and **skips** (writing there
