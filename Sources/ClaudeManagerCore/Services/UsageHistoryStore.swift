@@ -262,7 +262,9 @@ public actor UsageHistoryStore {
     /// re-fetches; the freshness bound then covers what can change without a new token — a
     /// renamed account, a changed email, a moved plan.
     public func profile(tokenFingerprint: String, fetchedAfter: Date) -> AccountIdentity? {
-        guard let db else {
+        // The DB path goes through `readProfile`, which re-checks the handle — so this only needs
+        // to know whether to take the in-memory fallback, not bind the handle.
+        guard db != nil else {
             guard let cached = memoryProfiles[tokenFingerprint], cached.fetchedAt >= fetchedAfter else {
                 return nil
             }

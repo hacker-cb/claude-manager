@@ -147,7 +147,9 @@ public struct AnthropicOAuthClient: Sendable {
     static func parseRetryAfter(_ value: String?, now: Date = Date()) -> TimeInterval? {
         guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
         if let seconds = Int(value) {
-            return seconds > 0 ? TimeInterval(seconds) : nil
+            // `Retry-After: 0` means "retry right away". Honor it (>= 0, not > 0) so the caller's
+            // floor — not the 5-minute default backoff — governs; a negative value is malformed.
+            return seconds >= 0 ? TimeInterval(seconds) : nil
         }
         guard let date = httpDate(value) else { return nil }
         let interval = date.timeIntervalSince(now)

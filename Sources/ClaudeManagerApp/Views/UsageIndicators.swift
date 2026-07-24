@@ -1,40 +1,17 @@
 import ClaudeManagerCore
 import SwiftUI
 
-/// Visual severity for a usage fraction — escalates as usage climbs, independent of the API's
-/// own `severity` (which can read "normal" even when nearly out). Carries both a color and a
-/// **non-color** glyph so severity isn't conveyed by color alone (accessibility).
-enum UsageDisplaySeverity: Int, Comparable {
-    case normal = 0, warning = 1, critical = 2
-
-    static func < (lhs: UsageDisplaySeverity, rhs: UsageDisplaySeverity) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-
-    /// From a bare fraction (0…1) — for bars with no `UsageLimit` behind them, like extra usage.
-    static func forFraction(_ fraction: Double) -> UsageDisplaySeverity {
-        from(UsageLimit.thresholdSeverity(fraction))
-    }
-
-    /// For a real limit. The decision (thresholds, and folding in the server's own severity)
-    /// lives in `UsageLimit.displaySeverity` where it is unit-tested; this layer only paints it.
-    ///
-    /// `LimitEvaluator` is deliberately *not* folded in: its lowest trigger (0.75 on the weekly
-    /// tier) is exactly where these thresholds already warn, and it is more lenient everywhere
-    /// else, so it could never escalate this — the notification model is the quieter of the two
-    /// by design, since "worth showing" is a lower bar than "worth interrupting you".
-    static func forLimit(_ limit: UsageLimit) -> UsageDisplaySeverity {
-        from(limit.displaySeverity)
-    }
-
-    static func from(_ severity: UsageSeverity) -> UsageDisplaySeverity {
-        switch severity {
-        case .normal: .normal
-        case .warning: .warning
-        case .critical: .critical
-        }
-    }
-
+/// The app-layer painting of core's `UsageSeverity`: a color plus a **non-color** glyph, so
+/// severity isn't conveyed by color alone (accessibility). The severity itself is decided in core
+/// and unit-tested there — `UsageLimit.displaySeverity` for a real limit (folding in the server's
+/// own flag), `UsageLimit.thresholdSeverity(_:)` for a bare fraction (a money bar with no server
+/// severity, like extra usage) — so this layer only paints it, never re-derives it.
+///
+/// `LimitEvaluator` is deliberately not folded into the display severity: its lowest trigger (0.75
+/// on the weekly tier) is exactly where these thresholds already warn and it is more lenient
+/// elsewhere, so it could never escalate the ring — the notification model is the quieter of the
+/// two by design, since "worth showing" is a lower bar than "worth interrupting you".
+extension UsageSeverity {
     var color: Color {
         switch self {
         case .normal: .accentColor
@@ -61,10 +38,10 @@ struct UsageBar: View {
     /// Explicit severity for a real `UsageLimit` (which can be escalated by the API); nil falls
     /// back to the plain fraction thresholds, which is what extra-usage — a money bar with no
     /// server severity of its own — wants.
-    var level: UsageDisplaySeverity?
+    var level: UsageSeverity?
 
-    private var severity: UsageDisplaySeverity {
-        level ?? .forFraction(fraction)
+    private var severity: UsageSeverity {
+        level ?? UsageLimit.thresholdSeverity(fraction)
     }
 
     var body: some View {
@@ -88,10 +65,10 @@ struct UsageRing: View {
     let fraction: Double
     var size: CGFloat = 14
     var lineWidth: CGFloat = 2.5
-    var level: UsageDisplaySeverity?
+    var level: UsageSeverity?
 
-    private var severity: UsageDisplaySeverity {
-        level ?? .forFraction(fraction)
+    private var severity: UsageSeverity {
+        level ?? UsageLimit.thresholdSeverity(fraction)
     }
 
     var body: some View {
@@ -122,7 +99,7 @@ struct UsageSidebarIndicator: View {
                 .foregroundStyle(.orange)
                 .help(usage.stateNote)
         } else if let usage, let limit = usage.displayLimit {
-            let level = UsageDisplaySeverity.forLimit(limit)
+            let level = limit.displaySeverity
             HStack(spacing: 4) {
                 if let glyph = level.glyph {
                     Image(systemName: glyph).font(.caption2).foregroundStyle(level.color)

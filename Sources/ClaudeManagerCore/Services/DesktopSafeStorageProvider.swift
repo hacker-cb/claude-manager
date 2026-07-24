@@ -117,12 +117,16 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             .max { electionRank($0.1["expiresAt"]) < electionRank($1.1["expiresAt"]) }
     }
 
-    /// `expiresAt` is epoch **milliseconds**, or nil when absent/non-numeric.
+    /// `expiresAt` is epoch **milliseconds**, or nil when absent/unparseable. A string-encoded
+    /// number is accepted too (Electron has emitted `expiresAt` both ways) — otherwise a valid but
+    /// stringified expiry would read as unknown and rank last in election, letting a stale entry win.
     private func parsedExpiry(from any: Any?) -> Date? {
         let millis: Double? = if let number = any as? NSNumber {
             number.doubleValue
         } else if let double = any as? Double {
             double
+        } else if let string = any as? String {
+            Double(string)
         } else {
             nil
         }

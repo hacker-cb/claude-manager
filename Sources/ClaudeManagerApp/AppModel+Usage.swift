@@ -11,6 +11,9 @@ extension AppModel {
     static let usageMarketingVersion = Bundle.main
         .infoDictionary?["CFBundleShortVersionString"] as? String ?? CoreConstants.devMarketingVersion
 
+    /// Minimum spacing between usage-history retention sweeps — see `pollUsageOnce`.
+    static let usagePruneInterval: TimeInterval = 6 * 3600
+
     /// `~/Library/Application Support/Claude Manager/usage.db`, creating the directory. Shares
     /// `MetadataStore.defaultDirectory()` so usage.db always lands beside metadata.json / Profiles
     /// rather than re-deriving (and risking drifting from) the app-support location.
@@ -45,7 +48,16 @@ extension AppModel {
     private func pollUsageOnce() async {
         guard usageTrackingEnabled, usagePollIntervalMinutes > 0, !isApplyingStagedUpdate else { return }
         await refreshUsage(interactive: false)
-        await usageHistory.prune(now: Date())
+        // The master switch can flip off during the refresh above; re-check before pruning so a
+        // toggle-off never opens or mutates usage.db after it — "off stops all storage".
+        guard usageTrackingEnabled else { return }
+        // Retention shifts at most once a day, but the poll can tick every 5 minutes (adaptive
+        // lane) and each prune is a full-table window-scan + vacuum. Run it at most once per
+        // interval so the cadence doesn't churn the DB for a boundary that rarely moves.
+        let now = Date()
+        if let last = lastUsagePruneAt, now.timeIntervalSince(last) < Self.usagePruneInterval { return }
+        lastUsagePruneAt = now
+        await usageHistory.prune(now: now)
     }
 
     func stopUsagePolling() {

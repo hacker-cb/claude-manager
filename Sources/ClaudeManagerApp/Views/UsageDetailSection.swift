@@ -109,7 +109,18 @@ struct UsageDetailSection: View {
         case .rateLimited: return ("rate limited", true)
         case .offline: return ("offline", false)
         case .loginNeeded: return ("sign in to refresh", true)
-        case .noSource: return ("authorize keychain access", true)
+        // `.noSource` collapses every token-read failure, so the remedy comes from the actual
+        // cause — a signed-out account must not be told to authorize the keychain.
+        case .noSource: return (noSourceHeaderNote, true)
+        }
+    }
+
+    /// A short header note for `.noSource`, keyed on why the token couldn't be read.
+    private var noSourceHeaderNote: String {
+        switch failure {
+        case .noTokenCache: "not signed in"
+        case .keychainUnavailable: "authorize keychain access"
+        default: "source unavailable"
         }
     }
 
@@ -118,7 +129,7 @@ struct UsageDetailSection: View {
         if let usage {
             switch usage.state {
             case .loginNeeded: return "Sign in to this account in Claude to see usage."
-            case .noSource: return "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+            case .noSource: return noSourceEmptyNote
             case .offline: return "Offline — no usage yet."
             default: return nil
             }
@@ -128,6 +139,17 @@ struct UsageDetailSection: View {
         case .keychainUnavailable: return "Refresh to authorize keychain access."
         case .some: return "Usage unavailable for this account."
         case nil: return nil
+        }
+    }
+
+    /// The full-sentence `.noSource` note, keyed on the token-read failure — a signed-out account
+    /// reads "not signed in", not the keychain prompt that can't fix it.
+    private var noSourceEmptyNote: String {
+        switch failure {
+        case .noTokenCache: "This account isn't signed in on this profile."
+        case .keychainUnavailable:
+            "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+        default: "Usage source unavailable for this account."
         }
     }
 }
@@ -143,7 +165,7 @@ private struct LimitRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.callout)
-            UsageBar(fraction: limit.utilization, level: .forLimit(limit))
+            UsageBar(fraction: limit.utilization, level: limit.displaySeverity)
             HStack(spacing: 6) {
                 Text("\(UsageFormat.percent(limit.utilization)) used").font(.caption)
                 if let resets = UsageFormat.resets(limit.resetsAt, now: now) {

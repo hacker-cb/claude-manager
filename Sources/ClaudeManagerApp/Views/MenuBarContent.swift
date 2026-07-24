@@ -57,6 +57,11 @@ struct MenuBarContent: View {
                     systemImage: model.primaryProfile?.isRunning == true
                         ? "person.crop.circle.fill" : "person.crop.circle"
                 )
+                .accessibilityLabel(rowAccessibilityLabel(
+                    "Default profile",
+                    isRunning: model.primaryProfile?.isRunning == true,
+                    bindingID: TokenBinding.defaultID
+                ))
             }
             .disabled(model.isApplyingStagedUpdate)
 
@@ -71,6 +76,11 @@ struct MenuBarContent: View {
                             managed.profile.displayName + usageSuffix(managed.profile.id),
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
+                        .accessibilityLabel(rowAccessibilityLabel(
+                            managed.profile.displayName,
+                            isRunning: managed.isRunning,
+                            bindingID: managed.profile.id
+                        ))
                     }
                     .disabled(model.isApplyingStagedUpdate)
                 }
@@ -130,6 +140,13 @@ struct MenuBarContent: View {
     /// or there's no binding limit yet — so a menu row shows its own worst limit at a glance,
     /// together with how long until it lets go. The menu is rebuilt each time it opens, so the
     /// countdown here is current without a ticker.
+    /// The running/stopped state is carried only by the filled/hollow SF Symbol glyph, which
+    /// VoiceOver reads identically — so spell it out for assistive tech here, keeping the visible
+    /// row text uncluttered (the glyph is the sighted cue).
+    private func rowAccessibilityLabel(_ name: String, isRunning: Bool, bindingID: String) -> String {
+        "\(name), \(isRunning ? "running" : "not running")\(usageSuffix(bindingID))"
+    }
+
     private func usageSuffix(_ bindingID: String) -> String {
         guard model.usageTrackingEnabled, let usage = model.usage(forBinding: bindingID) else { return "" }
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,

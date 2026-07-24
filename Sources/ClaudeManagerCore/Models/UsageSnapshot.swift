@@ -200,6 +200,10 @@ public struct UsageSnapshot: Codable, Sendable, Equatable {
     /// **active** window (falling back to the overall highest when nothing is marked
     /// active). This is what the sidebar and menu-bar surfaces show, so the fast-moving
     /// window about to bite is the one displayed — not a fixed 7d.
+    ///
+    /// The fallback is display-only: `LimitEvaluator.warnings` deliberately does *not* mirror it,
+    /// so an all-inactive snapshot can still show a number without also raising a notification for
+    /// a window the server marked inactive.
     public var bindingLimit: UsageLimit? {
         let active = limits.filter(\.isActive)
         let pool = active.isEmpty ? limits : active

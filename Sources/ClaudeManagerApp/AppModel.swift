@@ -108,8 +108,10 @@ final class AppModel: ObservableObject {
     /// The background usage poll; mirrors `monitorTask`. Non-private for `AppModel+Usage`.
     var usagePollTask: Task<Void, Never>?
     /// Single-flights `refreshUsage`: `@MainActor` makes the check-and-set atomic, so a manual
-    /// Refresh overlapping a scheduled poll can't both fetch.
-    var isRefreshingUsage = false
+    /// Refresh overlapping a scheduled poll can't both fetch. `@Published` because the detail
+    /// panes bind it to disable the Refresh button and show "Checking usage…" — without it those
+    /// views wouldn't re-render when a manual refresh starts or finishes.
+    @Published var isRefreshingUsage = false
     /// Set when an interactive Refresh arrives mid-flight, so one more interactive round follows.
     var pendingInteractiveRefresh = false
     /// Bumped whenever the master switch disowns the pass in flight (toggle-off, or off→on). A
@@ -122,6 +124,9 @@ final class AppModel: ObservableObject {
     var usageRefreshTask: Task<UsageRefreshResult, Never>?
     var lastKnownBindingIDs: Set<String> = []
     var lastKnownAnyRunning = false
+    /// When usage history was last pruned, so the retention sweep runs on a coarse schedule
+    /// (`usagePruneInterval`) rather than on every poll tick.
+    var lastUsagePruneAt: Date?
 
     @Published var usageTrackingEnabled: Bool {
         didSet {

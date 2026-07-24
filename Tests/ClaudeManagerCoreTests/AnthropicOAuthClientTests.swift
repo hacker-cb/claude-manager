@@ -148,7 +148,8 @@ struct AnthropicOAuthClientTests {
     @Test
     func parseRetryAfterHandlesSecondsDateAndGarbage() {
         #expect(AnthropicOAuthClient.parseRetryAfter("120") == 120)
-        #expect(AnthropicOAuthClient.parseRetryAfter("0") == nil)
+        #expect(AnthropicOAuthClient
+            .parseRetryAfter("0") == 0) // "retry now" — caller's floor governs, not the 5-min default
         #expect(AnthropicOAuthClient.parseRetryAfter("-5") == nil)
         #expect(AnthropicOAuthClient.parseRetryAfter("nonsense") == nil)
         #expect(AnthropicOAuthClient.parseRetryAfter(nil) == nil)

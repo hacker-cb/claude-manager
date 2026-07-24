@@ -144,6 +144,20 @@ struct DesktopSafeStorageProviderTests {
         }
     }
 
+    @Test
+    func stringEncodedExpiresAtIsParsedNotTreatedAsUnknown() async throws {
+        try await withTempDir { dir in
+            // Electron has written expiresAt as a JSON string; it must parse to the real date, not
+            // fall through to .distantFuture (which would make an expired token look live and rank
+            // it as never-expiring in election).
+            let cache: [String: Any] = [inferenceCompositeKey(): ["token": "T", "expiresAt": "1785320075857"]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(abs(token.expiresAt.timeIntervalSince1970 - 1_785_320_075.857) < 0.01)
+        }
+    }
+
     // MARK: - Failure modes (all non-fatal)
 
     @Test

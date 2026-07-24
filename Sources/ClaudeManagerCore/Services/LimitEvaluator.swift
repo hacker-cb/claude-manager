@@ -59,7 +59,10 @@ public struct LimitEvaluator: Sendable {
 
     public init() {}
 
-    /// Warnings for every active limit in the snapshot (at most one per limit).
+    /// Warnings for every active limit in the snapshot (at most one per limit). Deliberately
+    /// active-only: a notification interrupts, so a window the server marks inactive must not
+    /// raise one — even though `bindingLimit` may still *show* it (a glanceable number is lower
+    /// stakes than an alert). See `inactiveLimitsAreIgnored`.
     public func warnings(for snapshot: UsageSnapshot, now: Date) -> [UsageWarning] {
         snapshot.limits.filter(\.isActive).compactMap { warning(for: $0, now: now) }
     }
