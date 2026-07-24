@@ -125,6 +125,25 @@ struct DesktopSafeStorageProviderTests {
         }
     }
 
+    @Test
+    func electsValidExpiryOverAMalformedSiblingEntry() async throws {
+        try await withTempDir { dir in
+            let org2 = "99999999-8888-7777-6666-555555555555"
+            let malformedKey = "\(clientID):\(org2):https://api.anthropic.com:user:inference user:profile"
+            let cache: [String: Any] = [
+                // A genuinely valid inference token with a real expiry.
+                inferenceCompositeKey(): ["token": "VALID", "expiresAt": 1_785_320_075_857],
+                // A sibling inference entry (another org) whose expiresAt is missing — its expiry is
+                // unknowable, so it must NOT be treated as the latest and outrank the valid token.
+                malformedKey: ["token": "MALFORMED"]
+            ]
+            let url = try writeConfig(cache: cache, into: dir)
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "VALID")
+        }
+    }
+
     // MARK: - Failure modes (all non-fatal)
 
     @Test

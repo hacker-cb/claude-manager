@@ -94,6 +94,12 @@ public struct UsageService: Sendable {
         now: Date = Date(),
         interactive: Bool = false
     ) async -> UsageRefreshResult {
+        // The master switch cancels this pass's task on toggle-off, and every phase below reads a
+        // keychain token or calls the network — so cancellation is checked before each, not only
+        // before `/usage`. Resolving already-past a check still reads tokens, but the pass then
+        // fetches nothing and writes nothing, which is what "off stops all polling" (README /
+        // SECURITY.md) promises for the work that has and hasn't happened yet.
+        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: [:]) }
         var resolved = await resolver.resolve(bindings: bindings, interactive: interactive, now: now)
 
         // Fleet-level key self-heal: if EVERY binding failed to *decrypt* (a rotated
@@ -108,7 +114,9 @@ public struct UsageService: Sendable {
         // Settle identities *before* any usage is fetched, then fold the ones that turn out to be
         // the same account. Order matters: N launchers on one login only reveal themselves as one
         // account once `/profile` has answered, and folding after fetching would already have
-        // spent N calls and stored N rows for it.
+        // spent N calls and stored N rows for it. Gated on cancellation so a toggle-off during
+        // resolution stops before spending any `/profile` call.
+        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: resolved.failures) }
         let named = await identified(resolved.accounts, now: now, interactive: interactive)
         let settled = resolver.regroup(named, now: now)
 
@@ -324,10 +332,10 @@ extension ResolvedAccount {
 
     /// Merge a `/profile` identity in.
     ///
-    /// A **hinted** account keeps its own uuid: that hint *is* the account UUID, written by Claude
-    /// itself, and every persistent row is already keyed on it — so it only adopts the naming
-    /// fields. A **provisional** account adopts the uuid too: that authoritative answer is exactly
-    /// what it was waiting for, and it stops being provisional.
+    /// `/profile` is authoritative about *which account this token belongs to*, so its uuid is
+    /// adopted for every account — hinted or provisional — overriding a config hint that a
+    /// re-login could have left stale. The token's own coarse fields (org, plan, tier) still win
+    /// where it has them; only the naming fields and the uuid come from `/profile`.
     func named(by profile: AccountIdentity) -> ResolvedAccount {
         var updated = self
         updated.identity.email = profile.email

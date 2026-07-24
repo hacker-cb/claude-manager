@@ -121,6 +121,36 @@ struct UsageServiceTests {
     }
 
     @Test
+    func staleAccountHintDoesNotServeThePreviousAccountsIdentity() async {
+        // A launcher signed out and back into a *different* account, but its config
+        // `lastKnownAccountUuid` still points at the previous one. The new token's fingerprint has
+        // never been seen, so the previous account's cached `/profile` must NOT be reused off the
+        // stale hint — the unseen token confirms authoritatively via its own `/profile`, or its
+        // usage would be filed under, and shown as, the wrong account.
+        let history = UsageHistoryStore(path: ":memory:")
+
+        // Pass 1: signed into acctA. Caches acctA's identity (by acctA's token fingerprint).
+        let http1 = ScriptedHTTP(usage: usageBody, accountUUID: "acctA")
+        let s1 = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", value: "TK-old", lastKnown: "acctA"))]),
+            http: http1, history: history
+        )
+        let r1 = await s1.refresh(bindings: [binding("p")], now: now)
+        #expect(r1.accounts.first?.identity.uuid == "acctA")
+
+        // Pass 2: same launcher, a *new* token (re-login to acctB), hint still says acctA.
+        let http2 = ScriptedHTTP(usage: usageBody, accountUUID: "acctB")
+        let s2 = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", value: "TK-new", lastKnown: "acctA"))]),
+            http: http2, history: history
+        )
+        let r2 = await s2.refresh(bindings: [binding("p")], now: now.addingTimeInterval(120))
+        #expect(r2.accounts.first?.identity.uuid == "acctB") // authoritative, not the stale hint
+        #expect(http2.profileCallCount == 1) // the unseen fingerprint forced a fresh lookup
+        #expect(await history.sampleCount(accountUUID: "acctB") == 1)
+    }
+
+    @Test
     func profileFailureKeepsProvisionalIdentity() async {
         // `/profile` unreachable → keep the provisional key rather than dropping the account;
         // usage still works, just keyed per binding until a later poll settles it.

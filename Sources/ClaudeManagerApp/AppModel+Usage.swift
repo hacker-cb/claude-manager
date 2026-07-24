@@ -69,6 +69,13 @@ extension AppModel {
             // per-account calls and write their rows after the user said stop.
             usageRefreshTask?.cancel()
             usageRefreshTask = nil
+            // Disown that pass so it can't repopulate the state we clear below when it resumes,
+            // and release the single-flight lock + interactive debt — otherwise re-enabling
+            // tracking is swallowed by the `isRefreshingUsage` guard the dead pass never cleared,
+            // and no fetch happens until the next scheduled poll.
+            usageRefreshGeneration += 1
+            isRefreshingUsage = false
+            pendingInteractiveRefresh = false
             usageByBinding = [:]
             usageBindingFailures = [:]
         }
@@ -77,12 +84,17 @@ extension AppModel {
     /// Seconds until the next poll — the cadence math lives in (and is tested in) the core; the
     /// app only supplies the running-accounts fact it can't compute headless.
     func usagePollSleepInterval() -> TimeInterval {
-        let anyRunning = primaryProfile?.isRunning == true || profiles.contains(where: \.isRunning)
-        return UsageService.pollIntervalSeconds(
+        UsageService.pollIntervalSeconds(
             minutes: usagePollIntervalMinutes,
             adaptiveEnabled: usageAdaptiveEnabled,
-            anyRunning: anyRunning
+            anyRunning: anyProfileRunning
         )
+    }
+
+    /// Any profile — the default or a clone — currently running. It drives the adaptive cadence,
+    /// which the sleep-interval math and the running-set-change check must read the same way.
+    var anyProfileRunning: Bool {
+        primaryProfile?.isRunning == true || profiles.contains(where: \.isRunning)
     }
 
     // MARK: - Refresh
@@ -98,7 +110,7 @@ extension AppModel {
         // The running set decides the cadence, and the sleeping poll task computed its interval
         // before that changed. Opening an account would otherwise wait out the whole idle
         // interval — up to an hour — before the 5-minute lane the settings promise kicks in.
-        let running = primaryProfile?.isRunning == true || profiles.contains(where: \.isRunning)
+        let running = anyProfileRunning
         if running != lastKnownAnyRunning {
             lastKnownAnyRunning = running
             if usageAdaptiveEnabled { restartUsagePolling() }
@@ -133,6 +145,10 @@ extension AppModel {
             return
         }
         isRefreshingUsage = true
+        // Snapshot the generation before suspending: a master-switch toggle-off (or off→on) while
+        // this pass is awaited bumps it, marking this pass superseded so it commits nothing on
+        // resume.
+        let generation = usageRefreshGeneration
 
         // Run the pass as a tracked child task so the master switch can cancel it. The poll loop
         // is cancellable on its own, but a manual Refresh runs in a task the view owns, and the
@@ -142,6 +158,11 @@ extension AppModel {
         let task = Task { await service.refresh(bindings: bindings, interactive: interactive) }
         usageRefreshTask = task
         let result = await task.value
+
+        // Superseded while suspended → the toggle-off that disowned this pass already cleared the
+        // state and reset the lock (or a newer pass now owns it). Commit nothing and touch none of
+        // the shared refresh state.
+        guard generation == usageRefreshGeneration else { return }
         usageRefreshTask = nil
 
         // The master switch can flip off during the await; honor it so we neither repopulate the

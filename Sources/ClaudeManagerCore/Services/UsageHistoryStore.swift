@@ -67,9 +67,9 @@ public actor UsageHistoryStore {
 
     // MARK: - Samples
 
-    /// Record a sample. `snapshot_json` is the canonical restore source; the flat columns are a
-    /// denormalized index; `raw_json` is kept for the inspector but **only on the latest sample
-    /// per account** (older rows' raw is cleared to bound growth).
+    /// Record a sample. `snapshot_json` is the canonical restore source; `raw_json` is kept for
+    /// the inspector but **only on the latest sample per account** (older rows' raw is cleared to
+    /// bound growth).
     public func record(_ sample: UsageSample, rawBody: Data?) {
         guard let db else { return }
         guard let snapshotJSON = Self.encodeSnapshot(sample.snapshot) else { return }
@@ -79,22 +79,15 @@ public actor UsageHistoryStore {
         _ = Self.exec(db, "BEGIN")
         let sql = """
         INSERT INTO usage_samples
-        (account_uuid, captured_at, five_hour_frac, seven_day_frac, binding_frac,
-         extra_used_minor, extra_limit_minor, severity, snapshot_json, raw_json, source)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+        (account_uuid, captured_at, snapshot_json, raw_json, source)
+        VALUES (?1,?2,?3,?4,?5)
         """
         if let stmt = Self.prepare(db, sql) {
             Self.bind(stmt, 1, text: sample.accountUUID)
             Self.bind(stmt, 2, int: Self.millis(sample.capturedAt))
-            Self.bind(stmt, 3, double: sample.snapshot.session?.utilization)
-            Self.bind(stmt, 4, double: sample.snapshot.weeklyAll?.utilization)
-            Self.bind(stmt, 5, double: sample.snapshot.bindingLimit?.utilization)
-            Self.bind(stmt, 6, int: sample.snapshot.extra.map { Int64($0.usedMinor) })
-            Self.bind(stmt, 7, int: sample.snapshot.extra?.limitMinor.map(Int64.init))
-            Self.bind(stmt, 8, text: sample.snapshot.bindingLimit?.severity.rawValue)
-            Self.bind(stmt, 9, text: snapshotJSON)
-            Self.bind(stmt, 10, text: rawBody.flatMap { String(data: $0, encoding: .utf8) })
-            Self.bind(stmt, 11, text: sample.source)
+            Self.bind(stmt, 3, text: snapshotJSON)
+            Self.bind(stmt, 4, text: rawBody.flatMap { String(data: $0, encoding: .utf8) })
+            Self.bind(stmt, 5, text: sample.source)
             Self.step(stmt)
         }
         // Keep raw_json only on the account's newest row — computed *after* insert (against the
@@ -300,31 +293,6 @@ public actor UsageHistoryStore {
             subscriptionType: Self.text(stmt, 4),
             rateLimitTier: Self.text(stmt, 5)
         )
-    }
-
-    /// The stored `/profile` answer for an **account**, whichever token fetched it.
-    ///
-    /// The name is a property of the account, not of the token that asked, so N launchers sharing
-    /// one login should cost one lookup rather than one each. Callers that already know the
-    /// account uuid (it came from the config hint, or a sibling already settled it) use this and
-    /// skip the network entirely; only a binding whose account is still unknown has to fall back
-    /// to the fingerprint key, which is all it has before `/profile` answers.
-    public func profile(accountUUID: String, fetchedAfter: Date) -> AccountIdentity? {
-        guard let db else {
-            let hit = memoryProfiles.values
-                .filter { $0.identity.uuid == accountUUID && $0.fetchedAt >= fetchedAfter }
-                .max { $0.fetchedAt < $1.fetchedAt }
-            return hit?.identity
-        }
-        let sql = """
-        SELECT account_uuid, email, display_name, organization_uuid, subscription_type, rate_limit_tier
-        FROM account_profiles WHERE account_uuid=?1 AND fetched_at>=?2
-        ORDER BY fetched_at DESC LIMIT 1
-        """
-        return readProfile(sql) { stmt in
-            Self.bind(stmt, 1, text: accountUUID)
-            Self.bind(stmt, 2, int: Self.millis(fetchedAfter))
-        }
     }
 
     /// Remember a `/profile` answer so the fleet costs one lookup per token, not one per poll.

@@ -41,15 +41,27 @@ public struct UsageLimitsParser: Sendable {
         if let scope = dict["scope"] as? [String: Any], let model = scope["model"] as? [String: Any] {
             modelName = string(model["display_name"])
         }
+        let util = fraction(fromPercent: dict["percent"])
         return UsageLimit(
             rawKind: kind,
             group: string(dict["group"]),
-            utilization: fraction(fromPercent: dict["percent"]),
+            utilization: util,
             resetsAt: date(dict["resets_at"]),
             severity: UsageSeverity.parse(string(dict["severity"])),
-            isActive: bool(dict["is_active"]),
+            isActive: activeFlag(dict["is_active"], utilization: util, reset: dict["resets_at"]),
             scopeModelName: modelName
         )
+    }
+
+    /// Whether a window counts as active. The server's explicit `is_active` wins when present as a
+    /// real boolean; absent or mistyped, it falls back to active-if-used (`util > 0` or a live
+    /// reset) — the same rule the typed-fallback path uses, so both parse routes agree on a missing
+    /// field. Defaulting to `false` here instead dropped a near-cap window from `LimitEvaluator`,
+    /// so a limit-approaching notification never fired.
+    private func activeFlag(_ any: Any?, utilization: Double, reset: Any?) -> Bool {
+        if let b = any as? Bool { return b }
+        if let n = any as? NSNumber { return n.boolValue }
+        return utilization > 0 || present(reset)
     }
 
     // MARK: - Typed fallback (older servers without limits[])

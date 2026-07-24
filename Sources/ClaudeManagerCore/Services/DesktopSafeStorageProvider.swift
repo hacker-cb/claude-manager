@@ -114,12 +114,11 @@ public struct DesktopSafeStorageProvider: TokenProvider {
     ) -> (String, [String: Any])? {
         entries
             .filter { predicate($0.0) }
-            .max { expiry(from: $0.1["expiresAt"]) < expiry(from: $1.1["expiresAt"]) }
+            .max { electionRank($0.1["expiresAt"]) < electionRank($1.1["expiresAt"]) }
     }
 
-    /// `expiresAt` is epoch **milliseconds**. A missing/odd value → `.distantFuture` so the
-    /// poller still attempts the call; a genuinely dead token then fails 401 (terminal).
-    private func expiry(from any: Any?) -> Date {
+    /// `expiresAt` is epoch **milliseconds**, or nil when absent/non-numeric.
+    private func parsedExpiry(from any: Any?) -> Date? {
         let millis: Double? = if let number = any as? NSNumber {
             number.doubleValue
         } else if let double = any as? Double {
@@ -127,8 +126,21 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         } else {
             nil
         }
-        guard let millis else { return .distantFuture }
-        return Date(timeIntervalSince1970: millis / 1000)
+        return millis.map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+
+    /// The chosen entry's expiry. A missing/odd value → `.distantFuture` so the poller still
+    /// attempts the call; a genuinely dead token then fails 401 (terminal).
+    private func expiry(from any: Any?) -> Date {
+        parsedExpiry(from: any) ?? .distantFuture
+    }
+
+    /// Ranking for **election** among sibling entries: a parseable expiry ranks by its value, a
+    /// missing/odd one ranks below every valid expiry (`.distantPast`) — the opposite sentinel to
+    /// `expiry`. Reusing `.distantFuture` here would let a malformed entry, whose expiry is
+    /// unknowable, outrank a genuinely valid token in the same cache and get elected over it.
+    private func electionRank(_ any: Any?) -> Date {
+        parsedExpiry(from: any) ?? .distantPast
     }
 
     /// Scopes are the space-separated tail after the audience in the composite key. Matched

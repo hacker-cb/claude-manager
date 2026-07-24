@@ -61,6 +61,10 @@ public struct AccountResolver: Sendable {
         var failures: [String: TokenProviderError] = [:]
 
         for binding in bindings {
+            // Stop reading keychain tokens the moment the master switch cancels the pass; the
+            // caller checks cancellation again before fetching, so a partial resolve fetches
+            // nothing.
+            if Task.isCancelled { break }
             switch await provider.token(for: binding, interactive: interactive) {
             case let .success(token):
                 tokensByBinding.append((binding, token))

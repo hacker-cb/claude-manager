@@ -22,8 +22,19 @@ extension UsageService {
         let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
         var settled: [ResolvedAccount] = []
         for account in accounts {
+            // Stop issuing `/profile` calls the moment the master switch cancels the pass — the
+            // remaining accounts keep whatever identity they arrived with, unfetched.
+            if Task.isCancelled { break }
             let fingerprint = Self.fingerprint(account.token.token)
-            if let cached = await storedName(for: account, fingerprint: fingerprint, after: cutoff) {
+            // The token's own `/profile` answer, keyed by fingerprint, is the only authoritative
+            // source of which account this token belongs to. An account-uuid shortcut off the
+            // config hint used to name a sibling for free — but a stale hint (a launcher signed
+            // out and back into a *different* account, its `lastKnownAccountUuid` not yet updated)
+            // then served the previous account's identity, filing this token's usage under the
+            // wrong account. So every distinct token confirms via `/profile` once per TTL instead;
+            // siblings still fold into one account afterwards (regroup keys on the authoritative
+            // uuid `/profile` returns), and a cloned sibling shares the token, hence the cache hit.
+            if let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) {
                 settled.append(account.named(by: cached))
             } else if await mayCall(account, fingerprint: fingerprint, now: now, interactive: interactive) {
                 await settled.append(fetchIdentity(account, fingerprint: fingerprint, now: now))
@@ -32,27 +43,6 @@ extension UsageService {
             }
         }
         return settled
-    }
-
-    /// A stored name for this account, if one is fresh enough.
-    ///
-    /// Preferring the **account** key is what makes N launchers on one login cost one `/profile`
-    /// instead of N: they hold different tokens, so a fingerprint lookup misses for every sibling
-    /// even though the answer — an email, a display name — is a property of the account they
-    /// share. A provisional binding has no account key yet, so for it the fingerprint is all
-    /// there is.
-    private func storedName(
-        for account: ResolvedAccount,
-        fingerprint: String,
-        after cutoff: Date
-    ) async -> AccountIdentity? {
-        if !account.isProvisionalIdentity {
-            let uuid = account.identity.uuid
-            if let byAccount = await history.profile(accountUUID: uuid, fetchedAfter: cutoff) {
-                return byAccount
-            }
-        }
-        return await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff)
     }
 
     /// Whether `/profile` may be called for this account right now: only while it is still

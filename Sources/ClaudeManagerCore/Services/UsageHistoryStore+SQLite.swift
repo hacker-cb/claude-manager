@@ -36,12 +36,6 @@ extension UsageHistoryStore {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_uuid TEXT NOT NULL,
             captured_at INTEGER NOT NULL,
-            five_hour_frac REAL,
-            seven_day_frac REAL,
-            binding_frac REAL,
-            extra_used_minor INTEGER,
-            extra_limit_minor INTEGER,
-            severity TEXT,
             snapshot_json TEXT NOT NULL,
             raw_json TEXT,
             source TEXT NOT NULL

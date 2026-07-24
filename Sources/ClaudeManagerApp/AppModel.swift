@@ -112,6 +112,11 @@ final class AppModel: ObservableObject {
     var isRefreshingUsage = false
     /// Set when an interactive Refresh arrives mid-flight, so one more interactive round follows.
     var pendingInteractiveRefresh = false
+    /// Bumped whenever the master switch disowns the pass in flight (toggle-off, or off→on). A
+    /// pass suspended on its `await` compares this after resuming and, if it changed, commits
+    /// nothing and leaves the single-flight state to whoever owns the current generation — so a
+    /// cancelled pass can't repopulate state the toggle-off just cleared, nor hold the lock shut.
+    var usageRefreshGeneration = 0
     /// The usage pass in flight, so the master switch can cancel it mid-fleet. The two `lastKnown`
     /// values are the previous resolve's launcher set and running-state, to spot a change.
     var usageRefreshTask: Task<UsageRefreshResult, Never>?

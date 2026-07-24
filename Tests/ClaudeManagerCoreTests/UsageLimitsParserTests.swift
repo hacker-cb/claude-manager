@@ -144,6 +144,33 @@ struct UsageLimitsParserTests {
     }
 
     @Test
+    func limitsMissingIsActiveFallsBackToActiveIfUsed() throws {
+        // A near-cap window whose is_active is absent must not be dropped as inactive: it falls
+        // back to active-if-used (the same rule the typed path applies), so a limit-approaching
+        // notification still fires. Defaulting to false here used to silence it.
+        let json = """
+        { "limits": [
+            {"kind":"weekly_all","percent":95},
+            {"kind":"session","percent":0,"resets_at":"2026-07-23T19:00:00.000000+00:00"},
+            {"kind":"weekly_scoped","percent":0,"scope":{"model":{"display_name":"Fable"}}}
+        ] }
+        """
+        let snap = try #require(parser.parse(data(json)))
+        #expect(snap.weeklyAll?.isActive == true) // 95% used → active
+        #expect(snap.session?.isActive == true) // 0% but a live reset → active
+        #expect(snap.weeklyScoped.first?.isActive == false) // 0%, no reset → inactive
+    }
+
+    @Test
+    func limitsExplicitIsActiveFalseWinsOverUsage() throws {
+        // A present, real `is_active: false` is authoritative even for a used window — the
+        // fallback only fills in for an absent/mistyped field.
+        let json = #"{ "limits": [ {"kind":"weekly_all","percent":80,"is_active":false} ] }"#
+        let snap = try #require(parser.parse(data(json)))
+        #expect(snap.weeklyAll?.isActive == false)
+    }
+
+    @Test
     func integerAndStringNumbersBothCoerce() throws {
         // percent as int and as string; both must land as fractions.
         let json = """

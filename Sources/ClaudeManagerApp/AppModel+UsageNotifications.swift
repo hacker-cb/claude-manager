@@ -7,10 +7,15 @@ import UserNotifications
 /// most-severe warning per limit. All off when notifications are disabled.
 extension AppModel {
     func notifyLimits(for accounts: [AccountUsage]) async {
-        guard usageNotificationsEnabled else { return }
+        guard usageTrackingEnabled, usageNotificationsEnabled else { return }
         let evaluator = LimitEvaluator()
         let now = Date()
         for account in accounts {
+            // Re-checked each account: this suspends on every `add`/ledger call, and the user can
+            // flip the master switch (or notifications) off on the same actor during a suspension.
+            // "Off stops all notifications" (Settings copy, SECURITY.md) has to hold for the
+            // accounts this loop hasn't reached yet, not only the ones before the toggle.
+            guard usageTrackingEnabled, usageNotificationsEnabled else { return }
             guard case .fresh = account.state, let snapshot = account.snapshot else { continue }
             for warning in evaluator.warnings(for: snapshot, now: now) {
                 await notifyIfNew(warning, account: account, now: now)
