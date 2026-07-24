@@ -50,10 +50,10 @@ struct MenuBarContent: View {
             Button {
                 Task { await model.openReal() }
             } label: {
+                // No " — running" text: the filled/hollow glyph already carries that, and
+                // repeating it in words pushed the usage figure further out of alignment.
                 Label(
-                    "Default profile"
-                        + (model.primaryProfile?.isRunning == true ? " — running" : "")
-                        + usageSuffix(TokenBinding.defaultID),
+                    "Default profile" + usageSuffix(TokenBinding.defaultID),
                     systemImage: model.primaryProfile?.isRunning == true
                         ? "person.crop.circle.fill" : "person.crop.circle"
                 )
@@ -68,9 +68,7 @@ struct MenuBarContent: View {
                         Task { await model.open(managed.profile) }
                     } label: {
                         Label(
-                            managed.profile.displayName
-                                + (managed.isRunning ? " — running" : "")
-                                + usageSuffix(managed.profile.id),
+                            managed.profile.displayName + usageSuffix(managed.profile.id),
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
                     }
