@@ -162,6 +162,15 @@ public struct ExtraUsage: Codable, Sendable, Equatable {
     public var isUnlimited: Bool {
         isEnabled && limitMinor == nil
     }
+
+    /// The fraction to fill the extra-usage bar: the server's `utilization` when reported, else
+    /// used ÷ cap (guarding a zero cap). Nil when there's no cap to measure against (unlimited /
+    /// unreported), so the view knows not to draw a bar. Keeps the used÷limit math (and its
+    /// divide-by-zero guard) in one tested place instead of a SwiftUI body.
+    public var displayUtilization: Double? {
+        guard let limitMinor else { return nil }
+        return utilization ?? (Double(usedMinor) / Double(max(1, limitMinor)))
+    }
 }
 
 /// A parsed, unit-normalized snapshot of one account's plan usage. `limits` is the

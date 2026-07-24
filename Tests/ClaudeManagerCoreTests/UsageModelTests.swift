@@ -18,11 +18,21 @@ struct UsageModelTests {
     }
 
     @Test
-    func scopedWeeklyBarShownForMaxTeamAndUnknownPlan() {
-        #expect(AccountIdentity(uuid: "a", subscriptionType: "max").showsScopedWeeklyLimit)
-        #expect(AccountIdentity(uuid: "a", subscriptionType: "team").showsScopedWeeklyLimit)
-        #expect(AccountIdentity(uuid: "a", subscriptionType: nil).showsScopedWeeklyLimit)
-        #expect(!AccountIdentity(uuid: "a", subscriptionType: "pro").showsScopedWeeklyLimit)
+    func extraUsageDisplayUtilizationPrefersServerThenDividesGuardingZero() {
+        func extra(used: Int, limit: Int?, util: Double?) -> ExtraUsage {
+            ExtraUsage(
+                isEnabled: true,
+                usedMinor: used,
+                limitMinor: limit,
+                utilization: util,
+                currency: "USD"
+            )
+        }
+        #expect(extra(used: 4200, limit: 100_000, util: 0.042).displayUtilization == 0.042) // server wins
+        #expect(extra(used: 5000, limit: 10000, util: nil).displayUtilization == 0.5) // used ÷ cap
+        #expect(extra(used: 5000, limit: nil, util: nil).displayUtilization == nil) // no cap → no bar
+        #expect(extra(used: 5000, limit: 0, util: nil)
+            .displayUtilization == 5000) // zero cap guarded, no crash
     }
 
     @Test

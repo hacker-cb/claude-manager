@@ -58,8 +58,7 @@ struct AccountResolverTests {
             "p2": .success(token(binding: "p2", org: "org-A"))
         ])
         #expect(result.accounts.count == 2)
-        let allProvisional = result.accounts.allSatisfy(\.isProvisionalIdentity)
-        #expect(allProvisional)
+        // Keyed by binding id (their only local identifier) until `/profile` supplies the real uuid.
         #expect(Set(result.accounts.map(\.identity.uuid)) == ["p1", "p2"])
     }
 
@@ -92,8 +91,6 @@ struct AccountResolverTests {
         ])
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.identity.uuid == "acct-9")
-        // A hinted identity is authoritative enough to key on — no `/profile` round-trip needed.
-        #expect(result.accounts.first?.isProvisionalIdentity == false)
     }
 
     // MARK: - Election

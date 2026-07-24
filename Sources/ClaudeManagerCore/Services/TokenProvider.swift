@@ -63,10 +63,6 @@ public struct DesktopToken: Sendable, Equatable {
     public var hasInferenceScope: Bool {
         scopes.contains(CoreConstants.oauthInferenceScope)
     }
-
-    public var hasProfileScope: Bool {
-        scopes.contains(CoreConstants.oauthProfileScope)
-    }
 }
 
 /// Why a binding couldn't yield a usable token. Every case is non-fatal — mapped to a

@@ -109,7 +109,6 @@ struct DesktopSafeStorageProviderTests {
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
             #expect(token.token == "PROFILE-ONLY")
             #expect(!token.hasInferenceScope)
-            #expect(token.hasProfileScope)
         }
     }
 

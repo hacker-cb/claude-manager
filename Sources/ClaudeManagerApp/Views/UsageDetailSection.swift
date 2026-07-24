@@ -194,10 +194,7 @@ private struct ExtraUsageRow: View {
                     .font(.caption).foregroundStyle(.secondary)
                 }
             } else if let limitMinor = extra.limitMinor {
-                UsageBar(fraction: extra.utilization ?? (Double(extra.usedMinor) / Double(max(
-                    1,
-                    limitMinor
-                ))))
+                UsageBar(fraction: extra.displayUtilization ?? 0)
                 Text("\(UsageFormat.money(minorUnits: extra.usedMinor, currency: extra.currency)) / "
                     + "\(UsageFormat.money(minorUnits: limitMinor, currency: extra.currency)) spent")
                     .font(.caption).foregroundStyle(.secondary)

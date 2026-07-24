@@ -47,14 +47,4 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         let label = email ?? displayName
         return (label?.isEmpty ?? true) ? nil : label
     }
-
-    /// Whether this account should show the per-model (scoped) weekly bar — only Max and
-    /// Team plans have a scoped limit distinct from the weekly-all limit (mirrors the CLI's
-    /// `Settings/Usage.tsx` rule; nil/unknown plan shows it, matching that source).
-    public var showsScopedWeeklyLimit: Bool {
-        switch subscriptionType?.lowercased() {
-        case "max", "team", nil: true
-        default: false
-        }
-    }
 }

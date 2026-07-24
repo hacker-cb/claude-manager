@@ -10,21 +10,15 @@ public struct ResolvedAccount: Sendable, Equatable {
     /// Every binding (profile / default) that maps to this account — so one `/usage` call
     /// covers them all, and the UI can show "shared with N profiles".
     public var bindingIDs: [String]
-    /// True when no local account-UUID hint was available, so `identity.uuid` is merely the
-    /// binding id. `UsageService` asks `/profile` for the authoritative UUID before anything
-    /// persistent (throttle state, samples, the notification ledger) is keyed on it.
-    public var isProvisionalIdentity: Bool
 
     public init(
         identity: AccountIdentity,
         token: DesktopToken,
-        bindingIDs: [String],
-        isProvisionalIdentity: Bool = false
+        bindingIDs: [String]
     ) {
         self.identity = identity
         self.token = token
         self.bindingIDs = bindingIDs
-        self.isProvisionalIdentity = isProvisionalIdentity
     }
 }
 
@@ -108,8 +102,6 @@ public struct AccountResolver: Sendable {
         result.bindingIDs = group.flatMap(\.bindingIDs).sorted()
         // Prefer an identity that `/profile` actually named; the uuid is shared by construction.
         result.identity = group.first { $0.identity.accountLabel != nil }?.identity ?? result.identity
-        // Provisional only while *every* member still is — one settled answer settles the group.
-        result.isProvisionalIdentity = group.allSatisfy(\.isProvisionalIdentity)
         return result
     }
 
@@ -118,7 +110,7 @@ public struct AccountResolver: Sendable {
     /// being distinct accounts, so keying on the org collapses them and renders one account's
     /// limits for all of them. The config's account-UUID hint (`lastKnownAccountUuid`) is the
     /// only thing that identifies an account locally; without it a binding stands alone until
-    /// `/profile` supplies the authoritative UUID (`UsageService.reconcileIdentity`).
+    /// `/profile` supplies the authoritative UUID (`UsageService.identified` / `fetchIdentity`).
     ///
     /// Deliberately asymmetric: over-splitting costs one extra `/usage` call for a moment,
     /// while collapsing shows the *wrong account's* numbers — so this errs toward splitting.
@@ -132,20 +124,15 @@ public struct AccountResolver: Sendable {
     ) -> ResolvedAccount {
         let elected = elect(members.map(\.token), now: now)
         let bindingIDs = members.map(\.binding.id).sorted()
-        // With no local hint the uuid is just the binding id — provisional until `/profile`.
-        let hinted = elected.lastKnownAccountUUID
+        // With no local hint the uuid is just the binding id, a placeholder until `/profile`
+        // supplies the authoritative account UUID (which `named(by:)` then adopts).
         let identity = AccountIdentity(
-            uuid: hinted ?? elected.bindingID,
+            uuid: elected.lastKnownAccountUUID ?? elected.bindingID,
             organizationUuid: elected.organizationUUID,
             subscriptionType: elected.subscriptionType,
             rateLimitTier: elected.rateLimitTier
         )
-        return ResolvedAccount(
-            identity: identity,
-            token: elected,
-            bindingIDs: bindingIDs,
-            isProvisionalIdentity: hinted == nil
-        )
+        return ResolvedAccount(identity: identity, token: elected, bindingIDs: bindingIDs)
     }
 
     /// Election ladder: a valid token (unexpired AND has the inference scope) beats an invalid

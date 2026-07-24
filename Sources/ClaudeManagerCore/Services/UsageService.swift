@@ -195,11 +195,18 @@ public struct UsageService: Sendable {
             uuid = account.identity.uuid
         }
 
-        switch await client.fetchUsage(
+        let outcome = await client.fetchUsage(
             token: token.token,
             marketingVersion: marketingVersion,
             capturedAt: now
-        ) {
+        )
+        // The master switch can cancel the task *inside* the fetch above (a cancelled URLSession
+        // call surfaces as `.transport`). The app discards this pass via its generation check, but
+        // persistence must stop too: writing a sample or a backoff row here would land in usage.db
+        // after "off", and an offline-backoff row would then serve the account stale on re-enable.
+        // The between-accounts check can't see a cancellation that lands within this one fetch.
+        if Task.isCancelled { return account.usage(latest, state: .fresh) }
+        switch outcome {
         case let .success(fetch):
             let sample = UsageSample(
                 accountUUID: uuid, capturedAt: now, snapshot: fetch.snapshot,
@@ -348,7 +355,6 @@ extension ResolvedAccount {
         // launcher signed out and back in as someone else, or a copied user-data dir — would
         // otherwise keep every sample and notification filed under the wrong account forever.
         updated.identity.uuid = profile.uuid
-        updated.isProvisionalIdentity = false
         return updated
     }
 }

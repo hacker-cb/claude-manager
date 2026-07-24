@@ -120,8 +120,14 @@ struct UsageSidebarIndicator: View {
         if let account = usage.identity.accountLabel { parts.append(account) }
         parts.append("\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used")
         if let resets = UsageFormat.resets(limit.resetsAt, now: now) { parts.append(resets) }
-        if case let .stale(since) = usage.state {
-            parts.append("as of \(UsageFormat.age(since, now: now))")
+        // Qualify any not-current state, not just `.stale`: a rate-limited or offline account still
+        // shows its last-known percentage, and an unqualified number there reads as live — the same
+        // discipline `isQuotableNow` applies on the menu bar.
+        switch usage.state {
+        case let .stale(since): parts.append("as of \(UsageFormat.age(since, now: now))")
+        case .rateLimited: parts.append("rate limited")
+        case .offline: parts.append("offline")
+        case .fresh, .loginNeeded, .noSource: break
         }
         return parts.joined(separator: " · ")
     }
@@ -175,6 +181,9 @@ enum UsageFormat {
         guard let date else { return nil }
         let seconds = date.timeIntervalSince(now)
         guard seconds > 0 else { return "resetting…" }
+        // Under a minute both hours and minutes floor to 0, which would read "resets in 0m"; say
+        // "<1m" for that last minute instead.
+        if seconds < 60 { return "resets in <1m" }
         if seconds < 24 * 3600 {
             let hours = Int(seconds) / 3600
             let minutes = (Int(seconds) % 3600) / 60
