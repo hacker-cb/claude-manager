@@ -95,7 +95,7 @@ public actor UsageHistoryStore {
         // latestRawJSON().
         if let stmt = Self.prepare(db, """
         UPDATE usage_samples SET raw_json=NULL
-        WHERE account_uuid=?1
+        WHERE account_uuid=?1 AND raw_json IS NOT NULL
           AND captured_at < (SELECT MAX(captured_at) FROM usage_samples WHERE account_uuid=?1)
         """) {
             Self.bind(stmt, 1, text: sample.accountUUID)
@@ -295,6 +295,35 @@ public actor UsageHistoryStore {
             subscriptionType: Self.text(stmt, 4),
             rateLimitTier: Self.text(stmt, 5)
         )
+    }
+
+    /// Move any state keyed on a token's *provisional* fingerprint uuid onto its now-authoritative
+    /// account uuid, the first time `/profile` resolves it. Before the account is known, its
+    /// throttle window, cached samples, and notification ledger are keyed on the fingerprint (the
+    /// only id it has); when the uuid flips to the real account these would otherwise be orphaned —
+    /// dropping a standing backoff, hiding last-known usage, and re-firing a notification. A no-op
+    /// once identity is stable (nothing left under the fingerprint) or when the two already match.
+    ///
+    /// The usage throttle's `scope_key` *is* the account uuid (`usageScope(x) == x`); the identity
+    /// scope (`identity:<fp>`) stays keyed by fingerprint and is deliberately not moved.
+    public func reassignAccount(fromFingerprint fingerprint: String, toAccountUUID uuid: String) {
+        guard fingerprint != uuid else { return }
+        guard let db else {
+            if let state = memoryThrottle.removeValue(forKey: fingerprint) {
+                memoryThrottle[uuid] = state // best-effort; the ledger Set isn't re-keyed off-DB
+            }
+            return
+        }
+        for sql in [
+            "UPDATE OR REPLACE throttle_state SET scope_key=?2 WHERE scope_key=?1",
+            "UPDATE usage_samples SET account_uuid=?2 WHERE account_uuid=?1",
+            "UPDATE OR REPLACE notified_thresholds SET account_uuid=?2 WHERE account_uuid=?1"
+        ] {
+            guard let stmt = Self.prepare(db, sql) else { continue }
+            Self.bind(stmt, 1, text: fingerprint)
+            Self.bind(stmt, 2, text: uuid)
+            Self.step(stmt)
+        }
     }
 
     /// Remember a `/profile` answer so the fleet costs one lookup per token, not one per poll.

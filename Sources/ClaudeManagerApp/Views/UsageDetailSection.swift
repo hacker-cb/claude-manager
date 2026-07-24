@@ -131,6 +131,10 @@ struct UsageDetailSection: View {
             case .loginNeeded: return "Sign in to this account in Claude to see usage."
             case .noSource: return noSourceEmptyNote
             case .offline: return "Offline — no usage yet."
+            // Without this the header says "rate limited" while the body falls through to "Not
+            // checked yet — use Refresh", which contradicts it and points at a Refresh that is
+            // itself inside the backoff.
+            case .rateLimited: return "Rate limited — usage will refresh once the window clears."
             default: return nil
             }
         }

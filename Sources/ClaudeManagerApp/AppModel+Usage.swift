@@ -216,14 +216,14 @@ extension AppModel {
     /// Only accounts whose numbers are current are quoted here: a status-bar percentage carries
     /// no hint that it stopped moving, so a stale, offline, rate-limited or signed-out account
     /// must not contribute one.
-    var menuBarUsageSummary: (label: String, fraction: Double)? {
+    var menuBarUsageSummary: String? {
         guard usageTrackingEnabled else { return nil }
         let worst = usageByBinding.values
             .filter(\.isQuotableNow)
             .compactMap(\.displayLimit)
             .max { $0.utilization < $1.utilization }
         guard let worst else { return nil }
-        return (UsageFormat.limitSummary(worst), worst.utilization)
+        return UsageFormat.limitSummary(worst)
     }
 
     // MARK: - Wiring

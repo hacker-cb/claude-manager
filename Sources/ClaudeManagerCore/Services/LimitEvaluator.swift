@@ -49,8 +49,10 @@ public struct LimitEvaluator: Sendable {
     static let sevenDayWindow: TimeInterval = 7 * 24 * 60 * 60
 
     /// Tiers above the 0.70 floor (the sub-floor CLI tiers at 0.25/0.50 are inert under it, so
-    /// they're omitted rather than carried dead).
-    static let fiveHourTiers = [Tier(utilization: 0.90, timePct: 0.72)]
+    /// they're omitted rather than carried dead). Each must sit **below** `absoluteWarning` (0.90)
+    /// or the absolute check fires first and the pace tier is dead — which is exactly what a 0.90
+    /// five-hour tier was, so it warns early at 0.80 instead.
+    static let fiveHourTiers = [Tier(utilization: 0.80, timePct: 0.72)]
     static let sevenDayTiers = [Tier(utilization: 0.75, timePct: 0.60)]
 
     static let floor = 0.70

@@ -35,13 +35,31 @@ extension UsageService {
             // holds now, filing usage under the wrong account.
             if let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) {
                 settled.append(account.named(by: cached))
-            } else if await mayCall(account, fingerprint: fingerprint, now: now, interactive: interactive) {
-                await settled.append(fetchIdentity(account, fingerprint: fingerprint, now: now))
             } else {
-                settled.append(account)
+                var resolved = account
+                if await mayCall(account, fingerprint: fingerprint, now: now, interactive: interactive) {
+                    resolved = await fetchIdentity(account, fingerprint: fingerprint, now: now)
+                }
+                await settled.append(recoveredIfStillProvisional(resolved, fingerprint: fingerprint))
             }
         }
         return settled
+    }
+
+    /// If an account is still provisional (its uuid is the token fingerprint) after the fresh
+    /// lookup, a gate, and any fetch, adopt the uuid from *any* stored `/profile` row for that
+    /// fingerprint — even one past its TTL. The fingerprint→account mapping never goes stale (a
+    /// changed token changes the fingerprint); only the display fields do. Without this the account
+    /// keeps the fingerprint placeholder, and `usage(for:)` would key serve-stale — and the
+    /// throttle and ledger — on it instead of the real account its samples and backoff sit under.
+    private func recoveredIfStillProvisional(
+        _ account: ResolvedAccount,
+        fingerprint: String
+    ) async -> ResolvedAccount {
+        guard account.identity.uuid == fingerprint,
+              let stale = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: .distantPast)
+        else { return account }
+        return account.named(by: stale)
     }
 
     /// Whether `/profile` may be called for this account right now: only while it is still
@@ -110,8 +128,8 @@ extension UsageService {
     /// keys the cache changes with the token.
     ///
     /// A failed lookup is not fatal: the account keeps whatever identity the local token gave it,
-    /// and the next poll tries again. Usage is still fetched and shown — just unnamed, and for a
-    /// binding with no account-UUID hint, still keyed provisionally.
+    /// and the next poll tries again. Usage is still fetched and shown — just unnamed, and keyed by
+    /// the token fingerprint until a later poll settles the authoritative uuid.
     func fetchIdentity(
         _ account: ResolvedAccount,
         fingerprint: String,
@@ -132,6 +150,10 @@ extension UsageService {
                 rateLimitTier: account.identity.rateLimitTier ?? profile.rateLimitTier
             )
             await history.setProfile(identity, tokenFingerprint: fingerprint, fetchedAt: now)
+            // First time this token is identified, move any state it accumulated under its
+            // fingerprint placeholder (a backoff, samples, ledger rows) onto the real account uuid,
+            // so the key flip doesn't orphan them. Idempotent — a no-op once nothing is left there.
+            await history.reassignAccount(fromFingerprint: fingerprint, toAccountUUID: identity.uuid)
             return account.named(by: identity)
         case let .failure(error):
             // Record every failure, but in the **identity** scope — never the account's. That

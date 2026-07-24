@@ -177,7 +177,7 @@ struct MenuBarLabel: View {
 
     @ViewBuilder private var content: some View {
         if let summary = model.menuBarUsageSummary {
-            Label(summary.label, systemImage: "square.stack.3d.up.fill")
+            Label(summary, systemImage: "square.stack.3d.up.fill")
         } else {
             Image(systemName: "square.stack.3d.up.fill")
         }
@@ -185,6 +185,6 @@ struct MenuBarLabel: View {
 
     private var accessibilityText: String {
         guard let summary = model.menuBarUsageSummary else { return "Claude Manager" }
-        return "Claude Manager — \(summary.label) used"
+        return "Claude Manager — \(summary) used"
     }
 }

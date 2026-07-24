@@ -172,4 +172,38 @@ extension UsageServiceTests {
         _ = await service.refresh(bindings: [binding("p")], now: afterTTL)
         #expect(http.profileCallCount == 2) // the day-old answer is re-asked, not trusted
     }
+
+    @Test
+    func expiredTokenPastProfileTTLStillServesLastKnownUsage() async {
+        // Signed out for days: the token has expired and the cached `/profile` is older than its
+        // TTL, so neither the fresh lookup nor a refresh can name it. But the fingerprint→account
+        // mapping is still valid (same token), so identity is recovered from the stale row and the
+        // last-known usage is served under `loginNeeded` — not lost, as it would be if the account
+        // stayed keyed by fingerprint while its samples sit under the real uuid.
+        let history = UsageHistoryStore(path: ":memory:")
+
+        // Pass 1: a live token stores a sample under the authoritative uuid.
+        let http1 = ScriptedHTTP(usage: usageBody, accountUUID: "acct-real")
+        let s1 = makeService(
+            provider: StubProvider(results: ["p": .success(token("p", value: "TK-live"))]),
+            http: http1, history: history
+        )
+        _ = await s1.refresh(bindings: [binding("p")], now: now)
+        #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
+
+        // Pass 2, past the profile TTL: the *same* token (same fingerprint) is now expired.
+        let later = now.addingTimeInterval(UsageService.profileTTLSeconds + 3600)
+        let expired = token("p", value: "TK-live", expiresAt: Date(timeIntervalSince1970: 1))
+        let http2 = ScriptedHTTP(usage: usageBody, accountUUID: "acct-real")
+        let s2 = makeService(
+            provider: StubProvider(results: ["p": .success(expired)]),
+            http: http2, history: history
+        )
+        let result = await s2.refresh(bindings: [binding("p")], now: later)
+        #expect(result.accounts.first?.state == .loginNeeded)
+        #expect(result.accounts.first?.identity.uuid == "acct-real") // recovered, not the fingerprint
+        #expect(result.accounts.first?.snapshot != nil) // last-known usage served, not lost
+        #expect(http2.usageCallCount == 0) // expired → no usage call
+        #expect(http2.profileCallCount == 0) // …and no /profile: the uuid came from the stale row
+    }
 }

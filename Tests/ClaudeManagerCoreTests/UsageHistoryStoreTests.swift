@@ -236,4 +236,48 @@ struct UsageHistoryStoreTests {
         #expect(await store
             .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == true)
     }
+
+    // MARK: - Provisional → authoritative account re-key
+
+    @Test
+    func reassignAccountMovesThrottleSamplesAndLedgerOffTheFingerprint() async {
+        await withStore { store in
+            let fp = "fp16hexdigits00" // stands in for a provisional token fingerprint
+            let uuid = "real-account-uuid"
+            // State written while the account was provisional — all keyed on the fingerprint.
+            await store.setThrottle(
+                ThrottleState(
+                    lastAttemptAt: Date(timeIntervalSince1970: 100),
+                    backoffUntil: Date(timeIntervalSince1970: 1000),
+                    backoffReason: .rateLimited, tokenFingerprint: fp
+                ),
+                scope: fp
+            )
+            await store.record(sample(fp, at: 100), rawBody: nil)
+            await store.markNotified(
+                accountUUID: fp, limitKey: "weekly_all",
+                threshold: 0.9, resetsAt: nil, notifiedAt: Date(timeIntervalSince1970: 100)
+            )
+
+            await store.reassignAccount(fromFingerprint: fp, toAccountUUID: uuid)
+
+            // Everything now lives under the real uuid; nothing is orphaned under the fingerprint.
+            #expect(await store.throttle(scope: uuid)?.backoffReason == .rateLimited)
+            #expect(await store.throttle(scope: fp) == nil)
+            #expect(await store.sampleCount(accountUUID: uuid) == 1)
+            #expect(await store.sampleCount(accountUUID: fp) == 0)
+            #expect(await store.wasNotified(
+                accountUUID: uuid,
+                limitKey: "weekly_all",
+                threshold: 0.9,
+                resetsAt: nil
+            ))
+            #expect(await !store.wasNotified(
+                accountUUID: fp,
+                limitKey: "weekly_all",
+                threshold: 0.9,
+                resetsAt: nil
+            ))
+        }
+    }
 }

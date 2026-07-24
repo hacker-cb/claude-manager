@@ -99,6 +99,16 @@ struct LimitEvaluatorTests {
     // MARK: - Gating
 
     @Test
+    func sessionWarnsOnFastPaceBelowAbsolute() {
+        // 82% of the 5-hour session used only halfway through the window → a pace warning, even
+        // though it is below the 90% absolute threshold. The five-hour tier used to sit at 0.90,
+        // where the absolute check fired first and the pace tier could never trigger.
+        let w = evaluator.warnings(for: snapshot([session(0.82, remaining: 2.5 * 3600)]), now: now)
+        #expect(w.count == 1)
+        #expect(w.first?.severity == .warning)
+    }
+
+    @Test
     func inactiveLimitsAreIgnored() {
         var limit = weekly(0.99, remaining: 3600)
         limit.isActive = false
