@@ -59,6 +59,14 @@ func setWrapperVersion(_ version: Int, atAppPath appPath: String) throws {
     try data.write(to: infoURL)
 }
 
+/// A runner whose `codesign` (and every other tool) is stubbed as succeeding — for the
+/// suites that build launchers to assert on something *other* than the signature.
+/// Forking the real signer per bundle is left to `LauncherSigningTests`, which is
+/// serialized precisely because those subprocesses are what a small CI runner chokes on.
+func stubbedSigningRunner() -> RecordingCommandRunner {
+    RecordingCommandRunner(handler: idleStub)
+}
+
 /// A runner on which no tool can be launched at all (the executable is missing) —
 /// distinct from a tool that ran and failed, which is what `failingCodesignRunner`
 /// models.
@@ -138,12 +146,16 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
     }
 
     /// Runner that delegates `delegated` executables to the real system and routes
-    /// everything else through `stub`. `codesign` is delegated by default alongside
-    /// `iconutil`: a launcher that is not really signed would not really run, so the
-    /// suites exercise the same signing path the app does (on temp bundles only).
-    /// The passthrough survives a later `setHandler` — see the `delegated` field.
+    /// everything else through `stub`. The passthrough survives a later `setHandler`
+    /// — see the `delegated` field.
+    ///
+    /// `codesign` is **not** in the default set: only the signing suites need a real
+    /// signature, and forking `codesign` from every store test costs a subprocess per
+    /// launcher write — enough to wedge a 3-core CI runner (`SystemCommandRunner`
+    /// documents the starvation hazard). Ask for it explicitly via
+    /// `makeStoreEnv(signingForReal: true)`.
     static func delegating(
-        _ delegated: Set<String> = [CoreConstants.iconutilPath, CoreConstants.codesignPath],
+        _ delegated: Set<String> = [CoreConstants.iconutilPath],
         stub: @escaping @Sendable (String, [String]) -> CommandOutput
     ) -> RecordingCommandRunner {
         let runner = RecordingCommandRunner(handler: stub)
@@ -313,10 +325,15 @@ struct StoreEnv {
     }
 }
 
-/// `iconutil` and `codesign` run for real (so icons are genuine `.icns` and launchers
-/// are genuinely signed, both against temp dirs); every other tool is stubbed, so no
-/// process is killed and the Dock is never restarted for real.
+/// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
+/// stubbed, so no process is killed and the Dock is never restarted for real.
+///
+/// `signingForReal: true` additionally runs `codesign` for real against the temp
+/// install dir — what the signature suites assert on. It is opt-in because a real
+/// signature costs a subprocess per launcher write, and every store suite paying that
+/// is enough to wedge a small CI runner.
 func makeStoreEnv(
+    signingForReal: Bool = false,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -325,7 +342,10 @@ func makeStoreEnv(
     let profilesDir = root.appendingPathComponent("profiles")
     try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
     let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
-    let runner = RecordingCommandRunner.delegating(stub: stub)
+    let delegated: Set<String> = signingForReal
+        ? [CoreConstants.iconutilPath, CoreConstants.codesignPath]
+        : [CoreConstants.iconutilPath]
+    let runner = RecordingCommandRunner.delegating(delegated, stub: stub)
     let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
     let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
     let shipItStatePath = root.appendingPathComponent("ShipItState.plist").path

@@ -81,9 +81,8 @@ struct LauncherRebuildTests {
         // both as failed rather than throwing on the first.
         _ = try env.store.add(AddProfileRequest(name: env.name("one")))
         _ = try env.store.add(AddProfileRequest(name: env.name("two")))
-        // Keep `codesign` real (a rebuild that reaches signing must still sign for
-        // real), but stop delegating `iconutil` so it can be made to fail.
-        env.runner.setDelegated([CoreConstants.codesignPath])
+        // Stop delegating `iconutil` so it can be made to fail.
+        env.runner.setDelegated([])
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.iconutilPath {
                 return CommandOutput(exitCode: 1, standardOutput: "", standardError: "boom")

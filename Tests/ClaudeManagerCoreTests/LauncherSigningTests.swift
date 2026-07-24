@@ -5,6 +5,12 @@ import Testing
 /// Every path that writes a launcher bundle must leave it ad-hoc signed: macOS refuses
 /// to execute an unsigned `.app`, so an unsigned launcher checks in with LaunchServices,
 /// shows up in the Dock, and is then killed — the user sees it "hang and never open".
+///
+/// The one suite that runs the **real** `codesign`, and therefore `.serialized`: each
+/// case forks a subprocess per launcher write, and a poolful of those blocking at once
+/// starves the worker threads that have to reap them (`SystemCommandRunner` documents
+/// the same hazard) — harmless on a big machine, a hang on a 3-core CI runner.
+@Suite(.serialized)
 struct LauncherSigningTests {
     let fm = FileManager.default
     let realBinary = "/Applications/Claude.app/Contents/MacOS/Claude"
@@ -178,7 +184,7 @@ struct LauncherSigningTests {
 
     @Test
     func addProducesASignedLauncher() throws {
-        let env = try makeStoreEnv()
+        let env = try makeStoreEnv(signingForReal: true)
         defer { try? fm.removeItem(at: env.root) }
 
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
@@ -188,7 +194,7 @@ struct LauncherSigningTests {
 
     @Test
     func updateKeepsTheLauncherSignedAcrossARename() throws {
-        let env = try makeStoreEnv()
+        let env = try makeStoreEnv(signingForReal: true)
         defer { try? fm.removeItem(at: env.root) }
         defer { Fixture.purgeTrash(displayNamePrefix: env.display("work")) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
@@ -224,7 +230,7 @@ struct LauncherSigningTests {
     /// signature check is the only thing standing between the user and a dead launcher.
     @Test
     func doctorReportsABrokenSealAsAnError() throws {
-        let env = try makeStoreEnv()
+        let env = try makeStoreEnv(signingForReal: true)
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         #expect(!env.store.doctor().contains { $0.severity == .error })
@@ -287,7 +293,7 @@ struct LauncherSigningTests {
 
     @Test
     func rebuildAllReSignsEveryLauncher() throws {
-        let env = try makeStoreEnv()
+        let env = try makeStoreEnv(signingForReal: true)
         defer { try? fm.removeItem(at: env.root) }
         let one = try env.store.add(AddProfileRequest(name: env.name("one"))).profile
         let two = try env.store.add(AddProfileRequest(name: env.name("two"))).profile

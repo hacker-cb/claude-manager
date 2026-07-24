@@ -28,6 +28,10 @@ env:
 jobs:
   build-test-lint:
     runs-on: macos-15
+    # The job normally finishes in ~3 minutes. A cap keeps a hang — e.g. a test that
+    # blocks a runner's small worker pool on a subprocess — from burning the default
+    # six hours before anyone notices it is stuck rather than slow.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
