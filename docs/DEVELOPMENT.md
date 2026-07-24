@@ -80,13 +80,19 @@ parsing, launcher bundle building, marker round-trips, badge/`.icns` rendering
 through the real `iconutil`, and the `ProfileStore` / `Doctor` orchestration against
 temp directories with a mocked command runner.
 
-Launcher bundles are **really ad-hoc signed** in those tests — `codesign` is delegated to
-the real system alongside `iconutil` (no certificate and no network needed; see
-[ARCHITECTURE.md](ARCHITECTURE.md) § macOS facts) and the resulting signature is verified
-through the public Security reader API. Every bundle is built inside a temp install dir,
-never next to the real Claude.app. The one thing that does reach outside it is `~/.Trash`
-— `update`/`remove` trash the old bundle, exactly as in the app — so those suites clean
-up after themselves with `Fixture.purgeTrash`.
+Launcher bundles are **really ad-hoc signed** in `LauncherSigningTests`, which runs the
+real `codesign` (no certificate and no network needed; see
+[ARCHITECTURE.md](ARCHITECTURE.md) § macOS facts) over every write path and verifies the
+result through the public Security reader API. That suite is `.serialized` and the real
+signer is opt-in elsewhere (`makeStoreEnv(signingForReal:)`): each signing forks a
+subprocess, and a poolful of those blocking at once starves the parallel runner's worker
+threads — barely visible on a dev machine, a hang on a small CI runner. Every other suite
+stubs the signer, because it is asserting on something else.
+
+Every bundle is built inside a temp install dir, never next to the real Claude.app. The
+one thing that does reach outside it is `~/.Trash` — `update`/`remove` trash the old
+bundle, exactly as in the app — so those suites clean up after themselves with
+`Fixture.purgeTrash`.
 
 An **opt-in live test** runs against the real Claude.app on disk — LaunchServices
 lookup, version read, and the icon/badge pipeline — installing into a temp directory
