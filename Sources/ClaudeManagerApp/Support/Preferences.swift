@@ -17,7 +17,7 @@ enum PreferenceKeys {
     static let usageTrackingEnabled = "usageTrackingEnabled"
     /// Background poll interval in minutes; `0` means manual-only (no background polling).
     static let usagePollIntervalMinutes = "usagePollIntervalMinutes"
-    /// Whether a running account is polled on the faster adaptive cadence. On by default.
+    /// Whether a running profile is polled on the faster adaptive cadence. On by default.
     static let usageAdaptiveEnabled = "usageAdaptiveEnabled"
     /// Whether limit-approaching reminders are posted. On by default.
     static let usageNotificationsEnabled = "usageNotificationsEnabled"

@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
     let usageHistory: UsageHistoryStore
     let safeStorageKeys = SafeStorageKeyStore()
 
-    /// Latest usage per **binding** id (launcher path / default-account id); a shared account
+    /// Latest usage per **binding** id (launcher path / default-profile id); a shared account
     /// appears under each of its bindings, so a view keyed by profile reads it directly.
     @Published var usageByBinding: [String: AccountUsage] = [:]
     /// Per-binding token failures (login-needed / no-source), for a profile row's state.
