@@ -200,7 +200,7 @@ Quick start:
 ```bash
 make setup   # git hooks + brew bundle (xcodegen, swiftformat, swiftlint)
 make test    # headless core suite
-make run     # build (unsigned) and launch the app
+make run     # build and launch Claude Manager (Dev)
 ```
 
 - [**docs/DEVELOPMENT.md**](docs/DEVELOPMENT.md) — build, test, and tooling.

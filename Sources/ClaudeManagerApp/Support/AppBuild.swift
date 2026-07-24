@@ -10,12 +10,14 @@ import Foundation
 /// deliberately *different* questions — see each property.
 enum AppBuild {
     /// Whether this is a released build (CI injected a tag version) rather than any local
-    /// one — including a locally archived Release, which is still unsigned and unnotarized.
+    /// one — including a locally archived Release, which carries a real Developer ID
+    /// signature (and can even be notarized by hand, docs/RELEASING.md § Local dry run) yet
+    /// is still not a distribution build: the gate is the version, not the signature.
     ///
     /// Gates the things that need a real Developer ID identity to work at all: Sparkle's
     /// updater (a dev build reads every published release as newer than its `0.0.0`
     /// placeholder) and the login item (macOS only honours `SMAppService` registration for
-    /// a signed + notarized app — see docs/RELEASING.md § Launch at login).
+    /// a Developer ID signed + notarized app — see docs/RELEASING.md § Launch at login).
     static var isDistribution: Bool {
         let marketingVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             ?? CoreConstants.devMarketingVersion

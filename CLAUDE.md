@@ -49,6 +49,14 @@ short form:
   the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
   staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
   never add a write below that call, and never sign anywhere but `build`.
+- **Never turn signing off for the app's own build either.** The same execution policy
+  applies one level up: `make build-app` (and CI, which builds through it) takes the ad-hoc
+  identity `project.yml` declares (`CODE_SIGN_IDENTITY: "-"`), and putting
+  `CODE_SIGNING_ALLOWED=NO` back on an `xcodebuild` line drops an `.app` with no
+  `Contents/_CodeSignature` into `build/` — AppleSystemPolicy kills its first launch, so
+  `make run` reads as a ~20 s hang. `codesign -dv` will not catch it (it reports the
+  Mach-O, which the arm64 linker ad-hoc signs on its own); `codesign --verify --strict` on
+  the `.app` will, and `scripts/assert-build-signed.sh` does it in CI.
 - **Keep `CFBundleIconName` out of launcher Info.plists** — otherwise macOS reads
   `Assets.car` and ignores our `.icns`.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of
