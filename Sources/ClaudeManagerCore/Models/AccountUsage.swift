@@ -1,0 +1,43 @@
+import Foundation
+
+/// How current an account's usage data is — drives the honest UI states (fresh vs stale vs a
+/// reason we're not fetching). Every non-`fresh` case still carries whatever snapshot the
+/// store had, so the UI shows the last known numbers rather than blanking.
+public enum UsageState: Sendable, Equatable {
+    /// The newest values we have: either just fetched, or re-served within the per-account floor
+    /// because there was no reason to ask again. `snapshot.capturedAt` carries the age either way.
+    case fresh
+    /// Serving the last stored sample because a refresh genuinely couldn't happen — offline, or
+    /// inside an error backoff. Reserved for that: a deliberate skip is not staleness.
+    case stale(since: Date)
+    /// Token expired or the API rejected it (401/403) — the account needs a fresh login.
+    case loginNeeded
+    /// Backed off after a 429 until this time (nil if the server gave no Retry-After).
+    case rateLimited(until: Date?)
+    /// No usable token source (keychain locked / not authorized, or no token cache).
+    case noSource
+    /// A transport failure (offline); the snapshot, if any, is the last stored one.
+    case offline
+}
+
+/// One account's usage as published to the UI: its identity, the freshest snapshot available
+/// (fresh or stale), the state explaining that, and every binding that maps to it (for
+/// "shared with N profiles").
+public struct AccountUsage: Sendable, Equatable {
+    public var identity: AccountIdentity
+    public var snapshot: UsageSnapshot?
+    public var state: UsageState
+    public var bindingIDs: [String]
+
+    public init(
+        identity: AccountIdentity,
+        snapshot: UsageSnapshot?,
+        state: UsageState,
+        bindingIDs: [String]
+    ) {
+        self.identity = identity
+        self.snapshot = snapshot
+        self.state = state
+        self.bindingIDs = bindingIDs
+    }
+}

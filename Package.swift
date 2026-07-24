@@ -13,7 +13,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "ClaudeManagerCore"
+            name: "ClaudeManagerCore",
+            // The usage-history store talks to the system SQLite via `import SQLite3`;
+            // link libsqlite3 (always present on macOS — no external SwiftPM dependency).
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .testTarget(
             name: "ClaudeManagerCoreTests",

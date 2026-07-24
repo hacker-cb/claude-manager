@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeManagerCore
 import SwiftUI
 
@@ -5,6 +6,7 @@ struct DoctorView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
     @Environment(\.dismiss) private var dismiss
+    @State private var showingRawUsage = false
 
     /// The core diagnostics plus the app-layer deep-link residency warning (broker on but the
     /// app won't launch at login) that `Doctor.run()` can't see — both its inputs are app state.
@@ -44,6 +46,9 @@ struct DoctorView: View {
             Divider()
             HStack {
                 Button("Rerun") { Task { await model.runDoctor() } }
+                if model.usageTrackingEnabled {
+                    Button("Inspect Usage JSON…") { showingRawUsage = true }
+                }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
@@ -51,6 +56,9 @@ struct DoctorView: View {
         }
         .frame(width: 560, height: 460)
         .task { await model.runDoctor() }
+        .sheet(isPresented: $showingRawUsage) {
+            UsageRawInspectorView().environmentObject(model)
+        }
     }
 
     @ViewBuilder private var summaryBadge: some View {

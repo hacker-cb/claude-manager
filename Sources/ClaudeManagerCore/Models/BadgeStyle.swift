@@ -129,9 +129,3 @@ public struct BadgeStyle: Codable, Sendable, Equatable {
         return String(cased.prefix(maxLabelLength))
     }
 }
-
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
-    }
-}

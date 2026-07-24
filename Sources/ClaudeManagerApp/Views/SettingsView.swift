@@ -61,6 +61,8 @@ struct SettingsView: View {
 
             deepLinkSection
 
+            usageSection
+
             Section("Updates") {
                 UpdaterSettingsView(updater: updater)
             }
@@ -88,6 +90,56 @@ struct SettingsView: View {
                     + "the Dock refreshes for any that are rebuilt."
             )
         }
+    }
+
+    private var usageSection: some View {
+        Section("Usage") {
+            Toggle("Track plan usage", isOn: $model.usageTrackingEnabled)
+            Text("Reads each account's token from your keychain to show 5-hour / weekly limits, "
+                + "calling Anthropic's usage endpoint directly. On by default; off stops all "
+                + "polling — no keychain read, network call, or storage.")
+                .font(.caption).foregroundStyle(.secondary)
+            if model.usageTrackingEnabled {
+                Picker("Check every", selection: $model.usagePollIntervalMinutes) {
+                    Text("15 minutes").tag(15)
+                    Text("30 minutes").tag(30)
+                    Text("60 minutes").tag(60)
+                    Text("Manually only").tag(0)
+                }
+                Text(cadenceCaption).font(.caption).foregroundStyle(.secondary)
+
+                Toggle(
+                    "Check open profiles every \(Self.adaptiveMinutes) minutes",
+                    isOn: $model.usageAdaptiveEnabled
+                )
+                .disabled(model.usagePollIntervalMinutes == 0)
+                Text("While a profile is running you're spending that account's limits, so it's checked "
+                    + "on the faster \(Self.adaptiveMinutes)-minute cadence instead of the interval above. "
+                    + "Idle profiles keep the interval.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Toggle("Notify before limits are reached", isOn: $model.usageNotificationsEnabled)
+                Text("One notification per limit as it fills up — never repeated for the same "
+                    + "window, even across restarts.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The adaptive cadence, in minutes, read from the core constant that actually drives it —
+    /// so this copy can't drift from the behaviour it describes.
+    private static var adaptiveMinutes: Int {
+        Int(UsageService.adaptiveFloorSeconds / 60)
+    }
+
+    private var cadenceCaption: String {
+        guard model.usagePollIntervalMinutes > 0 else {
+            return "No background checks at all. Use the Refresh button in a profile's Usage "
+                + "section when you want current numbers — that's also what grants keychain "
+                + "access the first time."
+        }
+        return "Per account, and shared logins count once. Never more than once a minute, and "
+            + "Anthropic's rate limits back it off further."
     }
 
     private var badgeSection: some View {

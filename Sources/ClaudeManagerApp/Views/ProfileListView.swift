@@ -60,14 +60,21 @@ struct PrimaryProfileRow: View {
                 Text("Default profile")
                     .font(.body)
                     .lineLimit(1)
-                Text("Your primary Claude — no launcher")
+                // The Anthropic login, once usage has learned it — that is what identifies an
+                // account to a person. Until then (tracking off, or no pass yet) fall back to
+                // what the row can always say for itself.
+                Text(model.usage(forBinding: TokenBinding.defaultID)?.identity.accountLabel
+                    ?? "Your primary Claude — no launcher")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 4)
-            StatusDot(isRunning: status.isRunning)
+            VStack(alignment: .trailing, spacing: 2) {
+                StatusDot(isRunning: status.isRunning)
+                UsageSidebarIndicator(usage: model.usage(forBinding: TokenBinding.defaultID))
+            }
         }
         .padding(.vertical, 2)
         .contextMenu {
@@ -99,7 +106,12 @@ struct ProfileRow: View {
                 Text(managed.profile.displayName)
                     .font(.body)
                     .lineLimit(1)
-                Text(PathUtils.abbreviatingHome(managed.profile.profilePath))
+                // The login this launcher holds, not where its data lives: launcher names are
+                // whatever the user typed, so the email is the thing that says *which account*
+                // this row is. The path stays as the fallback — and in the detail pane, which
+                // is where you go when you actually want the directory.
+                Text(model.usage(forBinding: managed.profile.id)?.identity.accountLabel
+                    ?? PathUtils.abbreviatingHome(managed.profile.profilePath))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -132,6 +144,7 @@ struct ProfileRow: View {
                     }
                     StatusDot(isRunning: managed.isRunning)
                 }
+                UsageSidebarIndicator(usage: model.usage(forBinding: managed.profile.id))
                 if let size = managed.diskSize {
                     Text(size).font(.caption2).foregroundStyle(.secondary)
                 }

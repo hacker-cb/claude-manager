@@ -122,6 +122,65 @@ public enum CoreConstants {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
 
+    // MARK: - Plan-usage statistics
+
+    /// On-disk schema version for the usage-history SQLite store. **Bump when the stored
+    /// `UsageSnapshot` shape or the DB schema changes** — the store drops-and-recreates on
+    /// mismatch (early-stage: history is a cache, not a contract). Mirrors the intent of
+    /// `currentWrapperVersion`, but for the stats DB rather than the launcher format.
+    public static let usageSchemaVersion = 5
+
+    /// Base URL for the OAuth usage/profile endpoints. The whole core had no networking
+    /// before plan-usage stats; this is the single place that host is named.
+    public static let usageAPIBaseURL = "https://api.anthropic.com"
+
+    /// `/api/oauth/usage` — per-account plan-usage limits (session / weekly / scoped / extra).
+    public static let usageAPIUsagePath = "/api/oauth/usage"
+
+    /// `/api/oauth/profile` — account identity (email, uuid, subscription); cached long.
+    public static let usageAPIProfilePath = "/api/oauth/profile"
+
+    /// Beta header value required by the OAuth usage/profile endpoints (proven sufficient
+    /// on its own — `anthropic-version` is not required for these calls).
+    public static let oauthBetaHeaderValue = "oauth-2025-04-20"
+
+    // MARK: - Desktop safeStorage (Electron) token decryption
+
+    /// Keychain generic-password item that holds the Electron safeStorage AES *password*
+    /// — one item shared by every Claude Desktop clone (they share bundle id
+    /// `com.anthropic.claudefordesktop`). The per-account OAuth token itself lives inside
+    /// each account's `config.json`, encrypted with the key derived from this password.
+    public static let safeStorageKeychainService = "Claude Safe Storage"
+    public static let safeStorageKeychainAccount = "Claude"
+
+    /// PBKDF2 parameters Electron's macOS safeStorage uses to turn the keychain password
+    /// into the AES-128 key (same scheme as Chrome "Safe Storage"): HMAC-SHA1, salt
+    /// `saltysalt`, 1003 rounds, 16-byte key. AES-128-CBC with a 16-space IV; blobs are
+    /// prefixed `v10`. Reverse-engineered and verified against the shipping Desktop build.
+    public static let safeStoragePBKDFSalt = "saltysalt"
+    public static let safeStoragePBKDFRounds = 1003
+    public static let safeStorageKeyLength = 16
+    public static let safeStorageBlobPrefix = "v10"
+
+    /// `config.json` keys inside a Desktop account's user-data dir. `tokenCacheV2` is the
+    /// current encrypted token cache; `tokenCache` is the legacy fallback. The account UUID is
+    /// deliberately *not* read from `config.json` — its `lastKnownAccountUuid` can lag the actual
+    /// token, so identity comes only from the token (its fingerprint locally, `/profile`
+    /// authoritatively), never a config hint that could file usage under the wrong account.
+    public static let desktopTokenCacheKeyV2 = "oauth:tokenCacheV2"
+    public static let desktopTokenCacheKeyV1 = "oauth:tokenCache"
+
+    /// The decrypted `tokenCacheV2` is a JSON **map** keyed
+    /// `"<clientId>:<orgUuid>:<audience>:<space-separated scopes>"`. The audience
+    /// (`https://api.anthropic.com`) itself contains colons, so the key is NOT safely
+    /// split on `:` — match by `hasPrefix(clientID)` + `contains(inferenceScope)` instead,
+    /// and read the org UUID as the 36 chars after `"<clientID>:"`. Each value carries
+    /// `token` (the bearer — NOT `accessToken`), `refreshToken`, `expiresAt` (**epoch
+    /// milliseconds**), `subscriptionType`, `rateLimitTier`.
+    public static let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    public static let oauthInferenceScope = "user:inference"
+    public static let oauthProfileScope = "user:profile"
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =
