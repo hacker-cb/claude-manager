@@ -94,7 +94,7 @@ extension AppModel {
     }
 
     /// Seconds until the next poll — the cadence math lives in (and is tested in) the core; the
-    /// app only supplies the running-accounts fact it can't compute headless.
+    /// app only supplies the running-profiles fact it can't compute headless.
     func usagePollSleepInterval() -> TimeInterval {
         UsageService.pollIntervalSeconds(
             minutes: usagePollIntervalMinutes,
@@ -112,7 +112,7 @@ extension AppModel {
     // MARK: - Refresh
 
     /// Called after every list refresh. Resolves usage **only when the launcher set changed** —
-    /// a newly added account otherwise has neither usage nor a failure to show, and would sit
+    /// a newly added launcher otherwise has neither usage nor a failure to show, and would sit
     /// unexplained until the next tick (forever, under "Manually only"). An unchanged set does
     /// nothing: usage is driven by its own interval, never by a list refresh, which also fires
     /// automatically (launch, activation, after open/stop) and would both defeat "Manually only"
@@ -120,7 +120,7 @@ extension AppModel {
     /// launcher must never pop an authorization dialog.
     func refreshUsageIfBindingsChanged() async {
         // The running set decides the cadence, and the sleeping poll task computed its interval
-        // before that changed. Opening an account would otherwise wait out the whole idle
+        // before that changed. Opening a profile would otherwise wait out the whole idle
         // interval — up to an hour — before the 5-minute lane the settings promise kicks in.
         let running = anyProfileRunning
         if running != lastKnownAnyRunning {
@@ -238,7 +238,7 @@ extension AppModel {
         )
     }
 
-    /// The default account plus every managed profile, each pointed at its `config.json`.
+    /// The default profile plus every managed profile, each pointed at its `config.json`.
     private func usageBindings(config: ProfileStoreConfiguration) -> [TokenBinding] {
         var bindings = [TokenBinding(
             id: TokenBinding.defaultID,

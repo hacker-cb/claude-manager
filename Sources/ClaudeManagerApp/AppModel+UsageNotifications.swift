@@ -56,7 +56,8 @@ extension AppModel {
         )
     }
 
-    /// A human name for the account: the default account, else a bound profile's display name.
+    /// A human name for the row: the default profile, else a bound profile's display name, else
+    /// the Claude login's own label (email / display name), falling back to "Claude account".
     func accountDisplayName(for account: AccountUsage) -> String {
         if account.bindingIDs.contains(TokenBinding.defaultID) { return "Default profile" }
         for id in account.bindingIDs {

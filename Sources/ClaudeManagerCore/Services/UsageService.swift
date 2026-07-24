@@ -35,7 +35,7 @@ public struct UsageService: Sendable {
     public static let maxBackoffSeconds: TimeInterval = 1800
     /// `Retry-After` is clamped into this range.
     public static let retryAfterRange: ClosedRange<TimeInterval> = 60 ... 3600
-    /// The adaptive fast lane: while an account is running, polls no slower than this.
+    /// The adaptive fast lane: while a profile is running, polls no slower than this.
     public static let adaptiveFloorSeconds: TimeInterval = 5 * 60
     /// Background cadence when the user hasn't chosen one. The settings picker offers this
     /// among its presets, so the two can't disagree about what "default" means.
@@ -61,7 +61,7 @@ public struct UsageService: Sendable {
     }
 
     /// Seconds until the next poll for a given interval. `minutes` (floored at 1) in seconds,
-    /// dropped to the adaptive 5-min lane while an account is running — bounded by the interval
+    /// dropped to the adaptive 5-min lane while a profile is running — bounded by the interval
     /// so a longer interval is never made *faster* by adaptivity. `minutes == 0` (manual-only)
     /// is the caller's to short-circuit before scheduling; here it floors to one minute.
     public static func pollIntervalSeconds(

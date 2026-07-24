@@ -136,7 +136,7 @@ struct MenuBarContent: View {
             .keyboardShortcut("q")
     }
 
-    /// A trailing `  ·  7d 54% · resets in 3h 10m` for an account row, or "" when tracking is off
+    /// A trailing `  ·  7d 54% · resets in 3h 10m` for a profile row, or "" when tracking is off
     /// or there's no binding limit yet — so a menu row shows its own worst limit at a glance,
     /// together with how long until it lets go. The menu is rebuilt each time it opens, so the
     /// countdown here is current without a ticker.
