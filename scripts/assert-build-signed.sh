@@ -92,7 +92,7 @@ check_verifies() { # <label> <app>
 # here. Its job is to make the CI log say WHICH valid signature was found.
 report_signature_kind() { # <label> <app>
   local info status=0
-  info="$(codesign --display --verbose=2 "$2" 2>&1)" || status=$?
+  info="$(codesign -dv "$2" 2>&1)" || status=$?  # -dv: the diagnostic the header names
   if [ "$status" -ne 0 ]; then
     echo "    (codesign reports no signature at all)"
   elif grep -q 'linker-signed' <<<"$info"; then
