@@ -92,11 +92,12 @@ public struct UsageService: Sendable {
         // the same account. Order matters: N launchers on one login only reveal themselves as one
         // account once `/profile` has answered, and folding after fetching would already have
         // spent N calls and stored N rows for it.
-        let settled = await resolver.regroup(identified(resolved.accounts, now: now), now: now)
+        let named = await identified(resolved.accounts, now: now, interactive: interactive)
+        let settled = resolver.regroup(named, now: now)
 
         var accounts: [AccountUsage] = []
         for account in settled {
-            await accounts.append(usage(for: account, now: now))
+            await accounts.append(usage(for: account, now: now, interactive: interactive))
         }
         return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
     }
@@ -108,14 +109,18 @@ public struct UsageService: Sendable {
     /// nothing can be merged or persisted for them until it does. A named-but-stale account is
     /// deliberately left alone here; `usage(for:)` refreshes it later, behind the throttle, so a
     /// backed-off account doesn't call `/profile` on every tick.
-    private func identified(_ accounts: [ResolvedAccount], now: Date) async -> [ResolvedAccount] {
+    private func identified(
+        _ accounts: [ResolvedAccount],
+        now: Date,
+        interactive: Bool
+    ) async -> [ResolvedAccount] {
         let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
         var settled: [ResolvedAccount] = []
         for account in accounts {
             let fingerprint = Self.fingerprint(account.token.token)
             if let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) {
                 settled.append(account.named(by: cached))
-            } else if account.isProvisionalIdentity {
+            } else if await mayCall(account, fingerprint: fingerprint, now: now, interactive: interactive) {
                 await settled.append(fetchIdentity(account, fingerprint: fingerprint, now: now))
             } else {
                 settled.append(account)
@@ -124,9 +129,64 @@ public struct UsageService: Sendable {
         return settled
     }
 
+    /// Whether `/profile` may be called for this account right now: only while it is still
+    /// provisional (a named account gains nothing here — `usage(for:)` refreshes a stale name
+    /// later, behind the throttle), and only when the same expiry / backoff / floor gates that
+    /// guard `/usage` allow it.
+    ///
+    /// Hoisting those gates is the whole point. They live in `usage(for:)`, which runs *after*
+    /// this pass and so could never un-send a request this pass had already made: a launcher
+    /// whose login is dead re-offered its token to `/profile` on every tick forever, and neither
+    /// the 60s floor nor a 429 backoff applied to it.
+    private func mayCall(
+        _ account: ResolvedAccount,
+        fingerprint: String,
+        now: Date,
+        interactive: Bool
+    ) async -> Bool {
+        guard account.isProvisionalIdentity, !account.token.isExpired(now: now) else { return false }
+        let stored = await history.throttle(accountUUID: account.identity.uuid)
+        return !Self.isBlocked(stored, fingerprint: fingerprint, now: now, interactive: interactive)
+    }
+
+    /// The shared "don't call right now" rule.
+    ///
+    /// A **terminal** park (401/403) is the only backoff anything lifts, and only through the two
+    /// exits the docs promise: a re-login (new token) or an explicit user Refresh. A rate-limit or
+    /// transport backoff belongs to the server or the network, never to us.
+    ///
+    /// The 60s floor is never bypassed — not even by a changed fingerprint. Once sibling launchers
+    /// share one account the elected token flips whenever any of them refreshes its own OAuth
+    /// token, with no re-login involved, and letting that discard the floor (or a standing 429
+    /// window) would re-issue calls against an endpoint that had just throttled us.
+    static func isBlocked(
+        _ stored: ThrottleState?,
+        fingerprint: String,
+        now: Date,
+        interactive: Bool
+    ) -> Bool {
+        guard let stored else { return false }
+        let parked = stored.backoffUntil.map { $0 > now } ?? false
+        if parked, !clearsTerminal(stored, fingerprint, interactive) { return true }
+        if let last = stored.lastAttemptAt, now.timeIntervalSince(last) < floorSeconds { return true }
+        return false
+    }
+
+    /// True when a standing **terminal** park should be lifted: the token changed (a real
+    /// re-login) or the user explicitly asked. Never applies to a non-terminal backoff.
+    static func clearsTerminal(
+        _ stored: ThrottleState,
+        _ fingerprint: String,
+        _ interactive: Bool
+    ) -> Bool {
+        guard stored.backoffReason == .terminal else { return false }
+        let reLogin = stored.tokenFingerprint != nil && stored.tokenFingerprint != fingerprint
+        return reLogin || interactive
+    }
+
     // MARK: - Per account
 
-    private func usage(for resolved: ResolvedAccount, now: Date) async -> AccountUsage {
+    private func usage(for resolved: ResolvedAccount, now: Date, interactive: Bool) async -> AccountUsage {
         let token = resolved.token
         // Expired token → call nothing at all (not even `/profile`, which would 401); the account
         // needs a fresh login. Served from whatever key we have.
@@ -143,27 +203,30 @@ public struct UsageService: Sendable {
         let named = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) != nil
         var account = resolved
 
-        let uuid = account.identity.uuid
+        var uuid = account.identity.uuid
         let stored = await history.throttle(accountUUID: uuid)
         let latest = await history.latest(accountUUID: uuid)
-        // A login switch (new token) clears any standing backoff — try immediately.
-        let tokenChanged = stored?.tokenFingerprint != nil && stored?.tokenFingerprint != fingerprint
+
+        let context = PollContext(
+            now: now, fingerprint: fingerprint, stored: stored,
+            latest: latest, interactive: interactive
+        )
         // Standing backoff still active → serve stale, rendering the *original* cause (a
         // transport backoff must not read back as a 429).
-        if !tokenChanged, let until = stored?.backoffUntil, until > now {
-            let state: UsageState = switch stored?.backoffReason {
-            case .terminal: .loginNeeded
-            case .rateLimited: .rateLimited(until: until)
-            case .offline, .none: latest.map { .stale(since: $0.capturedAt) } ?? .offline
-            }
-            return account.usage(latest, state: state)
+        if let parked = Self.parkedState(context) {
+            return account.usage(latest, state: parked)
         }
         // Inside the 60s floor: we already hold the newest values the API would hand back, and
         // chose not to re-ask. Nothing failed, so this is *not* staleness — reporting it as such
         // made a normal poll cadence read as a problem ("stale · 4 min ago" on data that was
         // simply as fresh as the floor allows). The age still shows, via `capturedAt`.
-        if !tokenChanged, let last = stored?.lastAttemptAt, now.timeIntervalSince(last) < Self.floorSeconds {
-            return account.usage(latest, state: latest == nil ? .noSource : .fresh)
+        //
+        // No snapshot to serve means the history is unreadable (the store degrades to memory for
+        // the throttle but not for samples), which is neither a missing token source nor a
+        // keychain problem — saying `.noSource` here made the app blame the keychain and offer a
+        // fix that cannot work. Report it as current-with-nothing-yet instead.
+        if let last = stored?.lastAttemptAt, now.timeIntervalSince(last) < Self.floorSeconds {
+            return account.usage(latest, state: .fresh)
         }
 
         // Past every gate, so a `/usage` call is happening regardless: this is the moment to
@@ -171,6 +234,10 @@ public struct UsageService: Sendable {
         // backoff and floor that protect `/usage` instead of firing on every throttled tick.
         if !named {
             account = await fetchIdentity(account, fingerprint: fingerprint, now: now)
+            // A late answer can settle a still-provisional account onto its real uuid, and every
+            // write below must follow it — keyed on the stale binding id, the sample and throttle
+            // land where the next tick never looks, orphaning the row and losing the floor.
+            uuid = account.identity.uuid
         }
 
         switch await client.fetchUsage(
@@ -193,7 +260,6 @@ public struct UsageService: Sendable {
                 bindingIDs: account.bindingIDs
             )
         case let .failure(error):
-            let context = PollContext(now: now, fingerprint: fingerprint, stored: stored, latest: latest)
             return await handleFailure(error, account: account, context: context)
         }
     }
@@ -210,30 +276,87 @@ public struct UsageService: Sendable {
         fingerprint: String,
         now: Date
     ) async -> ResolvedAccount {
-        let fetched = await client.fetchProfile(
+        switch await client.fetchProfile(
             token: account.token.token,
             marketingVersion: marketingVersion
-        )
-        guard case let .success(profile) = fetched else { return account }
-        let identity = AccountIdentity(
-            uuid: profile.accountUUID,
-            email: profile.email,
-            displayName: profile.displayName,
-            // The token's own values win — exact where `/profile` exposes only coarse flags.
-            organizationUuid: account.identity.organizationUuid ?? profile.organizationUUID,
-            subscriptionType: account.identity.subscriptionType ?? profile.subscriptionType,
-            rateLimitTier: account.identity.rateLimitTier ?? profile.rateLimitTier
-        )
-        await history.setProfile(identity, tokenFingerprint: fingerprint, fetchedAt: now)
-        return account.named(by: identity)
+        ) {
+        case let .success(profile):
+            let identity = AccountIdentity(
+                uuid: profile.accountUUID,
+                email: profile.email,
+                displayName: profile.displayName,
+                // The token's own values win — exact where `/profile` exposes only coarse flags.
+                organizationUuid: account.identity.organizationUuid ?? profile.organizationUUID,
+                subscriptionType: account.identity.subscriptionType ?? profile.subscriptionType,
+                rateLimitTier: account.identity.rateLimitTier ?? profile.rateLimitTier
+            )
+            await history.setProfile(identity, tokenFingerprint: fingerprint, fetchedAt: now)
+            return account.named(by: identity)
+        case let .failure(error):
+            // Park a **terminal** rejection, and only that. A dead token would otherwise be
+            // re-offered to `/profile` on every tick forever, and 401 here means 401 for `/usage`
+            // too, so the account genuinely needs a sign-in.
+            //
+            // Every other failure is left unrecorded on purpose: `/usage` runs next in this same
+            // pass and records its own backoff if the endpoint is really unwell, so writing one
+            // here would only mean a transient blip on a *cosmetic* name lookup costing the user
+            // their numbers for the next five minutes.
+            let (until, reason) = Self.backoff(for: error, after: nil, now: now)
+            guard reason == .terminal else { return account }
+            await history.setThrottle(
+                ThrottleState(
+                    lastAttemptAt: now, backoffUntil: until,
+                    backoffReason: reason, tokenFingerprint: fingerprint
+                ),
+                accountUUID: account.identity.uuid
+            )
+            return account
+        }
     }
 
-    /// The per-account state a failure handler needs, bundled to keep the parameter list small.
+    /// Error → how long to stay away, and why. Shared by the `/usage` and `/profile` paths so a
+    /// failing identity lookup is throttled exactly like a failing usage fetch.
+    static func backoff(
+        for error: OAuthClientError,
+        after stored: ThrottleState?,
+        now: Date
+    ) -> (until: Date, reason: BackoffReason) {
+        switch error {
+        case .unauthorized:
+            (.distantFuture, .terminal)
+        case let .rateLimited(retryAfter):
+            (
+                now.addingTimeInterval(
+                    retryAfter.map { $0.clamped(to: retryAfterRange) } ?? nextBackoff(after: stored, now: now)
+                ),
+                .rateLimited
+            )
+        case .transport, .httpError, .malformedBody:
+            (now.addingTimeInterval(nextBackoff(after: stored, now: now)), .offline)
+        }
+    }
+
+    /// The per-account state the gate and the failure handler need, bundled to keep the parameter
+    /// lists small.
     private struct PollContext {
         let now: Date
         let fingerprint: String
         let stored: ThrottleState?
         let latest: UsageSample?
+        var interactive = false
+    }
+
+    /// The state to serve while a standing backoff holds, or nil when none holds — or when it is
+    /// a terminal park that a re-login or an explicit Refresh lifts.
+    private static func parkedState(_ context: PollContext) -> UsageState? {
+        guard let stored = context.stored else { return nil }
+        guard let until = stored.backoffUntil, until > context.now else { return nil }
+        guard !clearsTerminal(stored, context.fingerprint, context.interactive) else { return nil }
+        switch stored.backoffReason {
+        case .terminal: return .loginNeeded
+        case .rateLimited: return .rateLimited(until: until)
+        case .offline, .none: return context.latest.map { .stale(since: $0.capturedAt) } ?? .offline
+        }
     }
 
     private func handleFailure(
@@ -248,31 +371,14 @@ public struct UsageService: Sendable {
             context.stored,
             context.latest
         )
-        let backoffUntil: Date
-        let reason: BackoffReason
-        let state: UsageState
-
-        switch error {
-        case .unauthorized:
-            // Terminal for this token: stop polling until the fingerprint changes (re-login)
-            // or a manual refresh. A far-future backoff parks it; a new token clears it.
-            backoffUntil = .distantFuture
-            reason = .terminal
-            state = .loginNeeded
-        case let .rateLimited(retryAfter):
-            let seconds = retryAfter.map { $0.clamped(to: Self.retryAfterRange) }
-                ?? Self.nextBackoff(after: stored, now: now)
-            backoffUntil = now.addingTimeInterval(seconds)
-            reason = .rateLimited
-            state = .rateLimited(until: backoffUntil)
-        case .transport:
-            backoffUntil = now.addingTimeInterval(Self.nextBackoff(after: stored, now: now))
-            reason = .offline
-            state = .offline
-        case .httpError, .malformedBody:
-            backoffUntil = now.addingTimeInterval(Self.nextBackoff(after: stored, now: now))
-            reason = .offline
-            state = latest.map { .stale(since: $0.capturedAt) } ?? .offline
+        // How long to stay away is shared with the `/profile` path; only the state the UI shows
+        // is decided here. A terminal park stops polling until a re-login or an explicit Refresh.
+        let (backoffUntil, reason) = Self.backoff(for: error, after: stored, now: now)
+        let state: UsageState = switch error {
+        case .unauthorized: .loginNeeded
+        case .rateLimited: .rateLimited(until: backoffUntil)
+        case .transport: .offline
+        case .httpError, .malformedBody: latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
 
         await history.setThrottle(
@@ -287,29 +393,32 @@ public struct UsageService: Sendable {
 
     // MARK: - Helpers
 
-    /// Whole-fleet rotation signal. The safeStorage key is **shared**, so a genuine `.decryptFailed`
-    /// (padding rejected) proves *the key* is wrong — and since it's shared, wrong for every
-    /// binding, making the sibling `.malformedCache` results wrong-key garbage too. So: nothing
-    /// resolved, at least one definitive `.decryptFailed`, and every failure is crypto-related
-    /// (decrypt / malformed) — not a `.configUnreadable`/`.noTokenCache` per-account problem.
+    /// Whole-fleet rotation signal: nothing resolved, and at least one binding failed in a way
+    /// that only a **wrong key** explains.
     ///
-    /// The "at least one `.decryptFailed`" guard is what excludes codex's case: if every binding
-    /// decrypts fine but the *payload* is malformed (all `.malformedCache`, no `.decryptFailed`),
-    /// the key is correct and invalidating it would mask the real bug and re-prompt for nothing.
+    /// The evidence has to be exactly that. `CCCrypt` rejecting the PKCS7 padding
+    /// (`.decryptFailed`) is the wrong-key symptom; a blob that isn't `v10` or isn't block-aligned
+    /// is a *shape* problem — Claude changing its format, or a truncated file — which no amount of
+    /// re-deriving the key will fix, and treating it as rotation re-read the keychain and
+    /// re-derived PBKDF2 on every tick forever without ever succeeding.
+    ///
+    /// Bindings that failed for their own reasons (`.noTokenCache` from a launcher nobody signed
+    /// into, `.configUnreadable`) are **ignored** rather than disqualifying. Requiring every
+    /// failure to be crypto-related meant the always-present default-account binding — permanently
+    /// `.noTokenCache` for anyone who only uses launchers — silently disabled recovery for the
+    /// whole fleet, leaving a rotated key stuck behind a process-lifetime cache until relaunch.
     private static func shouldSelfHeal(_ resolved: ResolvedAccounts) -> Bool {
-        guard resolved.accounts.isEmpty, !resolved.failures.isEmpty else { return false }
-        let failures = resolved.failures.values
-        return failures.contains(where: isDecryptFailure)
-            && failures.allSatisfy { isDecryptFailure($0) || isMalformedCache($0) }
+        guard resolved.accounts.isEmpty else { return false }
+        return resolved.failures.values.contains(where: isWrongKeyEvidence)
     }
 
-    private static func isDecryptFailure(_ error: TokenProviderError) -> Bool {
-        if case .decryptFailed = error { return true }
-        return false
+    /// The rule above, reachable from tests without staging a whole decrypt fleet.
+    static func shouldSelfHealForTest(failures: [String: TokenProviderError]) -> Bool {
+        shouldSelfHeal(ResolvedAccounts(accounts: [], failures: failures))
     }
 
-    private static func isMalformedCache(_ error: TokenProviderError) -> Bool {
-        if case .malformedCache = error { return true }
+    private static func isWrongKeyEvidence(_ error: TokenProviderError) -> Bool {
+        if case .decryptFailed(.decryptFailed) = error { return true }
         return false
     }
 

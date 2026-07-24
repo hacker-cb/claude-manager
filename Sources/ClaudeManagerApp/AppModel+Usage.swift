@@ -91,6 +91,15 @@ extension AppModel {
     /// and raise the keychain prompt at launch. Non-interactive for that same reason — adding a
     /// launcher must never pop an authorization dialog.
     func refreshUsageIfBindingsChanged() async {
+        // The running set decides the cadence, and the sleeping poll task computed its interval
+        // before that changed. Opening an account would otherwise wait out the whole idle
+        // interval — up to an hour — before the 5-minute lane the settings promise kicks in.
+        let running = primaryAccount?.isRunning == true || profiles.contains(where: \.isRunning)
+        if running != lastKnownAnyRunning {
+            lastKnownAnyRunning = running
+            if usageAdaptiveEnabled { restartUsagePolling() }
+        }
+
         let current = Set(profiles.map(\.profile.id))
         guard current != lastKnownBindingIDs else { return }
         lastKnownBindingIDs = current
@@ -143,9 +152,13 @@ extension AppModel {
 
     /// The worst active limit across all accounts, as `7d 54%` — the at-a-glance value shown in
     /// the status bar. Nil when tracking is off or there's no data yet.
+    /// Accounts needing a sign-in are skipped, mirroring the sidebar: their snapshot is kept for
+    /// the detail pane but is frozen at whatever was last fetched, and a status-bar percentage
+    /// carries no hint that it stopped moving days ago.
     var menuBarUsageSummary: (label: String, fraction: Double)? {
         guard usageTrackingEnabled else { return nil }
         let worst = usageByBinding.values
+            .filter { !$0.needsAttention }
             .compactMap(\.displayLimit)
             .max { $0.utilization < $1.utilization }
         guard let worst else { return nil }

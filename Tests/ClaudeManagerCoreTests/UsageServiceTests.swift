@@ -3,8 +3,8 @@ import Testing
 @testable import ClaudeManagerCore
 
 struct UsageServiceTests {
-    private let now = Date(timeIntervalSince1970: 1_000_000_000)
-    private let usageBody = Data(#"{"limits":[{"kind":"weekly_all","percent":50,"is_active":true}]}"#.utf8)
+    let now = Date(timeIntervalSince1970: 1_000_000_000)
+    let usageBody = Data(#"{"limits":[{"kind":"weekly_all","percent":50,"is_active":true}]}"#.utf8)
 
     // MARK: - Poll cadence
 

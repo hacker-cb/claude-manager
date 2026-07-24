@@ -25,10 +25,6 @@ extension AppModel {
             threshold: warning.threshold, resetsAt: warning.resetsAt
         )
         guard !already else { return }
-        await usageHistory.markNotified(
-            accountUUID: uuid, limitKey: warning.limitKey,
-            threshold: warning.threshold, resetsAt: warning.resetsAt, notifiedAt: now
-        )
 
         let content = UNMutableNotificationContent()
         content.title = "\(accountDisplayName(for: account)) — \(warning.limitLabel) limit"
@@ -40,7 +36,19 @@ extension AppModel {
         // One request per (account, limit, threshold, reset) so re-posts coalesce, not stack.
         let identifier = "usage.\(uuid).\(warning.limitKey).\(warning.threshold).\(warning.resetsAt?.timeIntervalSince1970 ?? 0)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(request)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            // Delivery failed — most plausibly authorization hasn't been granted yet, since it is
+            // requested fire-and-forget at launch and a poll can finish first. Leave the ledger
+            // untouched so a later pass retries: recording it first meant one undelivered alert
+            // marked that threshold delivered for the whole reset window, permanently.
+            return
+        }
+        await usageHistory.markNotified(
+            accountUUID: uuid, limitKey: warning.limitKey,
+            threshold: warning.threshold, resetsAt: warning.resetsAt, notifiedAt: now
+        )
     }
 
     /// A human name for the account: the default account, else a bound profile's display name.

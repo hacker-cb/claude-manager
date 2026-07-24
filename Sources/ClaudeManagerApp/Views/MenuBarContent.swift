@@ -133,8 +133,11 @@ struct MenuBarContent: View {
     /// together with how long until it lets go. The menu is rebuilt each time it opens, so the
     /// countdown here is current without a ticker.
     private func usageSuffix(_ bindingID: String) -> String {
-        guard model.usageTrackingEnabled,
-              let limit = model.usage(forBinding: bindingID)?.displayLimit else { return "" }
+        guard model.usageTrackingEnabled, let usage = model.usage(forBinding: bindingID) else { return "" }
+        // An account that needs signing in keeps a frozen snapshot for the detail pane; showing
+        // that percentage here would read as current. Say what's actually needed instead.
+        guard !usage.needsAttention else { return "  ·  \(usage.stateNote)" }
+        guard let limit = usage.displayLimit else { return "" }
         var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
         if let resets = UsageFormat.resets(limit.resetsAt) { suffix += " · \(resets)" }
         return suffix

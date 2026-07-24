@@ -32,11 +32,13 @@ extension AppModel {
         return anyFresh ? Diagnostic(severity: .ok, title: "Usage tracking is active") : nil
     }
 
-    /// True when a keychain read is the thing standing between us and usage data — a `noSource`
-    /// account or an explicit `keychainUnavailable` binding failure.
-    private func keychainAccessBlocked(_ accounts: [AccountUsage]) -> Bool {
-        if accounts.contains(where: { $0.state == .noSource }) { return true }
-        return usageBindingFailures.values.contains { failure in
+    /// True when a keychain read is the thing standing between us and usage data.
+    ///
+    /// Only an actual keychain refusal counts. `.noSource` used to qualify, but it is also what
+    /// an unreadable history database produces — and then Doctor blamed the keychain and offered
+    /// a fix ("Always Allow") that cannot possibly help.
+    private func keychainAccessBlocked(_: [AccountUsage]) -> Bool {
+        usageBindingFailures.values.contains { failure in
             if case .keychainUnavailable = failure { return true }
             return false
         }

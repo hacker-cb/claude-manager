@@ -254,6 +254,16 @@ decrypt-failure), `UsageService` invalidates the shared key once and retries —
 provider never invalidates per-binding, which would poison a healthy key when a single
 blob is corrupt.
 
+**One gate, applied before every call.** Identity and usage share the expiry / backoff / floor
+rule (`UsageService.isBlocked`), because the identity pass runs *first* and can't un-send what
+it already sent — a dead login otherwise re-offered its token to `/profile` on every tick
+forever, outside the floor and outside any 429 window. Only a **terminal** park (401/403) is
+ever lifted early, and only through the two documented exits: a re-login or an explicit
+Refresh, which is threaded down as `interactive`. The 60s floor is never bypassed — once
+sibling launchers share an account the elected token flips whenever any of them refreshes its
+own, with no re-login involved, so treating a changed fingerprint as "try again now" would
+discard a standing rate-limit window.
+
 **Throttle & backoff are persisted, honestly.** `UsageHistoryStore` holds per-account
 throttle state (last attempt, `backoff_until`, a token fingerprint `sha256(token)[:16]`,
 and the backoff **reason** — rateLimited / offline / terminal). A 60s floor gates even
