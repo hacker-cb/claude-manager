@@ -134,9 +134,9 @@ extension AppModel {
             lastKnownBindingIDs = current // nothing to fetch in this mode; don't re-check forever
             return
         }
-        // Committed only once the refresh has actually run. Recording it up front meant a pass
-        // dropped by the single-flight guard consumed the change, and the new launcher was never
-        // fetched at all.
+        // Committed only after the single-flight guard admits this pass — not at the top of the
+        // function, where a pass the guard drops would consume the change and leave the new
+        // launcher never fetched.
         guard !isRefreshingUsage else { return }
         lastKnownBindingIDs = current
         await refreshUsage(interactive: false)

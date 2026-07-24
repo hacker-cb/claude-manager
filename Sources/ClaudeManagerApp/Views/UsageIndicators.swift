@@ -55,7 +55,9 @@ struct UsageBar: View {
         }
         .frame(height: height)
         .accessibilityElement()
-        .accessibilityLabel("\(Int((fraction * 100).rounded()))% used")
+        // Clamp like the fill: `fraction` can exceed 1 (e.g. extra-usage's used÷cap with a zero
+        // cap), which the bar renders as full — VoiceOver must announce that, not "5000% used".
+        .accessibilityLabel("\(Int((min(1, max(0, fraction)) * 100).rounded()))% used")
     }
 }
 
