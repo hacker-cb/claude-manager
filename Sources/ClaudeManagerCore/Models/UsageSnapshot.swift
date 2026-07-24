@@ -98,6 +98,31 @@ public struct UsageLimit: Codable, Sendable, Equatable {
         return rawKind
     }
 
+    /// Utilization at which a surface turns amber, then red. Deliberately stricter than
+    /// `LimitEvaluator`'s notification model: colour answers "how full is this?", which is worth
+    /// showing before it's worth interrupting someone over.
+    public static let warningUtilization = 0.75
+    public static let criticalUtilization = 0.90
+
+    /// The severity to **render** for this limit: our own thresholds, escalated by the server's
+    /// `severity` but never lowered to it.
+    ///
+    /// Both directions matter. The server can flag something we have no model for — a plan
+    /// policy, an account restriction, or a `kind` this build doesn't recognize, where a flat
+    /// percentage means little — and taking the max lets that flag make a surface more cautious.
+    /// It currently reports `normal` well past 70%, so the reverse must not happen: a server
+    /// "normal" can't calm a bar we already consider hot.
+    public var displaySeverity: UsageSeverity {
+        max(Self.thresholdSeverity(utilization), severity)
+    }
+
+    /// The threshold half on its own, for a bar with no limit behind it (extra usage).
+    public static func thresholdSeverity(_ utilization: Double) -> UsageSeverity {
+        if utilization >= criticalUtilization { return .critical }
+        if utilization >= warningUtilization { return .warning }
+        return .normal
+    }
+
     /// Stable identity for notification dedup — distinguishes a scoped window per model
     /// (`weekly_scoped:Fable`) from the weekly-all window, so they don't share a ledger key.
     public var dedupKey: String {

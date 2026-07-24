@@ -11,13 +11,18 @@ struct UsageDetailSection: View {
     let onRefresh: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            content
+        // One ticker for the whole section: every relative time inside it ("resets in 12m",
+        // "updated 4 min ago") is derived from `now`, and without this they'd be frozen at
+        // whatever the last usage refresh rendered — a countdown that doesn't count down.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: 12) {
+                header(now: context.date)
+                content(now: context.date)
+            }
         }
     }
 
-    private var header: some View {
+    private func header(now: Date) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text("Usage").font(.headline)
             // The account's login lives in the pane header (identity, not statistics); this
@@ -27,7 +32,7 @@ struct UsageDetailSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if let note = stateNote {
+            if let note = stateNote(now: now) {
                 Text(note.text).font(.caption)
                     .foregroundStyle(note.warn ? Color.orange : Color.secondary)
             }
@@ -41,9 +46,9 @@ struct UsageDetailSection: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(now: Date) -> some View {
         if let snapshot = usage?.snapshot {
-            bars(for: snapshot)
+            bars(for: snapshot, now: now)
         } else if let note = emptyStateNote {
             Text(note).font(.callout).foregroundStyle(.secondary)
         } else if isRefreshing {
@@ -58,13 +63,13 @@ struct UsageDetailSection: View {
         }
     }
 
-    private func bars(for snapshot: UsageSnapshot) -> some View {
+    private func bars(for snapshot: UsageSnapshot, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let session = snapshot.session {
-                LimitRow(title: "Current session (5h)", limit: session)
+                LimitRow(title: "Current session (5h)", limit: session, now: now)
             }
             if let weekly = snapshot.weeklyAll {
-                LimitRow(title: "Current week (all models)", limit: weekly)
+                LimitRow(title: "Current week (all models)", limit: weekly, now: now)
             }
             // Keyed by position, not `dedupKey`: two scoped windows whose model name is missing
             // (or two unknown kinds sharing a rawKind) collapse to the same dedupKey, and a
@@ -72,14 +77,18 @@ struct UsageDetailSection: View {
             // rendered as-is, never reordered.
             if usage?.identity.showsScopedWeeklyLimit == true {
                 ForEach(Array(snapshot.weeklyScoped.enumerated()), id: \.offset) { _, scoped in
-                    LimitRow(title: "Current week (\(scoped.scopeModelName ?? "scoped"))", limit: scoped)
+                    LimitRow(
+                        title: "Current week (\(scoped.scopeModelName ?? "scoped"))",
+                        limit: scoped,
+                        now: now
+                    )
                 }
             }
             // Forward-compat: a window this build doesn't recognize is kept visible (the parser's
             // "other" bucket) rather than silently dropped — so the detail can't disagree with the
             // sidebar, which may already be surfacing it as the binding limit.
             ForEach(Array(snapshot.otherLimits.enumerated()), id: \.offset) { _, other in
-                LimitRow(title: other.shortLabel, limit: other)
+                LimitRow(title: other.shortLabel, limit: other, now: now)
             }
             if let extra = snapshot.extra {
                 ExtraUsageRow(extra: extra)
@@ -90,12 +99,12 @@ struct UsageDetailSection: View {
     /// A short freshness/state note for the header: the data's age when current, otherwise the
     /// reason it's stale. Warning states (`warn`) are tinted so a still-rendered snapshot from a
     /// `loginNeeded` / `noSource` account can't read as up to date.
-    private var stateNote: (text: String, warn: Bool)? {
+    private func stateNote(now: Date) -> (text: String, warn: Bool)? {
         guard let usage else { return nil }
         switch usage.state {
         case .fresh:
-            return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0))", false) }
-        case let .stale(since): return ("stale · \(UsageFormat.age(since))", false)
+            return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
+        case let .stale(since): return ("stale · \(UsageFormat.age(since, now: now))", false)
         case .rateLimited: return ("rate limited", true)
         case .offline: return ("offline", false)
         case .loginNeeded: return ("sign in to refresh", true)
@@ -126,14 +135,17 @@ struct UsageDetailSection: View {
 private struct LimitRow: View {
     let title: String
     let limit: UsageLimit
+    /// Passed in rather than read from `Date()` so the whole section shares one ticking clock —
+    /// see the `TimelineView` in `UsageDetailSection.body`.
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.callout)
-            UsageBar(fraction: limit.utilization)
+            UsageBar(fraction: limit.utilization, level: .forLimit(limit))
             HStack(spacing: 6) {
                 Text("\(UsageFormat.percent(limit.utilization)) used").font(.caption)
-                if let resets = UsageFormat.resets(limit.resetsAt) {
+                if let resets = UsageFormat.resets(limit.resetsAt, now: now) {
                     Text("· \(resets)").font(.caption).foregroundStyle(.secondary)
                 }
             }

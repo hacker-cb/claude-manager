@@ -128,12 +128,16 @@ struct MenuBarContent: View {
             .keyboardShortcut("q")
     }
 
-    /// A trailing `  ·  7d 54%` for an account row, or "" when tracking is off or there's no
-    /// binding limit yet — so a menu row shows its own worst limit at a glance.
+    /// A trailing `  ·  7d 54% · resets in 3h 10m` for an account row, or "" when tracking is off
+    /// or there's no binding limit yet — so a menu row shows its own worst limit at a glance,
+    /// together with how long until it lets go. The menu is rebuilt each time it opens, so the
+    /// countdown here is current without a ticker.
     private func usageSuffix(_ bindingID: String) -> String {
         guard model.usageTrackingEnabled,
               let limit = model.usage(forBinding: bindingID)?.displayLimit else { return "" }
-        return "  ·  \(UsageFormat.limitSummary(limit))"
+        var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
+        if let resets = UsageFormat.resets(limit.resetsAt) { suffix += " · \(resets)" }
+        return suffix
     }
 }
 

@@ -26,6 +26,27 @@ struct UsageModelTests {
     }
 
     @Test
+    func displaySeverityEscalatesOnServerFlagButNeverCalmsDown() {
+        func limit(_ utilization: Double, _ severity: UsageSeverity) -> UsageLimit {
+            UsageLimit(
+                rawKind: "weekly_all", utilization: utilization, severity: severity, isActive: true
+            )
+        }
+        // Our own thresholds when the server has nothing to add.
+        #expect(limit(0.10, .normal).displaySeverity == .normal)
+        #expect(limit(0.75, .normal).displaySeverity == .warning)
+        #expect(limit(0.90, .normal).displaySeverity == .critical)
+        // The server escalates something we don't model — a policy or an unknown limit kind.
+        #expect(limit(0.10, .warning).displaySeverity == .warning)
+        #expect(limit(0.10, .critical).displaySeverity == .critical)
+        #expect(limit(0.80, .critical).displaySeverity == .critical)
+        // …but a server "normal" can never calm a bar we already consider hot — which is the live
+        // case: the API reports `normal` well past 70%.
+        #expect(limit(0.95, .normal).displaySeverity == .critical)
+        #expect(limit(0.76, .normal).displaySeverity == .warning)
+    }
+
+    @Test
     func accountLabelPrefersEmailAndNeverFallsBackToTheUUID() {
         #expect(AccountIdentity(uuid: "u", email: "a@b.co", displayName: "Ann").accountLabel == "a@b.co")
         #expect(AccountIdentity(uuid: "u", displayName: "Ann").accountLabel == "Ann")

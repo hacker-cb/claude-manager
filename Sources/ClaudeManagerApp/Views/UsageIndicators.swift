@@ -4,14 +4,35 @@ import SwiftUI
 /// Visual severity for a usage fraction — escalates as usage climbs, independent of the API's
 /// own `severity` (which can read "normal" even when nearly out). Carries both a color and a
 /// **non-color** glyph so severity isn't conveyed by color alone (accessibility).
-enum UsageDisplaySeverity {
-    case normal, warning, critical
+enum UsageDisplaySeverity: Int, Comparable {
+    case normal = 0, warning = 1, critical = 2
 
-    /// From a utilization fraction (0…1): warn at 75%, critical at 90%.
+    static func < (lhs: UsageDisplaySeverity, rhs: UsageDisplaySeverity) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    /// From a bare fraction (0…1) — for bars with no `UsageLimit` behind them, like extra usage.
     static func forFraction(_ fraction: Double) -> UsageDisplaySeverity {
-        if fraction >= 0.90 { return .critical }
-        if fraction >= 0.75 { return .warning }
-        return .normal
+        from(UsageLimit.thresholdSeverity(fraction))
+    }
+
+    /// For a real limit. The decision (thresholds, and folding in the server's own severity)
+    /// lives in `UsageLimit.displaySeverity` where it is unit-tested; this layer only paints it.
+    ///
+    /// `LimitEvaluator` is deliberately *not* folded in: its lowest trigger (0.75 on the weekly
+    /// tier) is exactly where these thresholds already warn, and it is more lenient everywhere
+    /// else, so it could never escalate this — the notification model is the quieter of the two
+    /// by design, since "worth showing" is a lower bar than "worth interrupting you".
+    static func forLimit(_ limit: UsageLimit) -> UsageDisplaySeverity {
+        from(limit.displaySeverity)
+    }
+
+    static func from(_ severity: UsageSeverity) -> UsageDisplaySeverity {
+        switch severity {
+        case .normal: .normal
+        case .warning: .warning
+        case .critical: .critical
+        }
     }
 
     var color: Color {
@@ -37,9 +58,13 @@ enum UsageDisplaySeverity {
 struct UsageBar: View {
     let fraction: Double
     var height: CGFloat = 6
+    /// Explicit severity for a real `UsageLimit` (which can be escalated by the API); nil falls
+    /// back to the plain fraction thresholds, which is what extra-usage — a money bar with no
+    /// server severity of its own — wants.
+    var level: UsageDisplaySeverity?
 
     private var severity: UsageDisplaySeverity {
-        .forFraction(fraction)
+        level ?? .forFraction(fraction)
     }
 
     var body: some View {
@@ -63,9 +88,10 @@ struct UsageRing: View {
     let fraction: Double
     var size: CGFloat = 14
     var lineWidth: CGFloat = 2.5
+    var level: UsageDisplaySeverity?
 
     private var severity: UsageDisplaySeverity {
-        .forFraction(fraction)
+        level ?? .forFraction(fraction)
     }
 
     var body: some View {
@@ -96,28 +122,47 @@ struct UsageSidebarIndicator: View {
                 .foregroundStyle(.orange)
                 .help(usage.stateNote)
         } else if let usage, let limit = usage.displayLimit {
+            let level = UsageDisplaySeverity.forLimit(limit)
             HStack(spacing: 4) {
-                if let glyph = UsageDisplaySeverity.forFraction(limit.utilization).glyph {
-                    Image(systemName: glyph)
-                        .font(.caption2)
-                        .foregroundStyle(UsageDisplaySeverity.forFraction(limit.utilization).color)
+                if let glyph = level.glyph {
+                    Image(systemName: glyph).font(.caption2).foregroundStyle(level.color)
                 }
-                UsageRing(fraction: limit.utilization)
+                UsageRing(fraction: limit.utilization, level: level)
                 Text(UsageFormat.limitSummary(limit))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            .help(tooltip(limit: limit, usage: usage))
+            // Recomputed each minute so the countdown inside is live: a tooltip built once at
+            // render would still read "resets in 29m" half an hour later.
+            .modifier(LiveHelp { tooltip(limit: limit, usage: usage, now: $0) })
         }
     }
 
-    private func tooltip(limit: UsageLimit, usage: AccountUsage) -> String {
+    private func tooltip(limit: UsageLimit, usage: AccountUsage, now: Date) -> String {
         var parts: [String] = []
         if let account = usage.identity.accountLabel { parts.append(account) }
         parts.append("\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used")
-        if let resets = UsageFormat.resets(limit.resetsAt) { parts.append(resets) }
-        if case let .stale(since) = usage.state { parts.append("as of \(UsageFormat.age(since))") }
+        if let resets = UsageFormat.resets(limit.resetsAt, now: now) { parts.append(resets) }
+        if case let .stale(since) = usage.state {
+            parts.append("as of \(UsageFormat.age(since, now: now))")
+        }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Re-evaluates a `.help` tooltip once a minute.
+///
+/// Every relative time in this app ("resets in 12m", "updated 4 min ago") is computed from `Date()`
+/// at render, but SwiftUI only re-renders on state change — and usage state changes every 5–30
+/// minutes. Left alone, a countdown freezes on screen and then jumps, which reads as a live timer
+/// that is quietly lying. A minute ticker costs nothing here and keeps it honest.
+struct LiveHelp: ViewModifier {
+    let text: (Date) -> String
+
+    func body(content: Content) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content.help(text(context.date))
+        }
     }
 }
 
