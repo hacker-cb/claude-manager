@@ -34,7 +34,7 @@ public struct ResolvedAccounts: Sendable, Equatable {
     }
 }
 
-/// Turns a list of bindings (Desktop profiles + the default account) into one entry per account.
+/// Turns a list of bindings (Desktop profiles + the default profile) into one entry per account.
 /// **Reconcile-before-group:** every binding's token is decrypted locally first, then bindings are
 /// merged only where it is *provably* safe — an identical token (same fingerprint ⇒ same account).
 /// Distinct tokens stay separate here and are unified later, in `regroup`, on the authoritative

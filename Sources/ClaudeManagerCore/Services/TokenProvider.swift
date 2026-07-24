@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// One account binding to resolve a token for — a Desktop profile (or the default account)
-/// identified by `id`, whose `config.json` holds the encrypted `oauth:tokenCacheV2`.
+/// One binding to resolve a token for — a Desktop profile (or the default profile) identified
+/// by `id`, whose `config.json` holds the encrypted `oauth:tokenCacheV2`.
 public struct TokenBinding: Sendable, Equatable, Hashable {
     /// Stable binding id — a profile's launcher path, or `TokenBinding.defaultID`.
     public var id: String
