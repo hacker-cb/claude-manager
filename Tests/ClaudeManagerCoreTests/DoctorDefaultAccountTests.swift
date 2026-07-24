@@ -29,6 +29,8 @@ struct DoctorDefaultAccountTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
         ).run()
@@ -58,6 +60,8 @@ struct DoctorDefaultAccountTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
         ).run()

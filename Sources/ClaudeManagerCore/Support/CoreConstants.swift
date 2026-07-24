@@ -31,6 +31,21 @@ public enum CoreConstants {
         version < currentWrapperVersion
     }
 
+    /// First wrapper version whose launchers macOS will actually execute: v3 is where
+    /// the bundle became ad-hoc signed, and an unsigned launcher is refused by
+    /// AppleSystemPolicy — it appears in the Dock and is killed. Everything below is
+    /// therefore **dead**, not merely dated.
+    public static let minimumRunnableWrapperVersion = 3
+
+    /// Whether a launcher stamped with `version` is one macOS refuses to launch, so a
+    /// rebuild is the only way to make it work again. Kept apart from
+    /// `wrapperVersionIsStale` on purpose: staleness means "misses the latest
+    /// improvements" and the app words it as optional, while this means "does not run"
+    /// and is surfaced as an error.
+    public static func wrapperVersionIsUnrunnable(_ version: Int) -> Bool {
+        version < minimumRunnableWrapperVersion
+    }
+
     /// The `MARKETING_VERSION` placeholder a local/dev build carries (see project.yml).
     /// A real release injects a semver from the git tag, so this value distinguishes a
     /// shipped build from a local one.

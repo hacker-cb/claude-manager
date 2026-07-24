@@ -69,6 +69,11 @@ func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .d
             defaultAccountUserDataPath: scene.defaultAccountPath,
             shipItStatePath: scene.shipItStatePath
         ),
+        bundle: LauncherBundle(),
+        // The real `codesign` verifier, matching the real signer `buildDoctorLauncher`
+        // used — a stubbed one would report every bundle as validly signed and the
+        // signature checks would assert nothing.
+        codeSigner: CodeSigner(runner: SystemCommandRunner()),
         processProbe: ProcessProbe(runner: runner),
         // Hermetic MDM state: point at an absent path so tests never depend on the
         // host machine's real managed-preferences.
@@ -104,6 +109,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
         #expect(diags.contains { $0.severity == .error && $0.title.contains("Real Claude.app is missing") })
@@ -122,6 +129,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
         #expect(diags.contains { $0.severity == .error && $0.title.contains("no executable") })
@@ -196,6 +205,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         ).run()
@@ -220,6 +231,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(),
+            codeSigner: CodeSigner(runner: SystemCommandRunner()),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         ).run()

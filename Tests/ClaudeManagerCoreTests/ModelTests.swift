@@ -131,6 +131,22 @@ struct ManagedProfileTests {
     }
 
     @Test
+    func isUnrunnableOnlyBelowTheSigningFloor() {
+        // The app words these differently — "won't launch" vs "update available" — so a
+        // pre-signing launcher must never read as merely dated.
+        let unsigned = ManagedProfile(
+            profile: makeProfile(), pid: nil,
+            wrapperVersion: CoreConstants.minimumRunnableWrapperVersion - 1
+        )
+        #expect(unsigned.isUnrunnable)
+        #expect(unsigned.needsRebuild)
+        let current = ManagedProfile(
+            profile: makeProfile(), pid: nil, wrapperVersion: CoreConstants.currentWrapperVersion
+        )
+        #expect(!current.isUnrunnable)
+    }
+
+    @Test
     func claudeUpdateAvailableOnlyWhenRunningBehindTheDiskVersion() {
         func managed(pid: Int32?, running: String?, available: String?) -> ManagedProfile {
             ManagedProfile(

@@ -83,8 +83,10 @@ temp directories with a mocked command runner.
 Launcher bundles are **really ad-hoc signed** in those tests — `codesign` is delegated to
 the real system alongside `iconutil` (no certificate and no network needed; see
 [ARCHITECTURE.md](ARCHITECTURE.md) § macOS facts) and the resulting signature is verified
-through the public Security reader API. It stays hermetic: every bundle lives in a temp
-install dir, and nothing signs or touches anything outside it.
+through the public Security reader API. Every bundle is built inside a temp install dir,
+never next to the real Claude.app. The one thing that does reach outside it is `~/.Trash`
+— `update`/`remove` trash the old bundle, exactly as in the app — so those suites clean
+up after themselves with `Fixture.purgeTrash`.
 
 An **opt-in live test** runs against the real Claude.app on disk — LaunchServices
 lookup, version read, and the icon/badge pipeline — installing into a temp directory

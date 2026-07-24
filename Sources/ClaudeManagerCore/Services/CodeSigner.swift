@@ -36,8 +36,26 @@ public struct CodeSigner: Sendable {
             )
         } catch let ClaudeManagerError.commandLaunchFailed(_, message) {
             // `/usr/bin/codesign` missing or unrunnable — same user-facing consequence
-            // as a signing failure, so it surfaces as one rather than as a raw exec error.
-            throw ClaudeManagerError.codeSigningFailed(path: bundleURL.path, exitCode: -1, message: message)
+            // as a signing failure, so it surfaces as one rather than as a raw exec
+            // error. `exitCode: nil`: the tool never ran, so it produced no status.
+            throw ClaudeManagerError.codeSigningFailed(
+                path: bundleURL.path, exitCode: nil, message: message
+            )
         }
+    }
+
+    /// Whether the bundle currently carries a signature macOS would accept — the same
+    /// check `codesign --verify --strict` performs, which is what actually gates
+    /// execution. `false` for an unsigned bundle *and* for one whose seal was broken by
+    /// a later write, since macOS refuses both. Deliberately not `spctl`: that assesses
+    /// notarization, which an ad-hoc signature never has.
+    ///
+    /// Used by `Doctor` — a launcher whose seal is broken looks perfectly healthy to
+    /// every other check while being unable to start.
+    public func isValidlySigned(bundleURL: URL) -> Bool {
+        guard let output = try? runner.run(
+            CoreConstants.codesignPath, ["--verify", "--strict", bundleURL.path]
+        ) else { return false }
+        return output.succeeded
     }
 }

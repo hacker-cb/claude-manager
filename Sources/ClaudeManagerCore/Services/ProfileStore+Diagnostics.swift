@@ -16,6 +16,7 @@ public extension ProfileStore {
             realClaude: realClaude,
             configuration: configuration,
             bundle: bundle,
+            codeSigner: codeSigner,
             processProbe: processProbe,
             fileManager: fileManager,
             managedConfigWriter: managedConfigWriter

@@ -24,10 +24,17 @@ public struct LauncherBundle {
         }
 
         /// True when this launcher was built by an older wrapper than the current
-        /// one, so a rebuild would regenerate its script/Info.plist. Not an error —
-        /// the launcher still runs; it just misses the latest wrapper improvements.
+        /// one, so a rebuild would regenerate its script/Info.plist. On its own not an
+        /// error — the launcher still runs; it just misses the latest wrapper
+        /// improvements. See `isUnrunnable` for the subset that does not run at all.
         public var isStale: Bool {
             CoreConstants.wrapperVersionIsStale(marker.wrapperVersion)
+        }
+
+        /// True when this launcher predates ad-hoc signing (wrapper < 3), so macOS
+        /// refuses to execute it — a rebuild is mandatory, not an improvement.
+        public var isUnrunnable: Bool {
+            CoreConstants.wrapperVersionIsUnrunnable(marker.wrapperVersion)
         }
 
         /// Reconstruct the full `Profile` from what the bundle stores.
@@ -103,7 +110,16 @@ public struct LauncherBundle {
         // never observable unsigned, and a signing failure leaves the previous working
         // launcher untouched. The signature survives the swap because it lives in
         // `Contents/_CodeSignature/` — ordinary files that move with the directory.
-        try codeSigner.signAdHoc(bundleURL: tempURL)
+        do {
+            try codeSigner.signAdHoc(bundleURL: tempURL)
+        } catch let ClaudeManagerError.codeSigningFailed(_, exitCode, message) {
+            // Re-anchor the failure on the launcher's real path: the staging directory
+            // the signer saw is deleted by the `defer` above before anyone reads the
+            // message, and its scrambled name names nothing the user can act on.
+            throw ClaudeManagerError.codeSigningFailed(
+                path: appURL.path, exitCode: exitCode, message: message
+            )
+        }
 
         if fileManager.fileExists(atPath: appURL.path) {
             _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)

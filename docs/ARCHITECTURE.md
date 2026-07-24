@@ -234,6 +234,15 @@ itself after a swap).
   assesses *notarization*, not execution policy, so it is not a useful success signal
   here. `codesign --verify --strict` (or `SecStaticCodeCheckValidity`) plus an actual
   launch is.
+- **An unsigned launcher is broken, not dated — and the app must say so.** Launchers
+  built before wrapper v3 carry no signature, so they do not run at all.
+  `CoreConstants.minimumRunnableWrapperVersion` separates that from ordinary staleness
+  (`ManagedProfile.isUnrunnable` / `Discovered.isUnrunnable`): the list badge, the detail
+  banner, and `Doctor` all report it as an **error** with "won't launch" wording and a
+  mandatory rebuild, never as the optional "update available" nudge a merely-dated
+  launcher gets. `Doctor` additionally runs `codesign --verify` per launcher
+  (`CodeSigner.isValidlySigned`), because a *current-format* bundle whose seal was broken
+  after the build passes every other check while being equally unable to start.
 - **An MDM managed-preferences plist wins over our local overlay tier.** If
   `/Library/Managed Preferences/<claude-bundle-id>.plist` exists, Claude ignores the
   `-3p` local tier, so `ManagedConfigWriter` detects it and **skips** (writing there

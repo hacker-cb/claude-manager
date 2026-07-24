@@ -43,6 +43,31 @@ enum SignatureProbe {
     }
 }
 
+/// Rewrite a built launcher's stored wrapper version, simulating a bundle made by an
+/// older Claude Manager — the only way to produce a stale/unsigned-era bundle, since a
+/// fresh `build` always stamps `currentWrapperVersion`. Note this also breaks the
+/// bundle's signature (it writes into a sealed bundle), which is exactly what a
+/// pre-signing launcher looks like.
+func setWrapperVersion(_ version: Int, atAppPath appPath: String) throws {
+    let infoURL = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
+    guard var info = RealClaude.plist(at: infoURL),
+          var marker = info[CoreConstants.markerKey] as? [String: Any]
+    else { throw Fixture.FixtureError(message: "no marker at \(appPath)") }
+    marker["wrapperVersion"] = version
+    info[CoreConstants.markerKey] = marker
+    let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+    try data.write(to: infoURL)
+}
+
+/// A runner on which no tool can be launched at all (the executable is missing) —
+/// distinct from a tool that ran and failed, which is what `failingCodesignRunner`
+/// models.
+struct UnrunnableToolRunner: CommandRunner {
+    func run(_ executable: String, _: [String]) throws -> CommandOutput {
+        throw ClaudeManagerError.commandLaunchFailed(executable: executable, message: "no such tool")
+    }
+}
+
 /// A runner whose `codesign` always fails, for driving `LauncherBundle`'s
 /// signing-failure path. Every other tool succeeds silently.
 func failingCodesignRunner() -> RecordingCommandRunner {
@@ -66,6 +91,11 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var _invocations: [Invocation] = []
     private var handler: @Sendable (String, [String]) -> CommandOutput
+    /// Executables passed through to the real system, checked in `run` — deliberately
+    /// *not* baked into `handler`, which `setHandler` replaces wholesale. A suite that
+    /// swaps the handler mid-test would otherwise silently lose the passthrough and, for
+    /// `codesign`, go back to building bundles that are never really signed.
+    private var delegated: Set<String> = []
 
     init(handler: @escaping @Sendable (String, [String]) -> CommandOutput = { _, _ in
         CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
@@ -87,11 +117,23 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
         self.handler = handler
     }
 
+    /// Narrow (or clear) the real-system passthrough — for a test that needs to stub a
+    /// tool `delegating` runs for real, e.g. making `codesign` fail on demand.
+    func setDelegated(_ delegated: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        self.delegated = delegated
+    }
+
     func run(_ executable: String, _ arguments: [String]) throws -> CommandOutput {
         lock.lock()
         _invocations.append(Invocation(executable: executable, arguments: arguments))
         let handler = handler
+        let isDelegated = delegated.contains(executable)
         lock.unlock()
+        if isDelegated {
+            return (try? SystemCommandRunner().run(executable, arguments))
+                ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
+        }
         return handler(executable, arguments)
     }
 
@@ -99,19 +141,15 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
     /// everything else through `stub`. `codesign` is delegated by default alongside
     /// `iconutil`: a launcher that is not really signed would not really run, so the
     /// suites exercise the same signing path the app does (on temp bundles only).
+    /// The passthrough survives a later `setHandler` — see the `delegated` field.
     static func delegating(
         _ delegated: Set<String> = [CoreConstants.iconutilPath, CoreConstants.codesignPath],
         stub: @escaping @Sendable (String, [String]) -> CommandOutput
     ) -> RecordingCommandRunner {
-        let system = SystemCommandRunner()
-        let runner = RecordingCommandRunner()
-        runner.setHandler { executable, arguments in
-            if delegated.contains(executable) {
-                return (try? system.run(executable, arguments))
-                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
-            }
-            return stub(executable, arguments)
-        }
+        let runner = RecordingCommandRunner(handler: stub)
+        runner.lock.lock()
+        runner.delegated = delegated
+        runner.lock.unlock()
         return runner
     }
 }
@@ -275,8 +313,9 @@ struct StoreEnv {
     }
 }
 
-/// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
-/// stubbed, so no process is killed and the Dock is never restarted for real.
+/// `iconutil` and `codesign` run for real (so icons are genuine `.icns` and launchers
+/// are genuinely signed, both against temp dirs); every other tool is stubbed, so no
+/// process is killed and the Dock is never restarted for real.
 func makeStoreEnv(
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {

@@ -345,8 +345,13 @@ final class AppModel: ObservableObject {
         }
         if !result.failed.isEmpty {
             let c = result.failed.count
-            let names = result.failed.map(\.displayName).joined(separator: ", ")
+            let names = result.failed.map(\.profile.displayName).joined(separator: ", ")
             parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
+            // Carry the reason through, not just the names: a signing failure leaves the
+            // launcher unable to start, and without this the user has nothing to act on.
+            // Distinct reasons only — a shared cause (the usual case) prints once.
+            let reasons = Set(result.failed.map(\.reason)).sorted()
+            parts.append(reasons.joined(separator: " "))
         }
         guard !parts.isEmpty else { return nil }
         let n = result.rebuilt.count

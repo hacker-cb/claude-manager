@@ -44,6 +44,13 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         CoreConstants.wrapperVersionIsStale(wrapperVersion)
     }
 
+    /// True when this launcher predates ad-hoc signing, so macOS refuses to execute it:
+    /// it flashes in the Dock and dies. A subset of `needsRebuild` that the app must
+    /// word as a failure, not as an optional improvement — the rebuild is mandatory.
+    public var isUnrunnable: Bool {
+        CoreConstants.wrapperVersionIsUnrunnable(wrapperVersion)
+    }
+
     /// True when the live instance is running an older Claude than the one now on
     /// disk — Claude.app updated in place while this instance kept its launch-time
     /// version. Distinct from `needsRebuild`: the fix is a restart, not a rebuild.

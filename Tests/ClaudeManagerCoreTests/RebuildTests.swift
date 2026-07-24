@@ -6,19 +6,6 @@ import Testing
 struct LauncherRebuildTests {
     let fm = FileManager.default
 
-    /// Rewrite a built launcher's stored wrapper version, simulating a bundle made by
-    /// an older Claude Manager (there is no other way to produce a stale bundle — a
-    /// fresh `build` always stamps `currentWrapperVersion`).
-    private func setWrapperVersion(_ version: Int, atAppPath appPath: String) throws {
-        let infoURL = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
-        var info = try #require(RealClaude.plist(at: infoURL))
-        var marker = try #require(info[CoreConstants.markerKey] as? [String: Any])
-        marker["wrapperVersion"] = version
-        info[CoreConstants.markerKey] = marker
-        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-        try data.write(to: infoURL)
-    }
-
     @Test
     func rebuildRestampsCurrentWrapperVersionAndArchKey() throws {
         let env = try makeStoreEnv()
@@ -94,6 +81,9 @@ struct LauncherRebuildTests {
         // both as failed rather than throwing on the first.
         _ = try env.store.add(AddProfileRequest(name: env.name("one")))
         _ = try env.store.add(AddProfileRequest(name: env.name("two")))
+        // Keep `codesign` real (a rebuild that reaches signing must still sign for
+        // real), but stop delegating `iconutil` so it can be made to fail.
+        env.runner.setDelegated([CoreConstants.codesignPath])
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.iconutilPath {
                 return CommandOutput(exitCode: 1, standardOutput: "", standardError: "boom")
@@ -103,20 +93,26 @@ struct LauncherRebuildTests {
         let result = try env.store.rebuildAll()
         #expect(result.rebuilt.isEmpty)
         #expect(result.skippedRunning.isEmpty)
-        #expect(Set(result.failed.map(\.name)) == [env.name("one"), env.name("two")])
+        #expect(Set(result.failed.map(\.profile.name)) == [env.name("one"), env.name("two")])
         // Nothing rebuilt → no batch Dock restart.
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
+    /// The soft "older launcher format" warning is reserved for launchers that still
+    /// run. Every version below `minimumRunnableWrapperVersion` is reported as an error
+    /// instead (see `LauncherSigningTests`), so with the two constants currently equal
+    /// no launcher can be stale-but-runnable — this pins that rule rather than the
+    /// wording of either message.
     @Test
-    func doctorWarnsOnStaleLauncher() throws {
+    func staleWrapperVersionsBelowTheRunnableFloorAreNotJustAWarning() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         try setWrapperVersion(1, atAppPath: profile.appPath)
-        let warnings = env.store.doctor().filter {
-            $0.severity == .warning && $0.title.contains("older launcher format")
-        }
-        #expect(warnings.count == 1)
+
+        let diagnostics = env.store.doctor()
+
+        #expect(!diagnostics.contains { $0.title.contains("older launcher format") })
+        #expect(diagnostics.contains { $0.severity == .error && $0.title.contains("macOS will not run it") })
     }
 }
