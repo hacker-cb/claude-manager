@@ -24,12 +24,15 @@ settings:
     SWIFT_VERSION: "6.0"
     # Version SSoT is the git tag. CI injects MARKETING_VERSION (from the v* tag) and
     # CURRENT_PROJECT_VERSION (from the run number) into the release build via
-    # scripts/build-app.sh. These are dev placeholders for local/unsigned builds only —
-    # do NOT bump them to cut a release; push a `vX.Y.Z` tag instead (docs/RELEASING.md).
+    # scripts/build-app.sh. These are dev placeholders for local (non-release) builds
+    # only — do NOT bump them to cut a release; push a `vX.Y.Z` tag instead
+    # (docs/RELEASING.md).
     MARKETING_VERSION: "0.0.0"
     CURRENT_PROJECT_VERSION: "1"
-    # Signing is supplied at release time via CI (Developer ID). Local/PR builds
-    # pass CODE_SIGNING_ALLOWED=NO, so no team is required to compile.
+    # No team is needed to compile: nothing built here carries a Developer ID. Every local
+    # and CI build falls through to the target's ad-hoc `CODE_SIGN_IDENTITY: "-"` below,
+    # which needs no certificate and no keychain; scripts/build-app.sh overrides both
+    # settings on the xcodebuild command line when it archives a release.
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Manual
 
@@ -52,6 +55,14 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # Ad-hoc ("-") is neither cosmetic nor optional: content hashes with no identity,
+        # the same seal LauncherBundle puts on every launcher it writes, for the same
+        # reason. AppleSystemPolicy refuses to EXECUTE a bundle with no valid signature —
+        # it registers, reaches the Dock, and is killed, which reads as the app hanging on
+        # launch (docs/ARCHITECTURE.md § macOS facts baked into the code). So an unsigned
+        # build is unrunnable, not merely unsigned: never suppress this with
+        # CODE_SIGNING_ALLOWED=NO on an xcodebuild line. scripts/build-app.sh overrides it
+        # with the real Developer ID identity for the release archive.
         CODE_SIGN_IDENTITY: "-"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Pavel Sokolov. MIT-licensed."
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
@@ -100,7 +111,7 @@ targets:
         # once with Sparkle's `bin/generate_keys` (private key → login Keychain, backed
         # up offline), paste the printed public key below, and store the exported private
         # key as the SPARKLE_ED_PRIVATE_KEY CI secret. scripts/build-app.sh fails the
-        # release if this still holds the placeholder, so a build can never ship unsigned.
+        # release if this still holds the placeholder, so no build ships unable to update.
         SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
         SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
         # The deep-link broker: declaring the claude:// scheme makes Claude Manager an

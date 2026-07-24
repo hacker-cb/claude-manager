@@ -47,9 +47,9 @@ final class LaunchAtLogin: ObservableObject {
     }
 
     /// Register or unregister the login item, then reconcile published state with the
-    /// service's real status. The request can be refused — an unsigned dev build, or a
-    /// user block in System Settings — so we never assume it took; the status read is
-    /// authoritative.
+    /// service's real status. The request can be refused — a build macOS won't honour a
+    /// registration for, or a user block in System Settings — so we never assume it took;
+    /// the status read is authoritative.
     func setEnabled(_ enabled: Bool) {
         // Registering is refused in an unsupported build (see `isSupported`), but
         // *unregistering* never is: a login item left by an earlier run — or by a build

@@ -222,6 +222,11 @@ itself after a swap).
   same locally and on CI. `CodeSigner` runs `/usr/bin/codesign --force --sign -` through
   the injected `CommandRunner`; the in-process `SecCodeSigner` API was tried and rejected
   (it deadlocks under a saturated thread pool — see [DECISIONS.md](DECISIONS.md)).
+  Nothing here is launcher-specific: macOS applies the same policy to **any** bundle it is
+  asked to execute, Claude Manager's own `.app` included — which is why `make build-app`
+  and CI build it ad-hoc signed (`CODE_SIGN_IDENTITY: "-"` in `project.yml`) rather than
+  with signing disabled (see [DEVELOPMENT.md](DEVELOPMENT.md) § Local builds are ad-hoc
+  signed).
 - **Sign last, and re-sign on every rebuild.** The signature seals the script, the
   Info.plist and the icon, so *any* write into the bundle after signing invalidates it —
   and an invalid signature is refused harder than a missing one. `build` is the single
