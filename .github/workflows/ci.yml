@@ -28,6 +28,10 @@ env:
 jobs:
   build-test-lint:
     runs-on: macos-15
+    # The job normally finishes in ~3 minutes. A cap keeps a hang — e.g. a test that
+    # blocks a runner's small worker pool on a subprocess — from burning the default
+    # six hours before anyone notices it is stuck rather than slow.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -65,32 +69,33 @@ jobs:
       - name: Test (headless core)
         run: swift test
 
-      - name: Generate Xcode project
-        run: xcodegen generate
+      # Both configurations go through the same `make build-app` a developer runs (it
+      # regenerates the Xcode project itself), so what CI proves green is exactly what
+      # `make run` produces and there is no second copy of the build flags to keep in step.
+      # Two invariants ride on those builds, neither of them visible to `swift test`, each
+      # with its own assert step below:
+      #   · Release and Debug must keep SEPARATE macOS identities — that lives in per-config
+      #     build settings (project.yml `settings.configs`), not in code.
+      #   · each bundle must come out validly SEALED — macOS refuses to *execute* an
+      #     unsigned .app, which reads as a ~20s stall on first launch.
+      # No signing flags are passed: the builds must exercise the `CODE_SIGN_IDENTITY: "-"`
+      # project.yml declares, because that declaration is what can regress and a
+      # command-line override would mask its removal. Ad-hoc signing needs no certificate,
+      # team or keychain, so this job stays credential-free; the real Developer ID +
+      # Hardened Runtime signature is a release-only path, verified in scripts/build-app.sh.
+      - name: Build app (Release — shipping identity)
+        run: make build-app CONFIG=Release
 
-      # Both configurations are built: Release is what ships, Debug is what `make run`
-      # produces, and the two must keep SEPARATE macOS identities. That invariant lives in
-      # per-config build settings rather than in code, so `swift test` cannot see it — the
-      # assert step below is its only regression guard (see scripts/assert-build-identities.sh).
-      - name: Build app (unsigned, Release — shipping identity)
-        run: |
-          xcodebuild build \
-            -project ClaudeManager.xcodeproj \
-            -scheme ClaudeManager \
-            -configuration Release \
-            -destination 'generic/platform=macOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Build app (unsigned, Debug — dev identity)
-        run: |
-          xcodebuild build \
-            -project ClaudeManager.xcodeproj \
-            -scheme ClaudeManager \
-            -configuration Debug \
-            -destination 'generic/platform=macOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO
+      - name: Build app (Debug — dev identity)
+        run: make build-app CONFIG=Debug
 
       - name: Assert dev and release identities stay isolated
         run: bash scripts/assert-build-identities.sh
+
+      # `!cancelled()` so a failure in the identity assert above does not skip this one: the
+      # two invariants are orthogonal, and both should be reported in a single run rather than
+      # costing a second CI cycle to surface the second after the first is fixed. Both builds
+      # have run by here, so it never fires against a missing product on their account.
+      - name: Assert both built apps are validly signed
+        if: ${{ !cancelled() }}
+        run: bash scripts/assert-build-signed.sh

@@ -335,7 +335,7 @@ struct ProfileStoreTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let profile = env.store.draft(name: env.name("work"))
-        try LauncherBundle().build(
+        try LauncherBundle(runner: stubbedSigningRunner()).build(
             profile: profile,
             realBinaryPath: env.real.binaryURL.path,
             icnsData: Data("i".utf8)

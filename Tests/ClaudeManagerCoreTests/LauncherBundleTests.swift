@@ -32,7 +32,7 @@ struct LauncherBundleTests {
         )
         try info.write(to: contents.appendingPathComponent("Info.plist"))
 
-        let bundle = LauncherBundle()
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
         #expect(bundle.readMarker(at: app) == nil)
         #expect(!bundle.isManagedLauncher(at: app))
         // A path with no bundle at all is likewise not a launcher.
@@ -43,7 +43,7 @@ struct LauncherBundleTests {
     func buildsExpectedBundleStructure() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
-        let bundle = LauncherBundle()
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
         let profile = makeProfile(installDir: dir)
         try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("icns".utf8))
 
@@ -64,7 +64,11 @@ struct LauncherBundleTests {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
         let profile = makeProfile(installDir: dir)
-        try LauncherBundle().build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8))
+        try LauncherBundle(runner: stubbedSigningRunner()).build(
+            profile: profile,
+            realBinaryPath: realBinary,
+            icnsData: Data("i".utf8)
+        )
 
         let info = try #require(RealClaude.plist(
             at: URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents/Info.plist")
@@ -86,7 +90,7 @@ struct LauncherBundleTests {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
         let profile = makeProfile(installDir: dir)
-        let bundle = LauncherBundle()
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
         try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8))
 
         let discovered = try #require(bundle.readMarker(at: URL(fileURLWithPath: profile.appPath)))
@@ -102,7 +106,7 @@ struct LauncherBundleTests {
     func scanFindsManagedAndIgnoresBareApps() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
-        let bundle = LauncherBundle()
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
         try bundle.build(
             profile: makeProfile(installDir: dir),
             realBinaryPath: realBinary,
@@ -126,7 +130,7 @@ struct LauncherBundleTests {
     func rebuildOverwritesPreviousMarker() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
-        let bundle = LauncherBundle()
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
         var profile = makeProfile(installDir: dir, label: "W")
         try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8))
         profile.label = "ZZ"

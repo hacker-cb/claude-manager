@@ -9,11 +9,16 @@ public struct Doctor {
     let processProbe: ProcessProbe
     let fileManager: FileManager
     let managedConfigWriter: ManagedConfigWriter
+    let codeSigner: CodeSigner
 
+    /// `bundle` and `codeSigner` are required, not defaulted: both would otherwise
+    /// silently fall back to a fresh `SystemCommandRunner` and bypass the caller's
+    /// injected one — which is exactly what the test suite relies on not happening.
     public init(
         realClaude: RealClaude?,
         configuration: ProfileStoreConfiguration,
-        bundle: LauncherBundle = LauncherBundle(),
+        bundle: LauncherBundle,
+        codeSigner: CodeSigner,
         processProbe: ProcessProbe,
         fileManager: FileManager = .default,
         managedConfigWriter: ManagedConfigWriter? = nil
@@ -21,6 +26,7 @@ public struct Doctor {
         self.realClaude = realClaude
         self.configuration = configuration
         self.bundle = bundle
+        self.codeSigner = codeSigner
         self.processProbe = processProbe
         self.fileManager = fileManager
         self.managedConfigWriter = managedConfigWriter ?? ManagedConfigWriter(fileManager: fileManager)
@@ -37,6 +43,7 @@ public struct Doctor {
             diagnostics.append(launcherDiagnostic(for: launcher))
         }
 
+        diagnostics.append(contentsOf: signatureDiagnostics(discovered))
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
@@ -49,7 +56,7 @@ public struct Doctor {
     /// A warning the **app** appends when the deep-link broker is on but the app isn't set to
     /// launch at login. It can't live in `run()` — both inputs are app-layer, not core state.
     /// The broker's `claude://` hold is held only while Claude Manager runs, so with it closed
-    /// an account you open can take the scheme over and its links stop routing through the
+    /// a profile you open can take the scheme over and its links stop routing through the
     /// picker; keeping the app resident (launch at login) closes that gap. `nil` when the
     /// broker is off or launch-at-login is already on.
     public static func deepLinkResidencyDiagnostic(
@@ -60,8 +67,8 @@ public struct Doctor {
         return Diagnostic(
             severity: .warning,
             title: "Deep links need Claude Manager running — turn on Launch at login",
-            detail: "While Claude Manager is closed, an account you open can take over claude:// "
-                + "and its links stop going through the account picker."
+            detail: "While Claude Manager is closed, a profile you open can take over claude:// "
+                + "and its links stop going through the profile picker."
         )
     }
 
@@ -87,7 +94,7 @@ public struct Doctor {
         return [Diagnostic(
             severity: .warning,
             title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
-            detail: "Use “Apply update to all accounts” to quit every account, swap, and reopen"
+            detail: "Use “Apply to all profiles” to quit every profile, swap, and reopen"
         )]
     }
 
@@ -141,12 +148,41 @@ public struct Doctor {
         )
     }
 
+    /// Whether each launcher carries a signature macOS would accept. Split from
+    /// `launcherDiagnostic` because it is the one failure that leaves every other check
+    /// green: an unsigned or seal-broken bundle has its script, its marker and its
+    /// profile dir all intact, and still cannot start.
+    ///
+    /// Two distinct causes, reported as errors — the launcher does not run either way:
+    /// a bundle predating ad-hoc signing (wrapper < 3, no signature was ever written),
+    /// and a v3+ bundle whose seal has since been broken (something wrote into it).
+    private func signatureDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        discovered.compactMap { launcher in
+            if launcher.isUnrunnable {
+                return Diagnostic(
+                    severity: .error,
+                    title: "\(launcher.displayName): unsigned — macOS will not run it, rebuild to fix",
+                    detail: "wrapper v\(launcher.wrapperVersion) predates launcher signing "
+                        + "(v\(CoreConstants.minimumRunnableWrapperVersion))"
+                )
+            }
+            guard !codeSigner.isValidlySigned(bundleURL: launcher.appURL) else { return nil }
+            return Diagnostic(
+                severity: .error,
+                title: "\(launcher.displayName): signature is broken — macOS will not run it, rebuild to fix",
+                detail: PathUtils.abbreviatingHome(launcher.appURL.path)
+            )
+        }
+    }
+
     /// A soft warning per launcher built by an older wrapper than the current one —
     /// it still runs, but a rebuild would refresh its script/Info.plist (e.g. to run
     /// native instead of under Rosetta). Separate from `launcherDiagnostic` so an
-    /// otherwise-ok launcher is reported as both "ok" and "stale".
+    /// otherwise-ok launcher is reported as both "ok" and "stale". A launcher that is
+    /// *unrunnable* is left to `signatureDiagnostics`, so "rebuild is optional" wording
+    /// never lands on a launcher that cannot start.
     private func staleLauncherDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        discovered.filter(\.isStale).map { launcher in
+        discovered.filter { $0.isStale && !$0.isUnrunnable }.map { launcher in
             Diagnostic(
                 severity: .warning,
                 title: "\(launcher.displayName): built by an older launcher format — rebuild to update",
@@ -188,10 +224,10 @@ public struct Doctor {
     /// the updater — a best-effort write that silently failed, or a profile predating
     /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
     private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        // Nothing on disk to manage: no clones and no default-account overlay to check.
-        // Keyed on actual state, not the broker flag — the default account is never
+        // Nothing on disk to manage: no clones and no default-profile overlay to check.
+        // Keyed on actual state, not the broker flag — the default profile is never
         // written, so an on-by-default broker alone is not something to report.
-        let defaultPath = configuration.defaultAccountUserDataPath
+        let defaultPath = configuration.defaultProfileUserDataPath
         guard !discovered.isEmpty
             || managedConfigWriter.overlayExists(userDataPath: defaultPath) else { return [] }
 
@@ -204,7 +240,7 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(path)
             )]
         }
-        return cloneOverlayDiagnostics(discovered) + defaultAccountOverlayDiagnostics(defaultPath)
+        return cloneOverlayDiagnostics(discovered) + defaultProfileOverlayDiagnostics(defaultPath)
     }
 
     /// Warn once per distinct clone user-data-dir whose overlay is wrong: the updater not
@@ -225,14 +261,14 @@ public struct Doctor {
                 )
             }
             // Satisfies `.clone()` (updater disabled) but an older build also left the deep-link
-            // key — Claude drops forwarded links until this account is restarted. Reopening CM
+            // key — Claude drops forwarded links until this profile is restarted. Reopening CM
             // reconciles the file; the running instance still needs a restart to pick it up.
             if managedConfigWriter.hasFlag(
                 ProfileManagedConfig.disableDeepLinkRegistrationKey, userDataPath: profilePath
             ) {
                 return Diagnostic(
                     severity: .warning,
-                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this account",
+                    title: "\(launcher.displayName): deep-link registration is suppressed — reopen Claude Manager, then restart this profile",
                     detail: PathUtils.abbreviatingHome(profilePath)
                 )
             }
@@ -240,20 +276,20 @@ public struct Doctor {
         }
     }
 
-    /// The default account's overlay should be **empty**: it's the update leader (auto-update
+    /// The default profile's overlay should be **empty**: it's the update leader (auto-update
     /// stays on) and its `claude://` handler is held by the event-driven guard, never by a
     /// written key. Warn if either CM-owned key is present anyway (left by an earlier build or
     /// a manual edit) — a stray `disableAutoUpdates` silently breaks the update model for every
-    /// account, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
+    /// profile, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
     /// links. A reconcile (reopening Claude Manager) removes them.
-    private func defaultAccountOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
+    private func defaultProfileOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
         var diagnostics: [Diagnostic] = []
         if managedConfigWriter.isSatisfied(
             ProfileManagedConfig(disableAutoUpdates: true), userDataPath: defaultPath
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,
-                title: "Default account: auto-updates are disabled — reopen Claude Manager to restore them",
+                title: "Default profile: auto-updates are disabled — reopen Claude Manager to restore them",
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }
@@ -262,7 +298,7 @@ public struct Doctor {
         ) {
             diagnostics.append(Diagnostic(
                 severity: .warning,
-                title: "Default account: deep-link registration is suppressed — reopen Claude Manager to restore it",
+                title: "Default profile: deep-link registration is suppressed — reopen Claude Manager to restore it",
                 detail: PathUtils.abbreviatingHome(defaultPath)
             ))
         }

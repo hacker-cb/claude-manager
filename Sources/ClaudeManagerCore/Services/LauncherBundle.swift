@@ -4,9 +4,11 @@ import Foundation
 /// Info.plist marker is the source of truth; `scan` reconstructs profiles from it.
 public struct LauncherBundle {
     let fileManager: FileManager
+    let codeSigner: CodeSigner
 
-    public init(fileManager: FileManager = .default) {
+    public init(fileManager: FileManager = .default, runner: CommandRunner = SystemCommandRunner()) {
         self.fileManager = fileManager
+        codeSigner = CodeSigner(runner: runner)
     }
 
     /// A launcher discovered on disk together with its parsed marker.
@@ -22,10 +24,17 @@ public struct LauncherBundle {
         }
 
         /// True when this launcher was built by an older wrapper than the current
-        /// one, so a rebuild would regenerate its script/Info.plist. Not an error —
-        /// the launcher still runs; it just misses the latest wrapper improvements.
+        /// one, so a rebuild would regenerate its script/Info.plist. On its own not an
+        /// error — the launcher still runs; it just misses the latest wrapper
+        /// improvements. See `isUnrunnable` for the subset that does not run at all.
         public var isStale: Bool {
             CoreConstants.wrapperVersionIsStale(marker.wrapperVersion)
+        }
+
+        /// True when this launcher predates ad-hoc signing (wrapper < 3), so macOS
+        /// refuses to execute it — a rebuild is mandatory, not an improvement.
+        public var isUnrunnable: Bool {
+            CoreConstants.wrapperVersionIsUnrunnable(marker.wrapperVersion)
         }
 
         /// Reconstruct the full `Profile` from what the bundle stores.
@@ -89,6 +98,28 @@ public struct LauncherBundle {
             profile: profile,
             marker: marker
         )
+
+        // Ad-hoc sign LAST — macOS refuses to execute a launcher that has no valid
+        // signature (see `CodeSigner`), and the signature seals the script, the
+        // Info.plist and the icon: any write into the bundle after this point breaks it,
+        // and a *broken* signature is refused harder than a missing one. So `build`
+        // stays the single writer, and nothing may be added below this line.
+        //
+        // Signing the staging copy rather than the installed path keeps the build
+        // atomic: the bundle is swapped into place already sealed, so a launcher is
+        // never observable unsigned, and a signing failure leaves the previous working
+        // launcher untouched. The signature survives the swap because it lives in
+        // `Contents/_CodeSignature/` — ordinary files that move with the directory.
+        do {
+            try codeSigner.signAdHoc(bundleURL: tempURL)
+        } catch let ClaudeManagerError.codeSigningFailed(_, exitCode, message) {
+            // Re-anchor the failure on the launcher's real path: the staging directory
+            // the signer saw is deleted by the `defer` above before anyone reads the
+            // message, and its scrambled name names nothing the user can act on.
+            throw ClaudeManagerError.codeSigningFailed(
+                path: appURL.path, exitCode: exitCode, message: message
+            )
+        }
 
         if fileManager.fileExists(atPath: appURL.path) {
             _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)

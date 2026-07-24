@@ -33,21 +33,21 @@ struct MessageError: LocalizedError {
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var profiles: [ManagedProfile] = []
-    /// Observable state of the default account (the untouched real app), shown as the first
-    /// row of the account lists. `nil` when Claude.app can't be located.
-    @Published private(set) var primaryAccount: PrimaryAccountStatus?
+    /// Observable state of the default profile (the untouched real app), shown as the first
+    /// row of the profile lists. `nil` when Claude.app can't be located.
+    @Published private(set) var primaryProfile: PrimaryProfileStatus?
     @Published private(set) var realClaude: RealClaude?
     @Published private(set) var realClaudeVersion: String?
 
-    /// The sidebar's account rows: the default account first (whenever Claude is located —
-    /// provisionally "stopped" until the next status probe fills `primaryAccount` in), then
-    /// each managed clone. Keyed off `realClaude`, not `primaryAccount`, so a Retry that
+    /// The sidebar's profile rows: the default profile first (whenever Claude is located —
+    /// provisionally "stopped" until the next status probe fills `primaryProfile` in), then
+    /// each managed clone. Keyed off `realClaude`, not `primaryProfile`, so a Retry that
     /// re-finds Claude shows the default row at once instead of waiting for a refresh. The
     /// menu bar renders the same ordering directly, since its per-item affordances differ.
-    var accounts: [Account] {
-        guard realClaude != nil else { return profiles.map(Account.clone) }
-        let primary = primaryAccount ?? PrimaryAccountStatus(pid: nil)
-        return [.primary(primary)] + profiles.map(Account.clone)
+    var profileEntries: [ProfileEntry] {
+        guard realClaude != nil else { return profiles.map(ProfileEntry.clone) }
+        let primary = primaryProfile ?? PrimaryProfileStatus(pid: nil)
+        return [.primary(primary)] + profiles.map(ProfileEntry.clone)
     }
 
     @Published var locateError: String?
@@ -56,15 +56,16 @@ final class AppModel: ObservableObject {
 
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
     /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
-    private var inflight = 0 {
+    /// Non-private so the `AppModel+Perform` extension (another file) can drive it.
+    var inflight = 0 {
         didSet { isBusy = inflight > 0 }
     }
 
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
-    /// A Claude update ShipIt has staged but not applied (any open account blocks the
-    /// swap) — drives the "Apply update to all accounts" affordance. `nil` when none.
+    /// A Claude update ShipIt has staged but not applied (any open profile blocks the
+    /// swap) — drives the "Apply to all profiles" affordance. `nil` when none.
     @Published private(set) var stagedUpdate: StagedUpdate?
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
@@ -83,13 +84,80 @@ final class AppModel: ObservableObject {
     /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
     /// notifications.
     var notifiedClaudeUpdates: Set<String> = []
-    private var monitorTask: Task<Void, Never>?
-    private var activationObserver: (any NSObjectProtocol)?
+    var monitorTask: Task<Void, Never>?
+    var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
     /// overlapping runs can't both `open -n` a duplicate default. See `openReal`.
-    /// Non-private so the `AppModel+PrimaryAccount` extension (another file) can reach it.
+    /// Non-private so the `AppModel+PrimaryProfile` extension (another file) can reach it.
     var isOpeningReal = false
+
+    // MARK: - Plan-usage statistics (see AppModel+Usage)
+
+    /// Durable for the process lifetime: the SQLite history/throttle store, and the safeStorage
+    /// key cache (one keychain read for the whole fleet).
+    let usageHistory: UsageHistoryStore
+    let safeStorageKeys = SafeStorageKeyStore()
+
+    /// Latest usage per **binding** id (a launcher path, or `TokenBinding.defaultID`); one Claude
+    /// login shared across profiles appears under each of its bindings, so a view keyed by profile
+    /// reads it directly.
+    @Published var usageByBinding: [String: AccountUsage] = [:]
+    /// Per-binding token failures (login-needed / no-source), for a profile row's state.
+    @Published var usageBindingFailures: [String: TokenProviderError] = [:]
+
+    /// The background usage poll; mirrors `monitorTask`. Non-private for `AppModel+Usage`.
+    var usagePollTask: Task<Void, Never>?
+    /// Single-flights `refreshUsage`: `@MainActor` makes the check-and-set atomic, so a manual
+    /// Refresh overlapping a scheduled poll can't both fetch. `@Published` because the detail
+    /// panes bind it to disable the Refresh button and show "Checking usage…" — without it those
+    /// views wouldn't re-render when a manual refresh starts or finishes.
+    @Published var isRefreshingUsage = false
+    /// Set when an interactive Refresh arrives mid-flight, so one more interactive round follows.
+    var pendingInteractiveRefresh = false
+    /// Bumped whenever the master switch disowns the pass in flight (toggle-off, or off→on). A
+    /// pass suspended on its `await` compares this after resuming and, if it changed, commits
+    /// nothing and leaves the single-flight state to whoever owns the current generation — so a
+    /// cancelled pass can't repopulate state the toggle-off just cleared, nor hold the lock shut.
+    var usageRefreshGeneration = 0
+    /// The usage pass in flight, so the master switch can cancel it mid-fleet. The two `lastKnown`
+    /// values are the previous resolve's launcher set and running-state, to spot a change.
+    var usageRefreshTask: Task<UsageRefreshResult, Never>?
+    var lastKnownBindingIDs: Set<String> = []
+    var lastKnownAnyRunning = false
+    /// When usage history was last pruned, so the retention sweep runs on a coarse schedule
+    /// (`usagePruneInterval`) rather than on every poll tick.
+    var lastUsagePruneAt: Date?
+
+    @Published var usageTrackingEnabled: Bool {
+        didSet {
+            defaults.set(usageTrackingEnabled, forKey: PreferenceKeys.usageTrackingEnabled)
+            guard didFinishInit else { return }
+            applyUsageTrackingChange()
+        }
+    }
+
+    /// Background poll interval in minutes; `0` = manual only. Presets in Settings.
+    @Published var usagePollIntervalMinutes: Int {
+        didSet {
+            defaults.set(usagePollIntervalMinutes, forKey: PreferenceKeys.usagePollIntervalMinutes)
+            guard didFinishInit else { return }
+            restartUsagePolling()
+        }
+    }
+
+    @Published var usageAdaptiveEnabled: Bool {
+        didSet {
+            defaults.set(usageAdaptiveEnabled, forKey: PreferenceKeys.usageAdaptiveEnabled)
+            guard didFinishInit else { return }
+            restartUsagePolling()
+        }
+    }
+
+    /// Whether limit-approaching reminders are posted. On by default.
+    @Published var usageNotificationsEnabled: Bool {
+        didSet { defaults.set(usageNotificationsEnabled, forKey: PreferenceKeys.usageNotificationsEnabled) }
+    }
 
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
@@ -139,6 +207,14 @@ final class AppModel: ObservableObject {
         badgeStyle = Self.loadBadgeStyle(from: defaults)
         // On by default: `object` distinguishes "never set" (→ true) from an explicit off.
         deepLinkBrokerEnabled = defaults.object(forKey: PreferenceKeys.deepLinkBrokerEnabled) as? Bool ?? true
+        usageHistory = UsageHistoryStore(path: Self.usageDatabaseURL().path)
+        usageTrackingEnabled = defaults.object(forKey: PreferenceKeys.usageTrackingEnabled) as? Bool ?? true
+        // `object` distinguishes unset (→ 30) from an explicit 0 (manual-only).
+        let pollMinutes = defaults.object(forKey: PreferenceKeys.usagePollIntervalMinutes) as? Int
+        usagePollIntervalMinutes = pollMinutes ?? UsageService.defaultPollMinutes
+        usageAdaptiveEnabled = defaults.object(forKey: PreferenceKeys.usageAdaptiveEnabled) as? Bool ?? true
+        usageNotificationsEnabled = defaults
+            .object(forKey: PreferenceKeys.usageNotificationsEnabled) as? Bool ?? true
         locate()
         didFinishInit = true
         // Wire the AppKit deep-link sink and run the launch tasks. Both are deferred to the
@@ -188,7 +264,7 @@ final class AppModel: ObservableObject {
         } catch {
             realClaude = nil
             realClaudeVersion = nil
-            primaryAccount = nil
+            primaryProfile = nil
             // A vanished Claude has no staged update to apply; clear it so the banner doesn't
             // outlive the app it refers to (refresh, its only other writer, bails while nil).
             stagedUpdate = nil
@@ -198,7 +274,7 @@ final class AppModel: ObservableObject {
 
     /// User-driven re-detect (the missing-Claude banner's Retry and Settings' Re-detect):
     /// locate synchronously, then — only if Claude was found — refresh so it repopulates the
-    /// account list (the default-account row included) without waiting for the next poll.
+    /// profile list (the default-profile row included) without waiting for the next poll.
     /// Skipping refresh when locate still fails avoids `perform` surfacing a redundant
     /// "Claude not found" alert on top of the banner that already says so.
     func relocate() async {
@@ -212,7 +288,7 @@ final class AppModel: ObservableObject {
         await applyDeepLinkBroker()
     }
 
-    private func currentConfiguration() -> ProfileStoreConfiguration? {
+    func currentConfiguration() -> ProfileStoreConfiguration? {
         guard let real = realClaude else { return nil }
         var config = ProfileStoreConfiguration.makeDefault(realClaude: real)
         if let installOverride = effectiveInstallDirectory { config.installDirectory = installOverride }
@@ -221,49 +297,33 @@ final class AppModel: ObservableObject {
         return config
     }
 
-    /// Build a store for synchronous, non-blocking calls (e.g. `draft`).
-    func makeStore() -> ProfileStore? {
-        guard let real = realClaude, let config = currentConfiguration() else { return nil }
-        return ProfileStore(realClaude: real, configuration: config)
-    }
-
     // MARK: - Reads
 
     func refresh() async {
         let sizes = measureSizes
-        // One process sweep yields both the launcher list and the default-account status.
+        // One process sweep yields both the launcher list and the default-profile status.
         guard let snapshot = await perform({ store in store.snapshot(measuringSizes: sizes) }) else { return }
         profiles = snapshot.profiles
-        primaryAccount = snapshot.primaryAccount
+        primaryProfile = snapshot.primaryProfile
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
-        // there are none — the default account can still have one staged).
+        // there are none — the default profile can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
+        // Detached: the editor's Save awaits `refresh()`, and a usage pass issues per-account
+        // HTTP with a 5s timeout each — awaiting it froze the sheet for tens of seconds offline.
+        Task { await refreshUsageIfBindingsChanged() }
     }
 
     func runDoctor() async {
-        guard let result = await perform({ store in store.doctor() }) else { return }
+        guard var result = await perform({ store in store.doctor() }) else { return }
+        if let usage = usageDoctorDiagnostic() { result.append(usage) }
         diagnostics = result
     }
 
     func refreshRunningInstances() async {
         guard let result = await perform({ store in store.runningInstances() }) else { return }
         runningInstances = result
-    }
-
-    func draft(
-        name: String,
-        label: String? = nil,
-        color: BadgeColor? = nil,
-        displayName: String? = nil,
-        bundleID: String? = nil,
-        profilePath: String? = nil
-    ) -> Profile? {
-        makeStore()?.draft(
-            name: name, label: label, color: color,
-            displayName: displayName, bundleID: bundleID, profilePath: profilePath
-        )
     }
 
     // MARK: - Mutations
@@ -290,7 +350,7 @@ final class AppModel: ObservableObject {
     /// Bring the app that owns `pid` to the front, returning whether it was activated.
     /// `false` means no running app owns `pid` (just quit / not yet registered) or the
     /// activation request was refused — either way the caller falls back to a launch.
-    /// Non-private and shared by the managed-profile and primary-account focus paths.
+    /// Non-private and shared by the managed-profile and primary-profile focus paths.
     ///
     /// `.activateAllWindows` raises every window of the target, not just main/key — the
     /// robust choice when focusing another app from our own menu-bar extra. macOS 14
@@ -345,70 +405,17 @@ final class AppModel: ObservableObject {
         }
         if !result.failed.isEmpty {
             let c = result.failed.count
-            let names = result.failed.map(\.displayName).joined(separator: ", ")
+            let names = result.failed.map(\.profile.displayName).joined(separator: ", ")
             parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
+            // Carry the reason through, not just the names: a signing failure leaves the
+            // launcher unable to start, and without this the user has nothing to act on.
+            // Distinct reasons only — a shared cause (the usual case) prints once.
+            let reasons = Set(result.failed.map(\.reason)).sorted()
+            parts.append(reasons.joined(separator: " "))
         }
         guard !parts.isEmpty else { return nil }
         let n = result.rebuilt.count
         return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
-    }
-
-    // MARK: - Claude update monitoring
-
-    /// Start watching for the real Claude.app updating out from under running
-    /// instances: refresh when the user returns to the manager, and poll (while the app
-    /// is frontmost) so a background update surfaces even with the window open.
-    /// Idempotent — safe to call from `.task` on every appearance.
-    func startMonitoring() {
-        guard monitorTask == nil else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        activationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                // A cheap guaranteed re-check on top of the Darwin observer: if Claude
-                // grabbed the handler while we were away, take it back.
-                self.deepLinkService.reassertIfNeeded()
-                // Skip the rescan while a staged-update apply is in flight (same reason as
-                // the poll loop: avoid a relaunch during ShipIt's swap window).
-                guard !self.isApplyingStagedUpdate else { return }
-                await self.reconcile()
-            }
-        }
-        monitorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                guard let self else { return }
-                // Poll only while frontmost — a backgrounded menu-bar app catches up
-                // via didBecomeActive instead of spawning `ps` every minute forever.
-                // @MainActor so NSApp.isActive is read on the main thread. Skip while a
-                // staged-update apply is in flight: re-probing is fine, but a relaunch it
-                // could trigger during the swap window would trip ShipIt's Gate 2.
-                if NSApp.isActive, !isApplyingStagedUpdate { await reconcile() }
-            }
-        }
-    }
-
-    /// Cancel the poll and drop the activation observer. The root model normally lives
-    /// for the process, but explicit teardown keeps `startMonitoring` restartable.
-    func stopMonitoring() {
-        monitorTask?.cancel()
-        monitorTask = nil
-        if let activationObserver {
-            NotificationCenter.default.removeObserver(activationObserver)
-            self.activationObserver = nil
-        }
-    }
-
-    /// Re-read the on-disk Claude version and rescan running state, so a version skew
-    /// (its badge, banner, and notification) appears without a manual refresh. The
-    /// locate runs off the main actor (LaunchServices + plist reads block); a missing
-    /// Claude is left to the persistent banner rather than re-raising the alert.
-    private func reconcile() async {
-        await locateOffMain()
-        guard realClaude != nil else { return }
-        await refresh()
     }
 
     private struct LocateResult {
@@ -421,7 +428,7 @@ final class AppModel: ObservableObject {
     /// Info.plist reads run on a detached task; only the published assignment happens
     /// back on the main actor. `locate()` stays synchronous for one-shot, user-driven
     /// calls (init, Retry, Re-detect) where the main-thread cost is fine.
-    private func locateOffMain() async {
+    func locateOffMain() async {
         let located = await Task.detached { () -> LocateResult in
             do {
                 let real = try RealClaudeLocator().locate()
@@ -432,61 +439,13 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
-        // A vanished Claude leaves no default account and no staged update to apply;
+        // A vanished Claude leaves no default profile and no staged update to apply;
         // `reconcile` returns before `refresh` could recompute them, so clear the stale
         // primary row and staged-update banner here.
         if located.real == nil {
-            primaryAccount = nil
+            primaryProfile = nil
             stagedUpdate = nil
         }
         locateError = located.error
-    }
-
-    // MARK: - Plumbing
-
-    /// Run a store operation off the main actor — it may block or suspend (e.g. the
-    /// async `stop`) — surfacing errors as an alert. Returns `nil` on failure.
-    /// Non-private so type extensions in other files (e.g. `AppModel+PrimaryAccount`)
-    /// share the one dispatch path.
-    func perform<T: Sendable>(
-        _ body: @Sendable @escaping (ProfileStore) async throws -> T
-    ) async -> T? {
-        guard let real = realClaude, let config = currentConfiguration() else {
-            currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
-            return nil
-        }
-        inflight += 1
-        defer { inflight -= 1 }
-        do {
-            return try await Task.detached {
-                let store = ProfileStore(realClaude: real, configuration: config)
-                return try await body(store)
-            }.value
-        } catch {
-            currentError = AppError(error)
-            return nil
-        }
-    }
-
-    /// Like `perform`, but re-throws instead of routing the error to `currentError`.
-    /// The caller (the editor) presents the failure in its own sheet-level alert.
-    private func performThrowing<T: Sendable>(
-        _ body: @Sendable @escaping (ProfileStore) async throws -> T
-    ) async throws -> T {
-        guard let real = realClaude, let config = currentConfiguration() else {
-            // Preserve the specific locate reason (mirrors `perform`'s alert) rather
-            // than a generic realClaudeNotFound, since the editor shows this directly.
-            throw MessageError(message: locateError ?? "Real Claude.app was not found.")
-        }
-        inflight += 1
-        defer { inflight -= 1 }
-        return try await Task.detached {
-            let store = ProfileStore(realClaude: real, configuration: config)
-            return try await body(store)
-        }.value
-    }
-
-    private nonisolated static func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

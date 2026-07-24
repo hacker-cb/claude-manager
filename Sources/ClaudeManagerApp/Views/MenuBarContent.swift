@@ -27,16 +27,16 @@ struct MenuBarContent: View {
                     .disabled(true)
                 } else {
                     // A submenu, not a one-click button: applying quits and relaunches every
-                    // open account (interrupting live sessions), so it must never fire from a
+                    // open profile (interrupting live sessions), so it must never fire from a
                     // single click. Opening the submenu and clicking the explicit item is the
                     // menu-bar's confirmation (a `.confirmationDialog` can't present from a menu).
                     Menu {
-                        Button("Quit & Update All Accounts") {
+                        Button("Quit & Update All Profiles") {
                             Task { await model.applyStagedUpdate() }
                         }
                     } label: {
                         Label(
-                            "Apply Claude \(staged.stagedVersion) to all accounts…",
+                            "Apply Claude \(staged.stagedVersion) to all profiles…",
                             systemImage: "arrow.down.circle.fill"
                         )
                     }
@@ -44,17 +44,24 @@ struct MenuBarContent: View {
                 Divider()
             }
 
-            // Accounts — the default account first, then each clone, as one uniform list.
+            // Profiles — the default profile first, then each clone, as one uniform list.
             // The default keeps its own person glyph (filled when running, mirroring the
             // clones' filled/empty circle) so it reads as a peer, not a special case.
             Button {
                 Task { await model.openReal() }
             } label: {
+                // No " — running" text: the filled/hollow glyph already carries that, and
+                // repeating it in words pushed the usage figure further out of alignment.
                 Label(
-                    "Default account\(model.primaryAccount?.isRunning == true ? " — running" : "")",
-                    systemImage: model.primaryAccount?.isRunning == true
+                    "Default profile" + usageSuffix(TokenBinding.defaultID),
+                    systemImage: model.primaryProfile?.isRunning == true
                         ? "person.crop.circle.fill" : "person.crop.circle"
                 )
+                .accessibilityLabel(rowAccessibilityLabel(
+                    "Default profile",
+                    isRunning: model.primaryProfile?.isRunning == true,
+                    bindingID: TokenBinding.defaultID
+                ))
             }
             .disabled(model.isApplyingStagedUpdate)
 
@@ -66,23 +73,28 @@ struct MenuBarContent: View {
                         Task { await model.open(managed.profile) }
                     } label: {
                         Label(
-                            "\(managed.profile.displayName)\(managed.isRunning ? " — running" : "")",
+                            managed.profile.displayName + usageSuffix(managed.profile.id),
                             systemImage: managed.isRunning ? "circle.fill" : "circle"
                         )
+                        .accessibilityLabel(rowAccessibilityLabel(
+                            managed.profile.displayName,
+                            isRunning: managed.isRunning,
+                            bindingID: managed.profile.id
+                        ))
                     }
                     .disabled(model.isApplyingStagedUpdate)
                 }
             }
 
-            // Stop — every running account, the default account included.
+            // Stop — every running profile, the default profile included.
             let runningClones = model.profiles.filter(\.isRunning)
-            let defaultRunning = model.primaryAccount?.isRunning == true
+            let defaultRunning = model.primaryProfile?.isRunning == true
             if defaultRunning || !runningClones.isEmpty {
                 Divider()
                 Menu("Stop") {
                     if defaultRunning {
-                        Button("Default account") {
-                            Task { await model.stopDefaultAccount(force: false) }
+                        Button("Default profile") {
+                            Task { await model.stopDefaultProfile(force: false) }
                         }
                     }
                     ForEach(runningClones) { managed in
@@ -122,5 +134,57 @@ struct MenuBarContent: View {
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// A trailing `  ·  7d 54% · resets in 3h 10m` for a profile row, or "" when tracking is off
+    /// or there's no binding limit yet — so a menu row shows its own worst limit at a glance,
+    /// together with how long until it lets go. The menu is rebuilt each time it opens, so the
+    /// countdown here is current without a ticker.
+    /// The running/stopped state is carried only by the filled/hollow SF Symbol glyph, which
+    /// VoiceOver reads identically — so spell it out for assistive tech here, keeping the visible
+    /// row text uncluttered (the glyph is the sighted cue).
+    private func rowAccessibilityLabel(_ name: String, isRunning: Bool, bindingID: String) -> String {
+        "\(name), \(isRunning ? "running" : "not running")\(usageSuffix(bindingID))"
+    }
+
+    private func usageSuffix(_ bindingID: String) -> String {
+        guard model.usageTrackingEnabled, let usage = model.usage(forBinding: bindingID) else { return "" }
+        // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
+        // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
+        // countdown, with no room to qualify it — would read as current, so say the state instead.
+        guard usage.isQuotableNow else { return "  ·  \(usage.stateNote)" }
+        guard let limit = usage.displayLimit else { return "" }
+        var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
+        if let resets = UsageFormat.resets(limit.resetsAt) { suffix += " · \(resets)" }
+        return suffix
+    }
+}
+
+/// The status-bar item's label: the stack glyph, plus the worst limit across all accounts
+/// (`7d 54%`) when usage tracking has data. `Label` gives the menu-bar icon + text; a plain
+/// `Image` keeps just the glyph when there's nothing to show.
+///
+/// The accessibility label is pinned to the app name: the closure form of `MenuBarExtra` has no
+/// title string, so without this VoiceOver would announce the usage summary (or the SF Symbol's
+/// derived name) and the status item would no longer be identifiable by name.
+struct MenuBarLabel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        content
+            .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder private var content: some View {
+        if let summary = model.menuBarUsageSummary {
+            Label(summary, systemImage: "square.stack.3d.up.fill")
+        } else {
+            Image(systemName: "square.stack.3d.up.fill")
+        }
+    }
+
+    private var accessibilityText: String {
+        guard let summary = model.menuBarUsageSummary else { return "Claude Manager" }
+        return "Claude Manager — \(summary) used"
     }
 }

@@ -9,7 +9,7 @@ what to configure once, and how to cut a release.
 
 **The git tag is the single source of truth for the version.** There is nothing to
 bump in the repo — the `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in `project.yml`
-are `0.0.0`/`1` dev placeholders for local/unsigned builds only.
+are `0.0.0`/`1` dev placeholders for local (non-release) builds only.
 
 - **Marketing version** (`CFBundleShortVersionString`) comes from the tag: `v1.2.3` →
   `1.2.3`. CI injects it into the build (`scripts/build-app.sh`) and asserts the
@@ -103,12 +103,13 @@ nested-Sparkle signing or enclosure-format issue surfaces.
 The **Launch at login** toggle (Settings → Startup) registers the app itself as a login
 item via `SMAppService.mainApp` — no helper bundle, since the app is non-sandboxed. It
 needs no extra entitlement, but macOS only honours the registration for a **Developer ID
-signed + notarized** build, which is exactly what the release pipeline produces. Because
-an unsigned local/dev build can't register a login item reliably (and must not add one
-under the dev identity anyway), the toggle is **disabled in non-distribution builds**
-(`AppBuild.isDistribution`, keyed on the `MARKETING_VERSION` the release injects) with a
-caption explaining why — so a released build shows a working toggle and a dev build never
-lands in the user's Login Items. See [DEVELOPMENT.md](DEVELOPMENT.md) § Dev builds carry a
+signed + notarized** build, which is exactly what the release pipeline produces. The gate
+is **not** the signature — a local `make archive` is Developer ID signed too, yet still must
+not add a login item under the dev identity — so the toggle keys on
+`AppBuild.isDistribution` (the `MARKETING_VERSION` placeholder the release injects, not any
+signing fact) and is **disabled in non-distribution builds** with a caption explaining why,
+so a released build shows a working toggle and any local build — ad-hoc `make run` or
+Developer ID `make archive` alike — never lands in the user's Login Items. See [DEVELOPMENT.md](DEVELOPMENT.md) § Dev builds carry a
 separate identity for the broader identity split.
 
 ## Cutting a release

@@ -11,6 +11,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 │                ProfileManagedConfig (overlay desired-state), StagedUpdate
 ├─ RealClaude    locate the real app (LaunchServices + fallbacks), version, icon
 ├─ Launcher      LauncherBundle (build/scan/remove) + LauncherScript (bash launcher, duplicate guard)
+│                + CodeSigner (ad-hoc signing — macOS refuses to run an unsigned launcher)
 ├─ Icons         BadgeRenderer (CoreGraphics) → IcnsPacker (iconutil) → IconCache
 ├─ Process       ProcessProbe — pgrep/ps main-process detection (ppid==1 filter)
 ├─ ManagedConfig ManagedConfigWriter — the per-clone `-3p` overlay (disable update / deep-link reg)
@@ -21,7 +22,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 
 ClaudeManagerApp (SwiftUI — thin)
 ├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
-└─ DeepLinkService + DeepLinkPresenter — claude:// hold + account picker
+└─ DeepLinkService + DeepLinkPresenter — claude:// hold + profile picker
 ```
 
 Everything the app does lives in `ClaudeManagerCore`; the SwiftUI layer is a thin
@@ -89,11 +90,11 @@ nil/skip on anything unexpected, never a crash.
 
 A `claude://` URL — a Cowork shared-artifact, a session `resume`, a login / SSO /
 MCP-auth callback — is handed by macOS to whichever Claude owns the scheme, not the
-account you meant. Claude Manager registers itself as the **default `claude://` handler**
-(on by default) and, on each inbound link, shows an account picker (`DeepLinkPresenter` —
+profile you meant. Claude Manager registers itself as the **default `claude://` handler**
+(on by default) and, on each inbound link, shows a profile picker (`DeepLinkPresenter` —
 its own floating window, since a menu-bar app may have none) to route it to a chosen
-profile or the default account. The URL carries no account identity, so routing is
-**always** a user choice; the account then resolves the link's contents itself.
+clone or the default profile. The URL carries no profile identity, so routing is
+**always** a user choice; the profile then resolves the link's contents itself.
 
 **Holding the scheme.** Claude re-grabs it on every launch
 (`setAsDefaultProtocolClient`), so a one-time registration isn't enough.
@@ -106,7 +107,7 @@ mechanism, so CM must be running to intercept; while it's down a freshly-launche
 can grab the scheme, and its own links then land there directly (no picker).
 
 **Delivery is a `GURL` Apple event addressed by pid** (`DeepLinkDelivery`), *not* argv.
-After a launcher `exec`s the real binary, every account's Claude shares bundle id
+After a launcher `exec`s the real binary, every profile's Claude shares bundle id
 `com.anthropic.claudefordesktop`, so `open`/bundle-id addressing can't disambiguate two
 running instances — but a pid can. And Claude reads deep links **only** from the
 `open-url` event (it does *not* scan `argv` for the scheme), so the old
@@ -114,13 +115,13 @@ running instances — but a pid can. And Claude reads deep links **only** from t
 `GURL` straight to its pid; a **not-running** one is cold-launched, its pid polled for,
 then sent the `GURL`. Sending an Apple event to another app needs a one-time TCC
 Automation grant ("Claude Manager" → "Claude"); the app ships the
-`com.apple.security.automation.apple-events` entitlement, and all accounts share the
+`com.apple.security.automation.apple-events` entitlement, and all profiles share the
 target bundle id so one grant covers them all.
 `AEDeterminePermissionToAutomateTarget` is checked *first* so a denied hand-off surfaces
 actionable guidance rather than vanishing — a `.noReply` `GURL` send reports success even
 when TCC has silently blocked it.
 
-**No account is muted with `disableDeepLinkRegistration`.** That key (Claude's "disable
+**No profile is muted with `disableDeepLinkRegistration`.** That key (Claude's "disable
 `claude://` handling") makes Claude *drop* every forwarded non-auth link
 (`dropping deep link (disableDeepLinkRegistration)`) — exactly the hand-off the broker
 performs — so writing it would defeat forwarding. `ProfileManagedConfig` keeps it only in
@@ -128,7 +129,7 @@ performs — so writing it would defeat forwarding. `ProfileManagedConfig` keeps
 managed config **at launch**, so a clone already running when the key is stripped keeps
 dropping until it is restarted once; fresh launches are clean.
 
-**The default account is never written.** Its handler is held only by the guard, which
+**The default profile is never written.** Its handler is held only by the guard, which
 stops the moment CM isn't running — so removing Claude Manager (or toggling the broker
 off) hands `claude://` straight back to Claude and can't leave the default's links
 broken. `stopHoldingAndRestore` re-asserts Claude both while actively holding *and*
@@ -143,7 +144,7 @@ buffered and silently dropped.
 
 ## Applying a staged Claude update
 
-When the default account downloads an update while any account is open, ShipIt
+When the default profile downloads an update while any profile is open, ShipIt
 (Squirrel.Mac) can't swap `/Applications/Claude.app` and the update stalls ("Update
 didn't complete"). Claude Manager clears this — it never swaps the app itself;
 **ShipIt does, and only with zero running real-Claude instances.**
@@ -155,18 +156,145 @@ app's real bundle id so a legacy-id install is found too). An armed job names an
 only when it's a genuine upgrade over the installed one.
 
 `applyStagedUpdateToAll` snapshots the running set, then: **Gate 1** gracefully quits
-every account (SIGTERM only — never SIGKILL a possibly-active conversation) and waits
+every profile (SIGTERM only — never SIGKILL a possibly-active conversation) and waits
 until nothing blocks the swap; **Gate 2** lets ShipIt swap and polls the on-disk
 version (`>=`, since ShipIt may land a build newer than the one staged). It then
-relaunches exactly the snapshotted set. If an account won't quit it **aborts before
+relaunches exactly the snapshotted set. If a profile won't quit it **aborts before
 the swap** and reopens what it stopped; on every path it restores the set, so you never
-end with fewer accounts than you had. Two sharp edges: the gate counts **only
+end with fewer profiles than you had. Two sharp edges: the gate counts **only
 processes at the real Claude binary path** (`ProcessProbe` matches CM's own "Claude
 Manager" too — ppid 1, "Claude" in the path — so `blockingInstances` filters to
 `realClaude.binaryURL.path` or the gate never passes); and every relaunch is guarded on
-the account being **currently down** (a second `open -n` on a live default duplicates
+the profile being **currently down** (a second `open -n` on a live default duplicates
 it on one user-data-dir and corrupts LevelDB — and ShipIt often relaunches the default
 itself after a swap).
+
+## Plan-usage statistics
+
+Surfaces each account's plan limits (5-hour / weekly / weekly-scoped-model / extra
+credits), warns before a limit bites, and keeps a local history for analysis. On by
+default, fully optional (Settings → Usage) — and the trust-model change it forces is
+documented in [README.md](../README.md) and [SECURITY.md](../SECURITY.md).
+
+**The account owns usage, not the profile.** Limits belong to the Anthropic
+subscription, so N launchers on one account must issue **one** `/usage` call.
+`AccountResolver` decrypts every binding's token locally first, then merges only what is
+*provably* one account — bindings holding the **identical token** (same fingerprint, e.g. a
+cloned user-data dir) — electing one binding per group: valid (unexpired + `user:inference`)
+→ latest `expiresAt` → stable id. The default account is a first-class peer, resolved from its
+own user-data-dir. A binding whose token can't be read maps to a login-needed / no-source UI
+state; an account is only "login needed" if **every** binding fails.
+
+**Neither the org nor a config hint is an account key.** A Team/Enterprise org holds many
+accounts, so keying on `organizationUUID` would collapse two profiles signed in as different
+users. The config's `lastKnownAccountUuid` is no safer — it can lag the actual token (a
+re-login, a copied dir), so merging on it would file one account's usage under another; it is
+deliberately not read at all. So distinct tokens are **never** merged locally — each stands
+alone as a **provisional** account keyed by its token fingerprint — and `UsageService` settles
+the real account with a `/profile` call. The fingerprint is a stable placeholder (a changed
+token changes it), so it can't flip mid-life the way a hint could; and the moment `/profile`
+first resolves the real uuid, `UsageHistoryStore.reassignAccount` moves the throttle window,
+samples, and notification ledger off the fingerprint onto it — so the key promotion orphans
+nothing.
+
+**N launchers, one login — still one account.** Wanting several windows on one login is a
+normal reason to make several launchers; each carries its own token, so they resolve as
+separate provisional accounts. `UsageService` settles identities **before** fetching anything,
+then `AccountResolver.regroup` folds the ones whose `/profile` returned the **same authoritative
+uuid** — the only signal that proves two different tokens share an account — union the bindings,
+re-elect the healthiest token, keep the named identity. Election lives here, not in the local
+merge (which only ever sees identical tokens). Without this pass one login would issue N
+`/usage` calls on *every* poll, store N rows for one account, and never say "shared with N
+profiles". The trade is deliberate — over-splitting costs one extra `/profile` per token for a
+moment, collapsing on a fallible hint would show the wrong account's numbers.
+
+**Naming the account, cheaply.** Launcher names are whatever the user typed, so `/profile` is
+also what ties a row to a real login (email / display name, surfaced in the Usage header and the
+sidebar tooltip). The answer is cached in `account_profiles` keyed by the **token fingerprint** —
+the only local id that authoritatively maps to an account — so a re-login (new token → new
+fingerprint) simply misses and re-fetches, with no stale-hint risk. `UsageService.profileTTLSeconds`
+(24h) bounds staleness. Each distinct token costs one `/profile` per day; a cloned sibling shares
+the token, hence a cache hit and no extra call.
+
+`/profile` is **authoritative about which account a token belongs to**, and identity comes only
+from the token — its fingerprint locally, `/profile`'s uuid authoritatively — never a config
+hint. Reading the cache is free and happens on every pass, so a throttled account still renders
+with its name; the network call is made only when a `/usage` fetch is happening anyway, which
+keeps it inside the same floor and backoff — never once per throttled tick. When identity can't
+be refreshed (offline, or an expired token past its TTL), it is recovered from any stored
+`/profile` row for the fingerprint — that mapping never goes stale — so serve-stale, the
+throttle, and the ledger still key on the real account.
+
+**Token source — Electron safeStorage, no separate keychain entry.** Desktop tokens
+live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by
+Electron safeStorage. `SafeStorageDecryptor` reproduces the recipe with **CommonCrypto**
+(CryptoKit has neither PBKDF2 nor AES-CBC, so this adds zero SPM deps): read the keychain
+secret ("Claude Safe Storage"), `PBKDF2-HMAC-SHA1(salt "saltysalt", 1003 iters, 16 bytes)`
+→ AES-128-CBC (IV = 16 spaces), strip the `v10` prefix, PKCS7-unpad. The plaintext is a
+map keyed `<clientId>:<orgUuid>:<audience>:<scopes>`; the audience contains colons, so
+entries are matched by substring, never split on `:`. `SafeStorageKeyStore` (an actor)
+caches the derived key for the process lifetime, so a fleet of accounts costs **one**
+keychain access — and one "Always Allow" prompt. Background polls read with
+`kSecUseAuthenticationUISkip` so a locked/unauthorized keychain fails fast (serve stale)
+instead of prompting mid-poll; the prompt is deferred to an interactive Refresh.
+
+**Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
+self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,
+`is_active`) and is the source of truth; the model label is **data**
+(`scope.model.display_name` — "Sonnet" became "Fable" mid-development). `UsageLimitsParser`
+decodes field-by-field over `[String: Any]`, never a strict `Codable`: an unknown `kind`
+is kept in an "other" bucket, percents are clamped, a bad date degrades to nil, a
+non-object body to nil — it never drops the payload or crashes. Percent (0…100) is
+normalized to a fraction (0…1) at the parse boundary so every internal comparison speaks
+one unit.
+
+**AppModel owns the loop; the core service is stateless.** `UsageService` is a value
+rebuilt each tick (resolve → dedup → fetch-with-backoff → persist → return); the durable
+state lives in two actors the model holds — `UsageHistoryStore` (SQLite) and
+`SafeStorageKeyStore`. The poll loop mirrors `monitorTask`: default 30 min (presets
+15/30/60/manual), an opt-in adaptive 5-min lane while any account is running, gated on
+`!isApplyingStagedUpdate`. **The master switch is the choke point** — with tracking off,
+`refreshUsage` returns before any keychain read, network call, or storage, so the
+README/SECURITY promise holds literally. A rotated safeStorage key self-heals at the
+**fleet** level: if *every* binding fails to decrypt (with at least one real
+decrypt-failure), `UsageService` invalidates the shared key once and retries — the
+provider never invalidates per-binding, which would poison a healthy key when a single
+blob is corrupt.
+
+**One gate, applied before every call.** Identity and usage share the expiry / backoff / floor
+rule (`UsageService.isBlocked`), because the identity pass runs *first* and can't un-send what
+it already sent — a dead login otherwise re-offered its token to `/profile` on every tick
+forever, outside the floor and outside any 429 window. Only a **terminal** park (401/403) is
+ever lifted early, and only through the two documented exits: a re-login or an explicit
+Refresh, which is threaded down as `interactive`. The 60s floor is never bypassed — once
+sibling launchers share an account the elected token flips whenever any of them refreshes its
+own, with no re-login involved, so treating a changed fingerprint as "try again now" would
+discard a standing rate-limit window.
+
+**Throttle & backoff are persisted, honestly.** `UsageHistoryStore` holds per-account
+throttle state (last attempt, `backoff_until`, a token fingerprint `sha256(token)[:16]`,
+and the backoff **reason** — rateLimited / offline / terminal). A 60s floor gates even
+the manual Refresh; 429 honors `Retry-After` (integer **and** HTTP-date); other errors
+back off exponentially, capped ~30 min; 401/403 is terminal until the fingerprint changes
+(a re-login) or a manual Refresh. Storing the *reason* means a later tick renders the
+true cause rather than reading a transport failure back as a 429.
+
+**Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
+via `.linkedLibrary("sqlite3")`; zero SPM deps). A canonical `snapshot_json` is the
+restore source; flat columns index it; `raw_json` is kept **latest-only** for the Doctor
+inspector; `notified_thresholds` dedups notifications across relaunches (keyed on account
++ limit identity + rounded threshold + reset window); a throttle table holds the state
+above. Bootstrap is `PRAGMA user_version` drop-and-recreate on mismatch (early-stage: no
+migrations). Every open/read failure degrades to empty (mirroring `MetadataStore`), with
+an in-memory fallback for throttle/ledger so a dead DB can't strip backoff and hammer the
+API. `CoreConstants.usageSchemaVersion` is bumped when the schema changes.
+
+**Thresholds (`LimitEvaluator`, pure).** A time-relative model (warn when utilization is
+high *and* the window is early: 5h (0.80, 0.72), 7d (0.75, 0.60) — each tier sits below the
+0.90 absolute or it could never fire) plus an absolute near-exhaustion tier (0.90 warning /
+0.95 critical), floored at 0.70, firing only the single most-severe tier per limit. The app
+layer (`AppModel+UsageNotifications`) posts the warnings via `UNUserNotificationCenter`,
+deduped against `notified_thresholds` so each threshold fires once per reset window.
 
 ## macOS facts baked into the code
 
@@ -184,8 +312,9 @@ itself after a swap).
   are flagged stale by the wrapper-version check (below) and updated via **Rebuild** /
   **Apply to all launchers**.
 - **Bump `CoreConstants.currentWrapperVersion` when the generated launcher changes.**
-  Whenever the output of `LauncherScript.render` (the bash script) or
-  `LauncherBundle.writeInfoPlist` (keys/values) changes, increment it. Every launcher
+  Whenever the output of `LauncherScript.render` (the bash script), of
+  `LauncherBundle.writeInfoPlist` (keys/values), or of the bundle `LauncherBundle.build`
+  assembles changes, increment it. Every launcher
   stamps the version into its marker at build time, so a bundle whose stored version
   is lower reads back as *stale* (`Discovered.isStale` / `ManagedProfile.needsRebuild`),
   and the app surfaces a rebuild (per-launcher **Rebuild**, Settings **Apply to all
@@ -209,8 +338,43 @@ itself after a swap).
   instead of spawning a second instance that would corrupt the profile's LevelDB. The
   guard uses `shlock` (an atomic, PID-aware lock) to close the TOCTOU window between
   the check and the `exec`, with a best-effort `pgrep` fallback if `shlock` is absent.
-- **Locally-created launchers are not quarantined**, so the unsigned bash launcher
-  runs without Gatekeeper prompts — no per-launcher signing needed.
+- **Every launcher must be ad-hoc signed, or macOS will not run it.** Locally created
+  bundles are *not* quarantined (they carry `com.apple.provenance`, not
+  `com.apple.quarantine`), so Gatekeeper never prompts — but AppleSystemPolicy still
+  refuses to **execute** code with no valid signature. An unsigned launcher registers
+  with LaunchServices, appears in the Dock, and is then killed (`ASP: Security policy
+  would not allow process` in `log show`), which reads to the user as "it hangs and
+  never opens". So `LauncherBundle.build` ad-hoc signs the bundle — content hashes with
+  no identity: no certificate, no Apple Developer account, no network, so it works the
+  same locally and on CI. `CodeSigner` runs `/usr/bin/codesign --force --sign -` through
+  the injected `CommandRunner`; the in-process `SecCodeSigner` API was tried and rejected
+  (it deadlocks under a saturated thread pool — see [DECISIONS.md](DECISIONS.md)).
+  Nothing here is launcher-specific: macOS applies the same policy to **any** bundle it is
+  asked to execute, Claude Manager's own `.app` included — which is why `make build-app`
+  and CI build it ad-hoc signed (`CODE_SIGN_IDENTITY: "-"` in `project.yml`) rather than
+  with signing disabled (see [DEVELOPMENT.md](DEVELOPMENT.md) § Local builds are ad-hoc
+  signed).
+- **Sign last, and re-sign on every rebuild.** The signature seals the script, the
+  Info.plist and the icon, so *any* write into the bundle after signing invalidates it —
+  and an invalid signature is refused harder than a missing one. `build` is the single
+  writer and signs as its final step, on the staging copy **before** the atomic swap: a
+  launcher is never observable unsigned, and a signing failure leaves the previous
+  working bundle in place. (The signature survives the swap because it lives in
+  `Contents/_CodeSignature/`, ordinary files that move with the directory.)
+  `IconCache.refresh` is safe — `lsregister -f` and `touch` change mtime, not content.
+  Note that `spctl -a -t exec` still reports `rejected` for an ad-hoc signed bundle: it
+  assesses *notarization*, not execution policy, so it is not a useful success signal
+  here. `codesign --verify --strict` (or `SecStaticCodeCheckValidity`) plus an actual
+  launch is.
+- **An unsigned launcher is broken, not dated — and the app must say so.** Launchers
+  built before wrapper v3 carry no signature, so they do not run at all.
+  `CoreConstants.minimumRunnableWrapperVersion` separates that from ordinary staleness
+  (`ManagedProfile.isUnrunnable` / `Discovered.isUnrunnable`): the list badge, the detail
+  banner, and `Doctor` all report it as an **error** with "won't launch" wording and a
+  mandatory rebuild, never as the optional "update available" nudge a merely-dated
+  launcher gets. `Doctor` additionally runs `codesign --verify` per launcher
+  (`CodeSigner.isValidlySigned`), because a *current-format* bundle whose seal was broken
+  after the build passes every other check while being equally unable to start.
 - **An MDM managed-preferences plist wins over our local overlay tier.** If
   `/Library/Managed Preferences/<claude-bundle-id>.plist` exists, Claude ignores the
   `-3p` local tier, so `ManagedConfigWriter` detects it and **skips** (writing there

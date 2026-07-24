@@ -72,7 +72,7 @@ struct ProfileStoreStagedUpdateTests {
             Issue.record("expected instancesStillRunning, got \(result.outcome)")
             return
         }
-        #expect(names == ["default account"])
+        #expect(names == ["default profile"])
         // The still-running default can't be reopened (would duplicate it); nothing else
         // was closed, so nothing is relaunched.
         #expect(result.relaunched.isEmpty)
@@ -109,7 +109,7 @@ struct ProfileStoreStagedUpdateTests {
     }
 
     @Test
-    func abortRelaunchesAccountsThatAlreadyStopped() async throws {
+    func abortRelaunchesProfilesThatAlreadyStopped() async throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -236,7 +236,7 @@ struct ProfileStoreStagedUpdateTests {
         _ = await flip.value
 
         #expect(result.outcome == .applied(from: "9.9.9", to: "9.9.10"))
-        #expect(result.relaunched == ["default account"])
+        #expect(result.relaunched == ["default profile"])
         let opens = env.runner.invocations(of: CoreConstants.openPath)
         #expect(opens.contains { $0.arguments == [env.real.appURL.path] })
         #expect(!opens.contains { $0.arguments == ["-n", env.real.appURL.path] })
@@ -269,7 +269,7 @@ struct ProfileStoreStagedUpdateTests {
             Issue.record("expected instancesStillRunning, got \(result.outcome)")
             return
         }
-        #expect(result.relaunched == ["default account"])
+        #expect(result.relaunched == ["default profile"])
         let opens = env.runner.invocations(of: CoreConstants.openPath)
         #expect(opens.contains { $0.arguments == ["-n", env.real.appURL.path] })
         #expect(!opens.contains { $0.arguments == [env.real.appURL.path] })

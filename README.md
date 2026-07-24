@@ -1,6 +1,6 @@
 # Claude Manager
 
-Run **multiple Claude Desktop accounts side by side** on macOS — each in its own
+Run **multiple Claude Desktop profiles side by side** on macOS — each in its own
 window, with its own login, settings, and extensions — using tiny launcher apps
 instead of full copies of Claude.app.
 
@@ -13,12 +13,12 @@ profile's badge, status, and paths](docs/images/main-window.png)
 
 Each profile is a ~1 MB launcher `.app` with its own badge icon and name. Opening
 it starts the *real* `/Applications/Claude.app` with a dedicated `--user-data-dir`,
-so every profile is a fully isolated account. Because the real, Apple-notarized app
-runs untouched, notifications, Keychain access, and virtualization features all keep
-working. Claude's own updates keep working too — Claude Manager just **coordinates**
-them across accounts (so they don't each download the same build) and can **route
-`claude://` login links** to the account you choose. See [Deep links](#deep-links)
-and [Updates](#updates).
+so every profile is fully isolated and can hold its own Claude account. Because the
+real, Apple-notarized app runs untouched, notifications, Keychain access, and
+virtualization features all keep working. Claude's own updates keep working too —
+Claude Manager just **coordinates** them across profiles (so they don't each
+download the same build) and can **route `claude://` login links** to the profile
+you choose. See [Deep links](#deep-links) and [Updates](#updates).
 
 ## Requirements
 
@@ -47,7 +47,7 @@ The app self-updates from then on (see [Updates](#updates)).
    a launcher app next to Claude.app.
 3. **Open it.** A dedicated Claude window launches with its own isolated login and
    settings. Sign in to that account.
-4. **Repeat** for each account, and use the **menu bar icon** for quick open/stop.
+4. **Repeat** for each profile, and use the **menu bar icon** for quick open/stop.
 
 The first time you re-activate an *already-running* profile, macOS asks for
 **Automation** permission (to bring its window to the front) — allow it once. See
@@ -68,13 +68,13 @@ The first time you re-activate an *already-running* profile, macOS asks for
 - **Rebuild launchers** — regenerate a launcher (script + Info.plist + badge icon)
   after a Claude update or a launcher-format change; **Apply to all launchers** (in
   Settings → Badge style) rebuilds every profile at once.
-- **Route `claude://` links to a chosen account** — login / SSO / magic-link
+- **Route `claude://` links to a chosen profile** — login / SSO / magic-link
   callbacks would otherwise always land in whichever Claude the system opens. Claude
   Manager intercepts them and shows a picker so you send each to the right profile.
   On by default; toggle in **Settings → Deep links**. See [Deep links](#deep-links).
 - **Coordinated Claude updates** — clones don't each run Claude's own updater (only
-  your default account checks and downloads), and when a downloaded update is blocked
-  by open windows, **Apply to all accounts** quits them, lets it install, and reopens
+  your default profile checks and downloads), and when a downloaded update is blocked
+  by open windows, **Apply to all profiles** quits them, lets it install, and reopens
   the set. See [Updates](#updates).
 - **Auto-update** — the app updates itself via Sparkle (each update EdDSA-signed),
   separate from Claude Desktop's own updates.
@@ -83,20 +83,31 @@ The first time you re-activate an *already-running* profile, macOS asks for
 
 - **Launcher apps** — one `<Name>.app` next to Claude.app (default `/Applications`).
   Configurable in **Settings → Launcher install location**.
-- **Profile data** — each account's isolated `--user-data-dir`, default
+- **Profile data** — each *launcher* profile's isolated `--user-data-dir`, default
   `~/Library/Application Support/Claude Manager/Profiles/<name>`. Configurable in
-  **Settings → New profile data**.
+  **Settings → New profile data**. The **Default profile** is not one of these: it
+  keeps Claude's own `~/Library/Application Support/Claude`, untouched.
 - **App metadata** — a small JSON file of GUI-only state (ordering, notes) in
   `~/Library/Application Support/Claude Manager`. It is always optional: the launcher
   apps themselves are the source of truth.
 
-Claude Manager **never reads your credentials or session tokens** — those live
-inside each profile's user-data-dir and are managed by Claude itself. It keeps no
-account data of its own; its only network activity is Sparkle **checking for and
-downloading app updates** (see [Updates](#updates)). Routing a `claude://` link
-registers Claude Manager as the local handler for that scheme (a LaunchServices
-setting — no network) and hands the link to the account you pick; it doesn't store or
-inspect the link's contents.
+**Plan-usage statistics read your account token locally.** To show how close each
+Claude account is to its 5-hour / weekly limits, Claude Manager reads the shared
+**"Claude Safe Storage"** key from your login keychain (one **Always Allow** prompt) and
+uses it to decrypt that account's OAuth token from the profile's *own* `config.json` —
+then calls Anthropic's official usage endpoint (`api.anthropic.com/api/oauth/usage`), the
+same first-party request the Claude CLI makes for `/usage`. The token is used **only** for
+that call and is never sent anywhere else. Usage responses (utilization, reset times,
+extra-usage credits) are kept in a local history database under
+`~/Library/Application Support/Claude Manager` — on your Mac only, never to a third party.
+This is **on by default** and fully optional: turn it off in **Settings → Usage → Track
+plan usage**, and nothing is read, called, or stored.
+
+Otherwise Claude Manager keeps no account data of its own. Network activity is limited to
+Sparkle **app-update checks** (see [Updates](#updates)) and, while usage tracking is on,
+the usage/profile calls above. Routing a `claude://` link registers Claude Manager as the
+local handler for that scheme (a LaunchServices setting — no network) and hands the link to
+the profile you pick; it doesn't store or inspect the link's contents.
 
 ## Permissions
 
@@ -109,23 +120,23 @@ inspect the link's contents.
 
 Claude Desktop registers itself as the handler for `claude://` links — a shared **Cowork
 artifact**, a session **resume**, or an in-browser **login / SSO / MCP-auth** callback.
-With several accounts that's a problem: the link lands in whichever Claude the system
-opens, not the account you meant.
+With several profiles that's a problem: the link lands in whichever Claude the system
+opens, not the profile you meant.
 
 **Claude Manager becomes the `claude://` handler (on by default)**, and when a link
-arrives it shows a small picker so you choose which account receives it — any profile or
-your default account. That account then opens the link itself.
+arrives it shows a small picker so you choose which profile receives it — any launcher
+profile or your default profile. That profile then opens the link itself.
 
 - **Delivery works whether or not the target is already open** — Claude Manager hands the
-  link to the chosen account directly. The first time it does, macOS asks you to allow
-  "Claude Manager" to control "Claude"; approve it once and it covers every account.
-- **Your default account is never modified.** Claude Manager only *holds* the handler
+  link to the chosen profile directly. The first time it does, macOS asks you to allow
+  "Claude Manager" to control "Claude"; approve it once and it covers every profile.
+- **Your default profile is never modified.** Claude Manager only *holds* the handler
   while it's running, so keep it running (e.g. **launch at login**) for links to be
   routed. Turning the broker off — or removing Claude Manager — hands `claude://` straight
   back to Claude.
-- Toggle it under **Settings → Deep links** ("Route claude:// links to a chosen account").
-- **After updating to this version, restart any accounts you already had open** once, so
-  they pick up the fix that lets forwarded links through; newly opened accounts need
+- Toggle it under **Settings → Deep links** ("Route claude:// links to a chosen profile").
+- **After updating to this version, restart any profiles you already had open** once, so
+  they pick up the fix that lets forwarded links through; newly opened profiles need
   nothing.
 
 ## Updates
@@ -134,13 +145,13 @@ your default account. That account then opens the link itself.
 update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
 separate from Claude Desktop's own update mechanism.
 
-**Claude Desktop** updates are coordinated so multiple accounts don't fight over them.
+**Claude Desktop** updates are coordinated so multiple profiles don't fight over them.
 Every profile runs the one on-disk `Claude.app`, so a clone updating itself would just
-re-download the build your default account already fetches. So Claude Manager **turns
-off the self-updater in clones** and lets your **default account** be the one that
+re-download the build your default profile already fetches. So Claude Manager **turns
+off the self-updater in clones** and lets your **default profile** be the one that
 checks, downloads, and stages Claude updates. When an update is downloaded but can't
-install because accounts are open, a banner (and a notification) offer **Apply to all
-accounts** — it quits every account, lets the update install, and reopens the ones
+install because profiles are open, a banner (and a notification) offer **Apply to all
+profiles** — it quits every profile, lets the update install, and reopens the ones
 that were running.
 
 ## Troubleshooting
@@ -151,7 +162,7 @@ Open the **Doctor** tab for a health report. Common findings:
 |---|---|
 | _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
 | _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
-| _Claude vX staged but not applied — N running instance(s) block the swap_ | Click **Apply to all accounts** (window banner) or **Apply Claude vX to all accounts** (menu bar) to quit, install, and reopen everything at once. |
+| _Claude vX staged but not applied — N running instance(s) block the swap_ | Click **Apply to all profiles** (window banner) or **Apply Claude vX to all profiles** (menu bar) to quit, install, and reopen everything at once. |
 | _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
 | _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |
@@ -160,9 +171,9 @@ Open the **Doctor** tab for a health report. Common findings:
 ## Known limitations
 
 - **The real `Claude.app` Dock/Finder icon can focus a clone instead of launching
-  your primary account.** If a launcher profile is already running and you then click
+  your default profile.** If a launcher profile is already running and you then click
   the untouched `Claude.app` (Dock, Finder, Spotlight, or Launchpad), macOS may just
-  bring the running *clone* to the front rather than starting your default account.
+  bring the running *clone* to the front rather than starting your default profile.
 
   Why: a launcher runs the untouched, signed Claude binary in place, so every
   instance — clones and the original alike — shares Anthropic's one bundle id
@@ -172,19 +183,16 @@ Open the **Doctor** tab for a health report. Common findings:
   identity would require re-signing, which strips the entitlements Claude needs — see
   [docs/DECISIONS.md](docs/DECISIONS.md)).
 
-  **Workaround:** launch your primary account from Claude Manager instead — **Open
-  Claude** in the menu-bar extra (or the window toolbar). It activates the running
-  default instance if there is one, otherwise starts a fresh one, regardless of what
-  clones are running. Removing the raw `Claude.app` from your Dock avoids the trap
-  entirely.
-
-- **A `claude://` link can't reach an account that's already open.** macOS delivers
-  deep links only at launch, so if the account you want is running, quit it first and
-  reopen the link. See [Deep links](#deep-links).
+  **Workaround:** launch your default profile from Claude Manager instead — **Default
+  profile** in the menu-bar extra, or the first sidebar row → **Open**. It activates
+  the running default instance if there is one, otherwise starts a fresh one,
+  regardless of what clones are running. Removing the raw `Claude.app` from your Dock
+  avoids the trap entirely.
 
 ## Uninstall
 
-1. In Claude Manager, **remove each profile** (this deletes its launcher app).
+1. In Claude Manager, **remove each launcher profile** (this deletes its launcher
+   app). The **Default profile** has no launcher and nothing to remove.
 2. Quit and drag **Claude Manager** to the Trash.
 3. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
    and app metadata).
@@ -202,7 +210,7 @@ Quick start:
 ```bash
 make setup   # git hooks + brew bundle (xcodegen, swiftformat, swiftlint)
 make test    # headless core suite
-make run     # build (unsigned) and launch the app
+make run     # build and launch Claude Manager (Dev)
 ```
 
 - [**docs/DEVELOPMENT.md**](docs/DEVELOPMENT.md) — build, test, and tooling.

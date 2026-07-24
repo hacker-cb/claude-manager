@@ -1,9 +1,9 @@
 import ClaudeManagerCore
 
-// MARK: - Primary (default-account) Claude
+// MARK: - Primary (default-profile) Claude
 
 extension AppModel {
-    /// Launch or focus the primary (default-account) Claude — the untouched app, apart
+    /// Launch or focus the primary (default-profile) Claude — the untouched app, apart
     /// from any managed launcher. A running default is focused by exact pid (a plain
     /// relaunch de-dupes onto a *clone*, since all instances share Claude's bundle id);
     /// otherwise `open -n` forces a fresh one — the only reliable way to reach it while
@@ -43,7 +43,7 @@ extension AppModel {
         await refresh()
     }
 
-    /// Poll (bounded) until the default-account instance is visible to `ps`, letting
+    /// Poll (bounded) until the default-profile instance is visible to `ps`, letting
     /// `openReal` hold its launch guard across the cold-start lag. Shares the deep-link
     /// forwarder's cold-launch budget so both launch paths wait the identical window (#38).
     private func awaitDefaultVisible() async {
@@ -55,20 +55,20 @@ extension AppModel {
         )
     }
 
-    /// Gracefully stop the running default account (SIGTERM), surfacing a notice if it
+    /// Gracefully stop the running default profile (SIGTERM), surfacing a notice if it
     /// refuses to quit — mirroring `stop(_:force:)` for a managed profile. `force` escalates
     /// to SIGKILL for a wedged instance.
-    func stopDefaultAccount(force: Bool) async {
+    func stopDefaultProfile(force: Bool) async {
         let outcome = await perform { store in await store.stopDefault(force: force) }
         if case let .stillRunning(pid)? = outcome {
             currentError = AppError(
-                message: "The default account is still running (pid \(pid)). Try Force Stop."
+                message: "The default profile is still running (pid \(pid)). Try Force Stop."
             )
         }
         await refresh()
     }
 
-    /// Running primary-account pid, or `nil`. `nil` means "not running" — and a `perform`
+    /// Running primary-profile pid, or `nil`. `nil` means "not running" — and a `perform`
     /// probe failure flattens to the same `nil`, so the two are indistinguishable here.
     private func runningDefaultPID() async -> Int32? {
         await perform { store in store.runningDefaultPID() }.flatMap(\.self)

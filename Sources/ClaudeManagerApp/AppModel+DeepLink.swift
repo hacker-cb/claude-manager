@@ -4,31 +4,31 @@ import ClaudeManagerCore
 /// Where a `claude://` deep link should be routed.
 enum DeepLinkTarget: Identifiable, Hashable {
     case profile(Profile)
-    case defaultAccount
+    case defaultProfile
 
     var id: String {
         switch self {
         case let .profile(profile): profile.id
-        case .defaultAccount: "__default__"
+        case .defaultProfile: "__default__"
         }
     }
 
     var displayName: String {
         switch self {
         case let .profile(profile): profile.displayName
-        case .defaultAccount: "Default account"
+        case .defaultProfile: "Default profile"
         }
     }
 }
 
-/// The `claude://` broker: intake, the account picker, forwarding, and applying /
-/// restoring the handler when the feature is toggled. The URL carries no account
+/// The `claude://` broker: intake, the profile picker, forwarding, and applying /
+/// restoring the handler when the feature is toggled. The URL carries no profile
 /// identity, so routing is a user choice — hence the picker.
 extension AppModel {
     /// Handle inbound deep links from `AppDelegate`. Only `claude://` URLs are routed.
     /// Every URL in the batch is queued (not just the first) and shown a picker one at a
     /// time. If the broker is off but a link still reached us (we declare the scheme),
-    /// hand each straight to the default account rather than brokering a disabled feature.
+    /// hand each straight to the default profile rather than brokering a disabled feature.
     func handleDeepLinks(_ urls: [URL]) {
         let claudeURLs = urls.filter { DeepLink.isClaudeURL($0.absoluteString) }
         let rejected = urls.filter { !DeepLink.isClaudeURL($0.absoluteString) }
@@ -45,15 +45,15 @@ extension AppModel {
         guard deepLinkBrokerEnabled else {
             Log.deepLink
                 .info(
-                    "broker OFF branch: forwarding \(claudeURLs.count, privacy: .public) link(s) to the default account"
+                    "broker OFF branch: forwarding \(claudeURLs.count, privacy: .public) link(s) to the default profile"
                 )
             // Broker off, but we still declare the scheme, so a link can reach us — hand every
-            // link to the default account. Sequentially: the first cold-launches it (if not
+            // link to the default profile. Sequentially: the first cold-launches it (if not
             // running) and the rest deliver by GURL to that now-live instance, so a batch no
             // longer loses all but the first the way argv delivery did.
             Task {
                 for url in claudeURLs {
-                    await forwardToDefaultAccount(url: url)
+                    await forwardToDefaultProfile(url: url)
                 }
                 await refresh()
             }
@@ -116,10 +116,12 @@ extension AppModel {
         startMonitoring()
         await refresh()
         await applyDeepLinkBroker()
+        // After the first refresh, so the poll's binding list sees the profiles.
+        startUsagePolling()
     }
 
     /// Serialize broker applies so a rapid toggle can't race two read-modify-write passes
-    /// over the same default-account overlay files — each apply awaits the previous. Called
+    /// over the same default-profile overlay files — each apply awaits the previous. Called
     /// from the `deepLinkBrokerEnabled` didSet.
     func scheduleBrokerApply() {
         let previous = brokerApplyTask
@@ -132,15 +134,15 @@ extension AppModel {
     /// Register / restore the handler and reconcile the overlays for the current broker
     /// setting. The single entry point, called from the Settings toggle and at startup.
     ///
-    /// The store reconciles the clones *and* the default account when Claude is located.
-    /// When it isn't (`realClaude == nil`, so `perform` bails), the default account's
+    /// The store reconciles the clones *and* the default profile when Claude is located.
+    /// When it isn't (`realClaude == nil`, so `perform` bails), the default profile's
     /// overlay — the safety-critical restore — is still reconciled directly, because it
     /// needs only the default user-data path, not the real app. Exactly one path ever
-    /// writes the default account, so the two never race.
+    /// writes the default profile, so the two never race.
     func applyDeepLinkBroker() async {
         let storeReconciled = await perform { store in store.reconcileAllManagedConfigs() } != nil
         if !storeReconciled {
-            await reconcileDefaultAccountOverlayDirectly()
+            await reconcileDefaultProfileOverlayDirectly()
         }
         // A build that doesn't declare `claude://` (the dev identity — project.yml
         // `settings.configs`) must not touch the system handler at all: neither grab it
@@ -171,14 +173,14 @@ extension AppModel {
         }
     }
 
-    /// Clean any CM-written overlay off the default account (its handler is held by the
+    /// Clean any CM-written overlay off the default profile (its handler is held by the
     /// guard, never a written key), independently of `realClaude` via a plain
     /// `ManagedConfigWriter`. Used only as the fallback when the store is unavailable, so
-    /// it never races the store's own default-account cleanup. Off-main (file IO).
-    private func reconcileDefaultAccountOverlayDirectly() async {
+    /// it never races the store's own default-profile cleanup. Off-main (file IO).
+    private func reconcileDefaultProfileOverlayDirectly() async {
         await Task.detached {
             try? ManagedConfigWriter().reconcilePreservingUntouched(
-                .defaultAccount, userDataPath: ProfileStoreConfiguration.systemDefaultAccountUserDataPath
+                .defaultProfile, userDataPath: ProfileStoreConfiguration.systemDefaultProfileUserDataPath
             )
         }.value
     }
@@ -210,7 +212,7 @@ extension AppModel {
         // Claude vanished after the broker grabbed the handler — every target (default +
         // clones) would dead-end in "Real Claude.app was not found", so don't offer a picker
         // at all. Drain the queue, surface the reason once, and release the reservation so the
-        // presenter doesn't stall. Mirrors `accounts`, which also hides the default when nil.
+        // presenter doesn't stall. Mirrors `profileEntries`, which also hides the default when nil.
         guard realClaude != nil else {
             let reason = locateError ?? "not found"
             Log.deepLink
@@ -222,8 +224,8 @@ extension AppModel {
             deepLinkPresenter.cancelReservation()
             return
         }
-        // Default account first, matching the sidebar and menu-bar ordering.
-        let targets: [DeepLinkTarget] = [.defaultAccount] + profiles.map { .profile($0.profile) }
+        // Default profile first, matching the sidebar and menu-bar ordering.
+        let targets: [DeepLinkTarget] = [.defaultProfile] + profiles.map { .profile($0.profile) }
         Log.deepLink
             .info(
                 "presentPicker: showing picker with \(targets.count, privacy: .public) target(s) for \(url.logDescription, privacy: .public)"
@@ -239,8 +241,8 @@ extension AppModel {
         switch target {
         case let .profile(profile):
             await forwardToProfile(profile, url: url)
-        case .defaultAccount:
-            await forwardToDefaultAccount(url: url)
+        case .defaultProfile:
+            await forwardToDefaultProfile(url: url)
         }
         await refresh()
     }
@@ -270,13 +272,13 @@ extension AppModel {
         await applyOutcome(forwarder.forward(url), targetName: name)
     }
 
-    /// Forward to the default account (the untouched real app). Running → GURL to its pid;
+    /// Forward to the default profile (the untouched real app). Running → GURL to its pid;
     /// not running → cold-launch, then deliver once it's up. `acquireDefaultLaunchSlot`
     /// serializes the launch through `isOpeningReal` so two near-simultaneous forwards — or a
     /// forward and the `openReal` button — can't both `open -n` a duplicate default (which
     /// shares no `shlock` and would corrupt its LevelDB); the slot is held across the poll +
     /// deliver and released via the forwarder's `release` once the instance is reachable.
-    private func forwardToDefaultAccount(url: URL) async {
+    private func forwardToDefaultProfile(url: URL) async {
         guard !launchBlockedByStagedApply() else { return }
         let forwarder = DeepLinkForwarder(
             probePID: { [weak self] in await self?.defaultPID() },
@@ -287,12 +289,12 @@ extension AppModel {
                 return await sendGURL(url, toPID: pid)
             },
             sleep: { try? await Task.sleep(for: $0) },
-            log: { Log.deepLink.info("forwardToDefaultAccount: \($0, privacy: .public)") }
+            log: { Log.deepLink.info("forwardToDefaultProfile: \($0, privacy: .public)") }
         )
-        await applyOutcome(forwarder.forward(url), targetName: Self.defaultAccountName)
+        await applyOutcome(forwarder.forward(url), targetName: Self.defaultProfileName)
     }
 
-    /// Acquire the default-account launch slot and `open -n` a fresh instance. The
+    /// Acquire the default-profile launch slot and `open -n` a fresh instance. The
     /// `isOpeningReal` check-and-set is a single synchronous main-actor step (no `await`
     /// between the read and the write), so two forwards — or a forward and the `openReal`
     /// button — can't both launch. `.started` means this call holds the slot; the forwarder
@@ -360,7 +362,7 @@ extension AppModel {
         await perform { store in store.runningDefaultPID() }.flatMap(\.self)
     }
 
-    private static let defaultAccountName = "the default account"
+    private static let defaultProfileName = "the default profile"
 
     private static let automationDeniedMessage =
         "Claude Manager needs permission to control Claude to hand off the link. Allow it under "

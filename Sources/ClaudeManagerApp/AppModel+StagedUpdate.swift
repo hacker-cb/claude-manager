@@ -1,10 +1,10 @@
 import ClaudeManagerCore
 import UserNotifications
 
-/// Applying a staged Claude update across every account, and the once-per-version
+/// Applying a staged Claude update across every profile, and the once-per-version
 /// notification that surfaces it. See `ProfileStore.applyStagedUpdateToAll`.
 extension AppModel {
-    /// Quit every account, let ShipIt swap `/Applications/Claude.app`, and relaunch the
+    /// Quit every profile, let ShipIt swap `/Applications/Claude.app`, and relaunch the
     /// set that was open. Single-flight (guarded on `isApplyingStagedUpdate`); a non-success
     /// outcome is surfaced as a notice. Deliberately does *not* pre-guard on `stagedUpdate`:
     /// if it cleared while the confirmation was open (probe blip, or applied elsewhere),
@@ -18,7 +18,7 @@ extension AppModel {
             currentError = AppError(message: notice)
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
-        // otherwise the default account's version display lags a build until the next poll.
+        // otherwise the default profile's version display lags a build until the next poll.
         locate()
         // Refresh (which recomputes `stagedUpdate`) *before* clearing the flag, so the
         // Apply affordance isn't re-enabled for a frame with a now-stale staged update.
@@ -34,7 +34,7 @@ extension AppModel {
     func launchBlockedByStagedApply() -> Bool {
         guard isApplyingStagedUpdate else { return false }
         currentError = AppError(
-            message: "A Claude update is being applied to all accounts. "
+            message: "A Claude update is being applied to all profiles. "
                 + "Wait for it to finish, then try again."
         )
         return true
@@ -55,8 +55,8 @@ extension AppModel {
         guard status == .authorized || status == .provisional else { return }
         let content = UNMutableNotificationContent()
         content.title = "Claude \(staged.stagedVersion) is ready to install"
-        content.body = "The update is downloaded but blocked by open accounts. "
-            + "Use “Apply update to all accounts.”"
+        content.body = "The update is downloaded but blocked by open profiles. "
+            + "Use “Apply to all profiles.”"
         try? await center.add(UNNotificationRequest(
             identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
         ))
@@ -103,12 +103,12 @@ extension AppModel {
             return "There is no staged Claude update to apply."
         case let .instancesStillRunning(names):
             let count = names.count
-            return "Couldn't apply the update: \(count) account\(count == 1 ? "" : "s") wouldn't quit "
+            return "Couldn't apply the update: \(count) profile\(count == 1 ? "" : "s") wouldn't quit "
                 + "gracefully. Quit \(count == 1 ? "it" : "them") manually, then try again."
         case let .swapTimedOut(version):
             return "Claude \(version) is downloaded but not armed to install. Click a "
                 + "“Restart to update” prompt once to arm it, then apply again. "
-                + "Your accounts were reopened."
+                + "Your profiles were reopened."
         }
     }
 }

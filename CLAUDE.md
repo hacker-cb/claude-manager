@@ -1,6 +1,6 @@
 # Claude Manager — project context
 
-Native macOS (SwiftUI) app to run multiple Claude Desktop accounts via **thin
+Native macOS (SwiftUI) app to run multiple Claude Desktop profiles via **thin
 launcher apps**. This file holds the working rules for changing code here; the
 deeper material lives in dedicated docs:
 
@@ -41,9 +41,22 @@ scripts/                          # app-icon generator + release (build/dmg/nota
 Full reasoning for each is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the
 short form:
 
-- **Bump `CoreConstants.currentWrapperVersion`** whenever `LauncherScript.render` or
-  `LauncherBundle.writeInfoPlist` output changes — otherwise existing launchers are
-  never flagged stale for rebuild.
+- **Bump `CoreConstants.currentWrapperVersion`** whenever `LauncherScript.render`,
+  `LauncherBundle.writeInfoPlist`, or anything else about the built bundle changes —
+  otherwise existing launchers are never flagged stale for rebuild.
+- **Ad-hoc signing is the last write into a launcher bundle.** macOS refuses to
+  *execute* an unsigned `.app` (AppleSystemPolicy kills it seconds after it appears in
+  the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
+  staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
+  never add a write below that call, and never sign anywhere but `build`.
+- **Never turn signing off for the app's own build either.** The same execution policy
+  applies one level up: `make build-app` (and CI, which builds through it) takes the ad-hoc
+  identity `project.yml` declares (`CODE_SIGN_IDENTITY: "-"`), and putting
+  `CODE_SIGNING_ALLOWED=NO` back on an `xcodebuild` line drops an `.app` with no
+  `Contents/_CodeSignature` into `build/` — AppleSystemPolicy kills its first launch, so
+  `make run` reads as a ~20 s hang. `codesign -dv` will not catch it (it reports the
+  Mach-O, which the arm64 linker ad-hoc signs on its own); `codesign --verify --strict` on
+  the `.app` will, and `scripts/assert-build-signed.sh` does it in CI.
 - **Keep `CFBundleIconName` out of launcher Info.plists** — otherwise macOS reads
   `Assets.car` and ignores our `.icns`.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of

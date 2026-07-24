@@ -12,7 +12,7 @@ public struct Profile: Identifiable, Equatable, Hashable, Sendable {
     public var label: String
     /// Badge fill color.
     public var color: BadgeColor
-    /// `--user-data-dir` for this account (absolute path).
+    /// `--user-data-dir` for this profile (absolute path).
     public var profilePath: String
     /// Launcher `CFBundleIdentifier`.
     public var bundleID: String

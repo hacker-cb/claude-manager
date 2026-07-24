@@ -3,19 +3,19 @@ import SwiftUI
 
 struct ProfileListView: View {
     @EnvironmentObject private var model: AppModel
-    @Binding var selection: Account.ID?
+    @Binding var selection: ProfileEntry.ID?
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(model.accounts) { account in
-                AccountRow(account: account)
-                    .tag(account.id)
+            ForEach(model.profileEntries) { entry in
+                ProfileEntryRow(entry: entry)
+                    .tag(entry.id)
             }
-            // The default-account row keeps the list from ever being empty, so the
+            // The default-profile row keeps the list from ever being empty, so the
             // "create a launcher" nudge is an inline, non-selectable hint below it rather
             // than a full-list overlay that would float over the default row.
             if model.profiles.isEmpty, model.realClaude != nil {
-                Text("Create a launcher to run another Claude account side by side.")
+                Text("Create a launcher to run another Claude profile side by side.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
@@ -25,31 +25,31 @@ struct ProfileListView: View {
     }
 }
 
-/// Dispatches an `Account` row to its presentation: the default account gets a reduced,
+/// Dispatches a `ProfileEntry` row to its presentation: the default profile gets a reduced,
 /// non-editable row; a clone keeps the full `ProfileRow`.
-struct AccountRow: View {
-    let account: Account
+struct ProfileEntryRow: View {
+    let entry: ProfileEntry
 
     var body: some View {
-        switch account {
+        switch entry {
         case let .primary(status):
-            PrimaryAccountRow(status: status)
+            PrimaryProfileRow(status: status)
         case let .clone(managed):
             ProfileRow(managed: managed)
         }
     }
 }
 
-/// The default account as a sidebar row — a peer of `ProfileRow` but without a badge, disk
+/// The default profile as a sidebar row — a peer of `ProfileRow` but without a badge, disk
 /// size, or edit/rebuild affordances, since the untouched real app has no launcher to manage.
-struct PrimaryAccountRow: View {
+struct PrimaryProfileRow: View {
     @EnvironmentObject private var model: AppModel
-    let status: PrimaryAccountStatus
+    let status: PrimaryProfileStatus
 
     var body: some View {
         HStack(spacing: 10) {
             // Sized to the clone rows' BadgeChip (22pt tall, 44pt-wide column) so every
-            // account row is the same height and the leading marks line up vertically.
+            // profile row is the same height and the leading marks line up vertically.
             Image(systemName: "person.crop.circle")
                 .resizable()
                 .scaledToFit()
@@ -57,24 +57,31 @@ struct PrimaryAccountRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Default account")
+                Text("Default profile")
                     .font(.body)
                     .lineLimit(1)
-                Text("Your primary Claude — no launcher")
+                // The Anthropic login, once usage has learned it — that is what identifies an
+                // account to a person. Until then (tracking off, or no pass yet) fall back to
+                // what the row can always say for itself.
+                Text(model.usage(forBinding: TokenBinding.defaultID)?.identity.accountLabel
+                    ?? "Your primary Claude — no launcher")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 4)
-            StatusDot(isRunning: status.isRunning)
+            VStack(alignment: .trailing, spacing: 2) {
+                StatusDot(isRunning: status.isRunning)
+                UsageSidebarIndicator(usage: model.usage(forBinding: TokenBinding.defaultID))
+            }
         }
         .padding(.vertical, 2)
         .contextMenu {
             Button(status.isRunning ? "Activate" : "Open") { Task { await model.openReal() } }
                 .disabled(model.isApplyingStagedUpdate)
             if status.isRunning {
-                Button("Stop") { Task { await model.stopDefaultAccount(force: false) } }
+                Button("Stop") { Task { await model.stopDefaultProfile(force: false) } }
             }
             Divider()
             Button("Reveal Claude.app in Finder") { model.revealRealClaude() }
@@ -99,7 +106,12 @@ struct ProfileRow: View {
                 Text(managed.profile.displayName)
                     .font(.body)
                     .lineLimit(1)
-                Text(PathUtils.abbreviatingHome(managed.profile.profilePath))
+                // The login this launcher holds, not where its data lives: launcher names are
+                // whatever the user typed, so the email is the thing that says *which account*
+                // this row is. The path stays as the fallback — and in the detail pane, which
+                // is where you go when you actually want the directory.
+                Text(model.usage(forBinding: managed.profile.id)?.identity.accountLabel
+                    ?? PathUtils.abbreviatingHome(managed.profile.profilePath))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -116,7 +128,15 @@ struct ProfileRow: View {
                                 "Claude \(managed.availableClaudeVersion ?? "update") available — restart to update"
                             )
                     }
-                    if managed.needsRebuild {
+                    // Two different messages behind one badge: an unsigned launcher does
+                    // not start at all (macOS refuses it), so it must not read as the
+                    // optional "update available" nudge a merely-dated one gets.
+                    if managed.isUnrunnable {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .help("Won't launch — this launcher is unsigned. Rebuild it to fix.")
+                    } else if managed.needsRebuild {
                         Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)
@@ -124,6 +144,7 @@ struct ProfileRow: View {
                     }
                     StatusDot(isRunning: managed.isRunning)
                 }
+                UsageSidebarIndicator(usage: model.usage(forBinding: managed.profile.id))
                 if let size = managed.diskSize {
                     Text(size).font(.caption2).foregroundStyle(.secondary)
                 }

@@ -48,7 +48,7 @@ final class DeepLinkService {
     }
 
     /// Stop holding the handler and hand `claude://` back to the real Claude app, so the
-    /// default account regains deep links. Call when the broker is disabled.
+    /// default profile regains deep links. Call when the broker is disabled.
     ///
     /// Re-asserts Claude when we're actively holding *or* we currently own the handler: a
     /// prior run may have left us as the `claude://` default (e.g. a crash before it

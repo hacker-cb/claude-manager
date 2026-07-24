@@ -22,7 +22,7 @@ public struct ClaudeInstance: Equatable, Sendable {
     }
 
     /// True when this instance runs the real Claude binary at `realClaude`'s path —
-    /// exactly the set ShipIt's swap gates on (the default account and every clone
+    /// exactly the set ShipIt's swap gates on (the default profile and every clone
     /// `exec` that one binary). Excludes Claude Manager's own "Claude Manager" main,
     /// which `ProcessProbe` also matches (its path contains "Claude" too) and which
     /// must never count as a swap blocker. The single definition of "real-Claude

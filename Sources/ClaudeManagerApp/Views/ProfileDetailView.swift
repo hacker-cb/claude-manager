@@ -20,6 +20,15 @@ struct ProfileDetailView: View {
                 if managed.needsRebuild { rebuildBanner }
                 Divider()
                 actions
+                if model.usageTrackingEnabled {
+                    Divider()
+                    UsageDetailSection(
+                        usage: model.usage(forBinding: profile.id),
+                        failure: model.usageFailure(forBinding: profile.id),
+                        isRefreshing: model.isRefreshingUsage,
+                        onRefresh: { Task { await model.refreshUsage(interactive: true) } }
+                    )
+                }
                 Divider()
                 details
             }
@@ -41,7 +50,7 @@ struct ProfileDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "The launcher goes to the Trash. Deleting profile data removes this account's login and settings — irreversible."
+                "The launcher goes to the Trash. Deleting profile data removes this profile's login and settings — irreversible."
             )
         }
     }
@@ -51,6 +60,13 @@ struct ProfileDetailView: View {
             BadgePreview(label: profile.label, color: profile.color, size: 88)
             VStack(alignment: .leading, spacing: 6) {
                 Text(profile.displayName).font(.title2).bold()
+                // The Anthropic login this launcher holds. Identity, not statistics — so it sits
+                // with the name rather than inside the Usage section, where it read as a detail
+                // of the numbers and was easy to miss.
+                if let account = model.usage(forBinding: profile.id)?.identity.accountLabel {
+                    Text(account).font(.callout).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 HStack(spacing: 8) {
                     StatusDot(isRunning: managed.isRunning)
                     Text(managed
@@ -129,16 +145,26 @@ struct ProfileDetailView: View {
 
     /// Shown when the launcher was built by an older wrapper — offers a one-click
     /// rebuild. Disabled while running (the core refuses to rewrite a live bundle).
+    ///
+    /// Two severities behind one banner: a launcher predating ad-hoc signing is refused
+    /// execution by macOS, so it gets error styling and "won't launch" wording, while a
+    /// merely-dated one keeps the soft "update available" nudge. Wording the first as
+    /// optional is how a user ends up with launchers that flash in the Dock and die.
     private var rebuildBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.orange)
+        let unrunnable = managed.isUnrunnable
+        let tint: Color = unrunnable ? .red : .orange
+        let rebuildPhrase = managed.isRunning ? "Stop it first, then rebuild " : "Rebuild "
+        return HStack(spacing: 10) {
+            Image(systemName: unrunnable ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath")
+                .foregroundStyle(tint)
                 .font(.title3)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Update available").font(.callout).bold()
-                Text("Built by an older version of Claude Manager. "
-                    + (managed.isRunning ? "Stop it first, then rebuild " : "Rebuild ")
-                    + "to apply the latest launcher improvements.")
+                Text(unrunnable ? "Won't launch" : "Update available").font(.callout).bold()
+                Text(unrunnable
+                    ? "This launcher is unsigned, and macOS refuses to run unsigned apps — "
+                    + "it appears in the Dock and quits. " + rebuildPhrase + "to fix it."
+                    : "Built by an older version of Claude Manager. "
+                    + rebuildPhrase + "to apply the latest launcher improvements.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -147,7 +173,7 @@ struct ProfileDetailView: View {
                 .disabled(managed.isRunning)
         }
         .padding(12)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var details: some View {

@@ -4,8 +4,8 @@ import ClaudeManagerCore
 
 /// The launch entry points for managed (clone) profiles. Grouped here — off `AppModel`'s
 /// core file — so all "spawn a Claude process" paths share the staged-update swap guard and
-/// the file stays within its length budget. The primary (default) account's launch lives in
-/// `AppModel+PrimaryAccount`; deep-link forwarding in `AppModel+DeepLink`.
+/// the file stays within its length budget. The primary (default) profile's launch lives in
+/// `AppModel+PrimaryProfile`; deep-link forwarding in `AppModel+DeepLink`.
 extension AppModel {
     func open(_ profile: Profile) async {
         guard !launchBlockedByStagedApply() else { return }
