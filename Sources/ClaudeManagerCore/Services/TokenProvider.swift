@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// One account binding to resolve a token for — a Desktop profile (or the default account)
@@ -32,8 +33,6 @@ public struct DesktopToken: Sendable, Equatable {
     public var rateLimitTier: String?
     /// Which binding this came from (a profile id / default) — recorded as the sample source.
     public var bindingID: String
-    /// `lastKnownAccountUuid` from `config.json` — a hint, not the source of truth.
-    public var lastKnownAccountUUID: String?
 
     public init(
         token: String,
@@ -42,8 +41,7 @@ public struct DesktopToken: Sendable, Equatable {
         organizationUUID: String?,
         subscriptionType: String?,
         rateLimitTier: String?,
-        bindingID: String,
-        lastKnownAccountUUID: String?
+        bindingID: String
     ) {
         self.token = token
         self.expiresAt = expiresAt
@@ -52,7 +50,15 @@ public struct DesktopToken: Sendable, Equatable {
         self.subscriptionType = subscriptionType
         self.rateLimitTier = rateLimitTier
         self.bindingID = bindingID
-        self.lastKnownAccountUUID = lastKnownAccountUUID
+    }
+
+    /// `sha256(token)[:16]` — a stable, non-secret identifier for *this token*. It is the local
+    /// key for everything keyed per token: the identity/throttle scopes, and the account dedup in
+    /// `AccountResolver` (identical token ⇒ provably the same account). A login switch changes the
+    /// token and thus this value, so cached state for the old login is naturally invalidated.
+    public var fingerprint: String {
+        let hex = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        return String(hex.prefix(16))
     }
 
     /// Expired (with a safety skew) — the poller skips the API call for an expired token.

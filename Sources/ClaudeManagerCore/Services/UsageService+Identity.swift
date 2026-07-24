@@ -25,15 +25,14 @@ extension UsageService {
             // Stop issuing `/profile` calls the moment the master switch cancels the pass — the
             // remaining accounts keep whatever identity they arrived with, unfetched.
             if Task.isCancelled { break }
-            let fingerprint = Self.fingerprint(account.token.token)
+            let fingerprint = account.token.fingerprint
             // The token's own `/profile` answer, keyed by fingerprint, is the only authoritative
-            // source of which account this token belongs to. An account-uuid shortcut off the
-            // config hint used to name a sibling for free — but a stale hint (a launcher signed
-            // out and back into a *different* account, its `lastKnownAccountUuid` not yet updated)
-            // then served the previous account's identity, filing this token's usage under the
-            // wrong account. So every distinct token confirms via `/profile` once per TTL instead;
-            // siblings still fold into one account afterwards (regroup keys on the authoritative
-            // uuid `/profile` returns), and a cloned sibling shares the token, hence the cache hit.
+            // source of which account this token belongs to — so every distinct token confirms via
+            // `/profile` once per TTL. Siblings on one login fold into one account afterwards
+            // (`regroup` keys on the authoritative uuid `/profile` returns); a cloned sibling shares
+            // the token, hence a fingerprint cache hit and no extra call. No local shortcut off a
+            // config hint: it could name a token for the account it *used* to hold, not the one it
+            // holds now, filing usage under the wrong account.
             if let cached = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) {
                 settled.append(account.named(by: cached))
             } else if await mayCall(account, fingerprint: fingerprint, now: now, interactive: interactive) {

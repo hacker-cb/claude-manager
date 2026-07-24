@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Result of one refresh pass: usage per resolved account, plus the bindings that couldn't
@@ -146,7 +145,7 @@ public struct UsageService: Sendable {
         // The identity arrives already settled (see `identified`); all that's left is to notice
         // whether it still lacks a *fresh* name, which is refreshed below — after the throttle
         // gates, so it rides along with a `/usage` call instead of firing on a backed-off tick.
-        let fingerprint = Self.fingerprint(token.token)
+        let fingerprint = token.fingerprint
         let cutoff = now.addingTimeInterval(-Self.profileTTLSeconds)
         let named = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: cutoff) != nil
         var account = resolved
@@ -322,13 +321,6 @@ public struct UsageService: Sendable {
         }
         return min(maxBackoffSeconds, until.timeIntervalSince(last) * 2)
     }
-
-    /// `sha256(token)[:16]` — a stable, non-secret identifier; a login switch changes it,
-    /// invalidating the cached backoff immediately.
-    static func fingerprint(_ token: String) -> String {
-        let hex = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
-        return String(hex.prefix(16))
-    }
 }
 
 extension ResolvedAccount {
@@ -339,10 +331,10 @@ extension ResolvedAccount {
 
     /// Merge a `/profile` identity in.
     ///
-    /// `/profile` is authoritative about *which account this token belongs to*, so its uuid is
-    /// adopted for every account — hinted or provisional — overriding a config hint that a
-    /// re-login could have left stale. The token's own coarse fields (org, plan, tier) still win
-    /// where it has them; only the naming fields and the uuid come from `/profile`.
+    /// `/profile` is authoritative about *which account this token belongs to*, so its uuid
+    /// replaces the provisional fingerprint the account carried until now. The token's own coarse
+    /// fields (org, plan, tier) still win where it has them; only the naming fields and the uuid
+    /// come from `/profile`.
     func named(by profile: AccountIdentity) -> ResolvedAccount {
         var updated = self
         updated.identity.email = profile.email
@@ -350,10 +342,9 @@ extension ResolvedAccount {
         updated.identity.organizationUuid = identity.organizationUuid ?? profile.organizationUuid
         updated.identity.subscriptionType = identity.subscriptionType ?? profile.subscriptionType
         updated.identity.rateLimitTier = identity.rateLimitTier ?? profile.rateLimitTier
-        // `/profile` is authoritative about *which account this token belongs to*, so its uuid
-        // wins even over a config hint. The hint is only a cached guess, and a stale one — a
-        // launcher signed out and back in as someone else, or a copied user-data dir — would
-        // otherwise keep every sample and notification filed under the wrong account forever.
+        // The authoritative account uuid replaces the token's fingerprint placeholder, so every
+        // sample and notification is filed under the real account — and two tokens that turn out to
+        // be different accounts keep their distinct uuids, never folding in `regroup`.
         updated.identity.uuid = profile.uuid
         return updated
     }

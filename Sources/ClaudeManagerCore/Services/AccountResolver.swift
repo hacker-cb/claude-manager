@@ -1,9 +1,9 @@
 import Foundation
 
 /// One deduplicated account: the elected token to fetch usage with, plus every binding that
-/// resolved to it. `identity` is provisional — its `uuid` is the best *local* hint (the
-/// token's org, or the config `lastKnownAccountUuid`); `/profile` (later, in `UsageService`)
-/// confirms the authoritative account UUID and fills email/display name.
+/// resolved to it. `identity` is provisional until `/profile` answers — its `uuid` is the token's
+/// fingerprint, a per-token placeholder — after which `UsageService` fills the authoritative
+/// account UUID, email, and display name.
 public struct ResolvedAccount: Sendable, Equatable {
     public var identity: AccountIdentity
     public var token: DesktopToken
@@ -34,11 +34,12 @@ public struct ResolvedAccounts: Sendable, Equatable {
     }
 }
 
-/// Turns a list of bindings (Desktop profiles + the default account) into one entry per
-/// account. **Reconcile-before-group:** every binding's token is decrypted locally first, the
-/// account is keyed by the *token's* organization (the config `lastKnownAccountUuid` is only a
-/// fallback hint), and within a group the best token is elected — so N profiles on one account
-/// yield exactly one `/usage` call, sourced from a healthy token.
+/// Turns a list of bindings (Desktop profiles + the default account) into one entry per account.
+/// **Reconcile-before-group:** every binding's token is decrypted locally first, then bindings are
+/// merged only where it is *provably* safe — an identical token (same fingerprint ⇒ same account).
+/// Distinct tokens stay separate here and are unified later, in `regroup`, on the authoritative
+/// account uuid `/profile` returns — so N profiles on one login still yield one `/usage` call,
+/// sourced from the healthiest token, without ever merging on the fallible `lastKnownAccountUuid`.
 public struct AccountResolver: Sendable {
     private let provider: TokenProvider
 
@@ -67,8 +68,8 @@ public struct AccountResolver: Sendable {
             }
         }
 
-        // Group by the token's account key, then elect one token per group. Dictionary
-        // grouping is order-independent, so sort the output for a stable, testable result.
+        // Group by token fingerprint (identical tokens = one account), electing one token per
+        // group. Dictionary grouping is order-independent, so sort the output for a stable result.
         let grouped = Dictionary(grouping: tokensByBinding) { groupingKey(for: $0.token) }
         let accounts = grouped
             .map { _, members in resolvedAccount(from: members, now: now) }
@@ -77,16 +78,15 @@ public struct AccountResolver: Sendable {
         return ResolvedAccounts(accounts: accounts, failures: failures)
     }
 
-    /// Fold already-resolved accounts that share an identity uuid into one: union their bindings,
-    /// re-elect the healthiest token, and keep the richest identity. Run **after** `/profile`
-    /// settles provisional identities.
+    /// Fold accounts that `/profile` has proven belong together (same authoritative uuid) into one:
+    /// union their bindings, re-elect the healthiest token, keep the richest identity. Run **after**
+    /// `identified` settles uuids, so the fold key is authoritative — not the per-token fingerprint
+    /// a still-provisional account carries, which is unique and never folds.
     ///
-    /// This is what makes "N launchers, one login" cost one account. Until Claude writes
-    /// `lastKnownAccountUuid` into each profile there is nothing local tying those launchers
-    /// together — each carries its own token — so they resolve separately, and without this pass
-    /// one login would issue N `/usage` calls on *every* poll (differing token fingerprints even
-    /// read as a re-login, bypassing the 60s floor), store N rows for one account, and never show
-    /// "shared with N profiles".
+    /// This is what makes "N launchers, one login" cost one account: each launcher carries its own
+    /// token, so they resolve separately (distinct fingerprints); only once `/profile` maps each
+    /// token to the same account uuid can they be unified. Without this pass one login would issue
+    /// N `/usage` calls on *every* poll, store N rows, and never show "shared with N profiles".
     public func regroup(_ accounts: [ResolvedAccount], now: Date) -> [ResolvedAccount] {
         guard accounts.count > 1 else { return accounts }
         return Dictionary(grouping: accounts, by: { $0.identity.uuid })
@@ -105,17 +105,16 @@ public struct AccountResolver: Sendable {
         return result
     }
 
-    /// The dedup key must identify the **account**, not the organization: in a Team/Enterprise
-    /// org several profiles signed in as *different users* share one `organizationUUID` while
-    /// being distinct accounts, so keying on the org collapses them and renders one account's
-    /// limits for all of them. The config's account-UUID hint (`lastKnownAccountUuid`) is the
-    /// only thing that identifies an account locally; without it a binding stands alone until
-    /// `/profile` supplies the authoritative UUID (`UsageService.identified` / `fetchIdentity`).
-    ///
-    /// Deliberately asymmetric: over-splitting costs one extra `/usage` call for a moment,
-    /// while collapsing shows the *wrong account's* numbers — so this errs toward splitting.
+    /// The local dedup key: the token's fingerprint. Two bindings merge here only when they hold
+    /// the *identical* token — which proves the same account with no network round-trip (a cloned
+    /// user-data dir is the common case). Distinct tokens are never merged locally: even siblings
+    /// on one login carry different tokens, and neither the shared `organizationUUID` (a Team org
+    /// holds many accounts) nor the config's `lastKnownAccountUuid` hint (it can lag the actual
+    /// token) proves same-account — merging on either would file one account's usage under another.
+    /// Distinct-token siblings are unified instead in `regroup`, on the authoritative uuid
+    /// `/profile` returns, the only signal that proves two different tokens share one account.
     private func groupingKey(for token: DesktopToken) -> String {
-        token.lastKnownAccountUUID ?? token.bindingID
+        token.fingerprint
     }
 
     private func resolvedAccount(
@@ -124,10 +123,11 @@ public struct AccountResolver: Sendable {
     ) -> ResolvedAccount {
         let elected = elect(members.map(\.token), now: now)
         let bindingIDs = members.map(\.binding.id).sorted()
-        // With no local hint the uuid is just the binding id, a placeholder until `/profile`
-        // supplies the authoritative account UUID (which `named(by:)` then adopts).
+        // Provisional identity until `/profile` answers: the uuid is the token's fingerprint — a
+        // per-token placeholder, so `regroup` can only ever fold accounts an authoritative
+        // `/profile` uuid has already unified, never two distinct tokens sharing a stale hint.
         let identity = AccountIdentity(
-            uuid: elected.lastKnownAccountUUID ?? elected.bindingID,
+            uuid: elected.fingerprint,
             organizationUuid: elected.organizationUUID,
             subscriptionType: elected.subscriptionType,
             rateLimitTier: elected.rateLimitTier

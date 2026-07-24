@@ -45,7 +45,7 @@ extension UsageServiceTests {
         }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -59,18 +59,22 @@ extension UsageServiceTests {
     }
 
     @Test
-    func siblingLaunchersShareOneIdentityLookup() async {
-        // The name belongs to the account, not the token, so two launchers on one login must not
-        // each pay for it. They hold different tokens, so only an account-keyed lookup can hit.
+    func siblingLaunchersFoldToOneAccountAndOneUsageCall() async {
+        // Two launchers on one login hold different tokens, so each confirms its account via its
+        // own `/profile` (the authoritative, safe signal) — then they fold into one account by that
+        // uuid and share a single `/usage` call. The old account-keyed shortcut saved the second
+        // `/profile` but rested on a config hint that could point a token at the wrong account.
         let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct")
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(provider: StubProvider(results: [
-            "p1": .success(token("p1", lastKnown: "acct")),
-            "p2": .success(token("p2", lastKnown: "acct"))
+            "p1": .success(token("p1")),
+            "p2": .success(token("p2"))
         ]), http: http, history: history)
-        _ = await service.refresh(bindings: [binding("p1"), binding("p2")], now: now)
-        #expect(http.profileCallCount == 1)
-        #expect(http.usageCallCount == 1)
+        let result = await service.refresh(bindings: [binding("p1"), binding("p2")], now: now)
+        #expect(result.accounts.count == 1)
+        #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
+        #expect(http.profileCallCount == 2) // one per distinct token — that is what folds them
+        #expect(http.usageCallCount == 1) // …into one account, one usage call
     }
 
     @Test
@@ -121,7 +125,7 @@ extension UsageServiceTests {
         }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -148,7 +152,7 @@ extension UsageServiceTests {
         }
         let history = UsageHistoryStore(path: ":memory:")
         let first = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "TK-A", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p", value: "TK-A"))]),
             http: http,
             history: history
         )
@@ -156,7 +160,7 @@ extension UsageServiceTests {
         #expect(http.usageCallCount == 1)
         // Same account, different elected token → different fingerprint, still inside the window.
         let second = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "TK-B", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p", value: "TK-B"))]),
             http: http,
             history: history
         )

@@ -21,19 +21,18 @@ struct AccountResolverTests {
     private func token(
         binding: String,
         org: String? = "org-A",
+        value: String? = nil,
         expiresAt: Date = Date(timeIntervalSince1970: 4_000_000_000), // far future
-        scopes: [String] = [CoreConstants.oauthInferenceScope, CoreConstants.oauthProfileScope],
-        lastKnown: String? = nil
+        scopes: [String] = [CoreConstants.oauthInferenceScope, CoreConstants.oauthProfileScope]
     ) -> DesktopToken {
         DesktopToken(
-            token: "TK-\(binding)",
+            token: value ?? "TK-\(binding)",
             expiresAt: expiresAt,
             scopes: scopes,
             organizationUUID: org,
             subscriptionType: "max",
             rateLimitTier: "default_claude_max_20x",
-            bindingID: binding,
-            lastKnownAccountUUID: lastKnown
+            bindingID: binding
         )
     }
 
@@ -45,21 +44,46 @@ struct AccountResolverTests {
             .resolve(bindings: results.keys.sorted().map(binding), now: now)
     }
 
-    // MARK: - Dedup
+    /// A `ResolvedAccount` as it looks *after* `/profile` has settled its uuid — the input shape
+    /// `regroup` sees, where account-folding and election actually happen.
+    private func settled(_ token: DesktopToken, uuid: String) -> ResolvedAccount {
+        ResolvedAccount(
+            identity: AccountIdentity(uuid: uuid),
+            token: token,
+            bindingIDs: [token.bindingID]
+        )
+    }
+
+    private func regroup(_ accounts: [ResolvedAccount], now: Date = Date()) -> [ResolvedAccount] {
+        AccountResolver(provider: StubProvider(results: [:])).regroup(accounts, now: now)
+    }
+
+    // MARK: - Local dedup (resolve): merges identical tokens only
 
     @Test
-    func sameOrgWithoutHintStaysProvisionalPerBinding() async {
-        // Same org, no `lastKnownAccountUuid` on either side: the org does NOT identify an
-        // account (a Team org holds many), so these must not collapse into one. They stand alone
-        // as provisional identities until `/profile` supplies the authoritative UUID — over-
-        // splitting costs an extra call, collapsing would render one account's limits for both.
+    func identicalTokensCollapseToOneAccount() async {
+        // A cloned user-data dir gives two bindings the *same* token — provably one account, so it
+        // is safe to merge locally with no `/profile` round-trip.
         let result = await resolve([
-            "p1": .success(token(binding: "p1", org: "org-A")),
-            "p2": .success(token(binding: "p2", org: "org-A"))
+            "p1": .success(token(binding: "p1", value: "SAME-TOKEN")),
+            "p2": .success(token(binding: "p2", value: "SAME-TOKEN"))
+        ])
+        #expect(result.accounts.count == 1)
+        #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
+    }
+
+    @Test
+    func distinctTokensNeverMergeLocally() async {
+        // Different tokens are never merged in `resolve` — not even sharing an org (a Team org
+        // holds many accounts) or a config hint (it can lag the token), both of which could point
+        // a token at the wrong account. They stand alone, keyed by fingerprint, until `/profile`
+        // proves whether they share an account (`regroup`'s job).
+        let result = await resolve([
+            "userA": .success(token(binding: "userA", org: "shared-org")),
+            "userB": .success(token(binding: "userB", org: "shared-org"))
         ])
         #expect(result.accounts.count == 2)
-        // Keyed by binding id (their only local identifier) until `/profile` supplies the real uuid.
-        #expect(Set(result.accounts.map(\.identity.uuid)) == ["p1", "p2"])
+        #expect(Set(result.accounts.map(\.identity.uuid)).count == 2) // distinct fingerprints
     }
 
     @Test
@@ -72,85 +96,84 @@ struct AccountResolverTests {
     }
 
     @Test
-    func sameOrgDifferentAccountsAreNotCollapsed() async {
-        // Two profiles in one Team/Enterprise org, signed in as different users: same org UUID,
-        // different account UUIDs. They must stay separate accounts, not collapse to one.
-        let result = await resolve([
-            "userA": .success(token(binding: "userA", org: "shared-org", lastKnown: "acct-A")),
-            "userB": .success(token(binding: "userB", org: "shared-org", lastKnown: "acct-B"))
-        ])
-        #expect(result.accounts.count == 2)
-        #expect(Set(result.accounts.map(\.identity.uuid)) == ["acct-A", "acct-B"])
+    func provisionalUuidIsTheTokenFingerprint() async {
+        // Until `/profile` answers, the account is identified only by its token — the fingerprint
+        // is its uuid, and the token's coarse fields ride along.
+        let tok = token(binding: "p1", org: "org-A")
+        let result = await resolve(["p1": .success(tok)])
+        #expect(result.accounts.first?.identity.uuid == tok.fingerprint)
+        #expect(result.accounts.first?.identity.organizationUuid == "org-A")
+        #expect(result.accounts.first?.identity.subscriptionType == "max")
     }
 
-    @Test
-    func groupsByLastKnownWhenNoOrg() async {
-        let result = await resolve([
-            "p1": .success(token(binding: "p1", org: nil, lastKnown: "acct-9")),
-            "p2": .success(token(binding: "p2", org: nil, lastKnown: "acct-9"))
-        ])
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.identity.uuid == "acct-9")
-    }
+    // MARK: - Account fold + election (regroup): by the authoritative /profile uuid
 
-    // MARK: - Election
-
-    /// Election only happens *within* a group, so each test below shares one account hint — two
-    /// profiles signed into the same account. Without it they'd resolve to separate accounts and
-    /// the assertions would pass on sort order rather than on the election ladder.
-    private static let sharedAccount = "acct-shared"
+    // Election happens *within* a fold group, so each test below gives its accounts the same
+    // settled uuid — two launchers `/profile` proved are one account.
 
     @Test
-    func electsValidOverExpired() async {
+    func electsValidOverExpired() {
         let past = Date(timeIntervalSince1970: 1000)
-        let result = await resolve([
-            "expired": .success(token(binding: "expired", expiresAt: past, lastKnown: Self.sharedAccount)),
-            "valid": .success(token(binding: "valid", lastKnown: Self.sharedAccount))
-        ], now: Date(timeIntervalSince1970: 2000))
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.token.bindingID == "valid")
+        let now = Date(timeIntervalSince1970: 2000)
+        let folded = regroup([
+            settled(token(binding: "expired", value: "TK-expired", expiresAt: past), uuid: "acct"),
+            settled(token(binding: "valid", value: "TK-valid"), uuid: "acct")
+        ], now: now)
+        #expect(folded.count == 1)
+        #expect(folded.first?.token.bindingID == "valid")
     }
 
     @Test
-    func electsInferenceOverProfileOnly() async {
-        let result = await resolve([
-            "profileOnly": .success(token(
-                binding: "profileOnly",
-                scopes: [CoreConstants.oauthProfileScope],
-                lastKnown: Self.sharedAccount
-            )),
-            "inference": .success(token(binding: "inference", lastKnown: Self.sharedAccount))
+    func electsInferenceOverProfileOnly() {
+        let folded = regroup([
+            settled(
+                token(binding: "profileOnly", value: "TK-po", scopes: [CoreConstants.oauthProfileScope]),
+                uuid: "acct"
+            ),
+            settled(token(binding: "inference", value: "TK-inf"), uuid: "acct")
         ])
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.token.bindingID == "inference")
+        #expect(folded.count == 1)
+        #expect(folded.first?.token.bindingID == "inference")
     }
 
     @Test
-    func electsLatestExpiryAmongValidTokens() async {
+    func electsLatestExpiryAmongValidTokens() {
         let soon = Date(timeIntervalSince1970: 3_000_000_000)
         let later = Date(timeIntervalSince1970: 4_000_000_000)
-        let result = await resolve([
-            "soon": .success(token(binding: "soon", expiresAt: soon, lastKnown: Self.sharedAccount)),
-            "later": .success(token(binding: "later", expiresAt: later, lastKnown: Self.sharedAccount))
+        let folded = regroup([
+            settled(token(binding: "soon", value: "TK-soon", expiresAt: soon), uuid: "acct"),
+            settled(token(binding: "later", value: "TK-later", expiresAt: later), uuid: "acct")
         ])
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.token.bindingID == "later")
+        #expect(folded.count == 1)
+        #expect(folded.first?.token.bindingID == "later")
     }
 
     @Test
-    func allExpiredStillElectsLeastBad() async {
+    func allExpiredStillElectsLeastBad() {
         let now = Date(timeIntervalSince1970: 5_000_000_000)
         let older = Date(timeIntervalSince1970: 1000)
         let newer = Date(timeIntervalSince1970: 2000)
-        let result = await resolve([
-            "older": .success(token(binding: "older", expiresAt: older, lastKnown: Self.sharedAccount)),
-            "newer": .success(token(binding: "newer", expiresAt: newer, lastKnown: Self.sharedAccount))
+        let folded = regroup([
+            settled(token(binding: "older", value: "TK-older", expiresAt: older), uuid: "acct"),
+            settled(token(binding: "newer", value: "TK-newer", expiresAt: newer), uuid: "acct")
         ], now: now)
         // Both expired → still one account, elected token is the latest-expiry one; the caller
         // sees isExpired and skips the /usage call (login-needed), but dedup still holds.
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.token.bindingID == "newer")
-        #expect(result.accounts.first?.token.isExpired(now: now) == true)
+        #expect(folded.count == 1)
+        #expect(folded.first?.token.bindingID == "newer")
+        #expect(folded.first?.token.isExpired(now: now) == true)
+    }
+
+    @Test
+    func distinctAuthoritativeUuidsAreNotFolded() {
+        // The safety property behind the whole design: two tokens `/profile` mapped to *different*
+        // accounts must never fold — even from bindings that once shared a config hint.
+        let folded = regroup([
+            settled(token(binding: "a", value: "TK-a"), uuid: "acct-A"),
+            settled(token(binding: "b", value: "TK-b"), uuid: "acct-B")
+        ])
+        #expect(folded.count == 2)
+        #expect(Set(folded.map(\.identity.uuid)) == ["acct-A", "acct-B"])
     }
 
     // MARK: - Failures
@@ -166,16 +189,5 @@ struct AccountResolverTests {
         #expect(result.accounts.first?.bindingIDs == ["ok"])
         #expect(result.failures["locked"] == .keychainUnavailable(.interactionNotAllowed))
         #expect(result.failures["noLogin"] == .noTokenCache)
-    }
-
-    @Test
-    func identityCarriesTokenDerivedFields() async {
-        let result = await resolve([
-            "p1": .success(token(binding: "p1", org: "org-A", lastKnown: "acct-1"))
-        ])
-        let identity = result.accounts.first?.identity
-        #expect(identity?.uuid == "acct-1") // prefers the config account-uuid hint
-        #expect(identity?.organizationUuid == "org-A")
-        #expect(identity?.subscriptionType == "max")
     }
 }

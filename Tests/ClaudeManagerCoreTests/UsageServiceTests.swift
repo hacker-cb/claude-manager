@@ -29,7 +29,7 @@ struct UsageServiceTests {
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -46,15 +46,17 @@ struct UsageServiceTests {
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(provider: StubProvider(results: [
-            "p1": .success(token("p1", lastKnown: "acct")),
-            "p2": .success(token("p2", lastKnown: "acct"))
+            "p1": .success(token("p1")),
+            "p2": .success(token("p2"))
         ]), http: http, history: history)
         let result = await service.refresh(bindings: [binding("p1"), binding("p2")], now: now)
         #expect(result.accounts.count == 1)
         #expect(result.accounts.first?.bindingIDs == ["p1", "p2"])
-        #expect(http.usageCallCount == 1)
-        // The hint already tied them together, so identity costs one lookup, not one per binding.
-        #expect(http.profileCallCount == 1)
+        #expect(http.usageCallCount == 1) // one account (folded by /profile uuid) → one /usage
+        // Two distinct tokens, so each confirms its account via /profile — the authoritative signal
+        // that folds them into one. That's what a shared login genuinely costs; the config hint,
+        // which used to save the second lookup, could point them at the wrong account.
+        #expect(http.profileCallCount == 2)
     }
 
     @Test
@@ -62,151 +64,12 @@ struct UsageServiceTests {
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(provider: StubProvider(results: [
-            "ok": .success(token("ok", lastKnown: "acct")),
+            "ok": .success(token("ok")),
             "locked": .failure(.keychainUnavailable(.interactionNotAllowed))
         ]), http: http, history: history)
         let result = await service.refresh(bindings: [binding("ok"), binding("locked")], now: now)
         #expect(result.accounts.count == 1)
         #expect(result.bindingFailures["locked"] == .keychainUnavailable(.interactionNotAllowed))
-    }
-
-    // MARK: - Identity reconciliation
-
-    @Test
-    func provisionalIdentityIsReconciledViaProfile() async {
-        // No `lastKnownAccountUuid` hint → the resolver keys by binding id and flags the identity
-        // provisional; the service must settle it via `/profile` before storing anything.
-        let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct-real")
-        let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p"))]),
-            http: http,
-            history: history
-        )
-        let result = await service.refresh(bindings: [binding("p")], now: now)
-        #expect(result.accounts.first?.identity.uuid == "acct-real")
-        #expect(result.accounts.first?.identity.email == "user@example.com")
-        #expect(result.accounts.first?.state == .fresh)
-        #expect(http.profileCallCount == 1)
-        #expect(http.usageCallCount == 1)
-        // Persisted under the authoritative uuid — not the binding id it started with.
-        #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
-        #expect(await history.sampleCount(accountUUID: "p") == 0)
-    }
-
-    @Test
-    func launchersSharingOneLoginCollapseToOneAccount() async {
-        // Three launchers, one login, wanting three windows — and no local hint tying them
-        // together (Claude writes lastKnownAccountUuid only after signing in). Each carries its
-        // own token, so nothing local can tell they're the same account; `/profile` must settle
-        // that before any usage is fetched, or one account is billed as three.
-        let http = ScriptedHTTP(usage: usageBody, accountUUID: "one-account")
-        let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(provider: StubProvider(results: [
-            "p1": .success(token("p1")),
-            "p2": .success(token("p2")),
-            "p3": .success(token("p3"))
-        ]), http: http, history: history)
-        let result = await service.refresh(
-            bindings: [binding("p1"), binding("p2"), binding("p3")],
-            now: now
-        )
-        #expect(result.accounts.count == 1)
-        #expect(result.accounts.first?.bindingIDs == ["p1", "p2", "p3"])
-        #expect(result.accounts.first?.state == .fresh)
-        #expect(http.usageCallCount == 1) // one account → one /usage, however many launchers
-        // One identity lookup per token is unavoidable: that IS what reveals the shared account.
-        #expect(http.profileCallCount == 3)
-        #expect(await history.sampleCount(accountUUID: "one-account") == 1)
-    }
-
-    @Test
-    func staleAccountHintDoesNotServeThePreviousAccountsIdentity() async {
-        // A launcher signed out and back into a *different* account, but its config
-        // `lastKnownAccountUuid` still points at the previous one. The new token's fingerprint has
-        // never been seen, so the previous account's cached `/profile` must NOT be reused off the
-        // stale hint — the unseen token confirms authoritatively via its own `/profile`, or its
-        // usage would be filed under, and shown as, the wrong account.
-        let history = UsageHistoryStore(path: ":memory:")
-
-        // Pass 1: signed into acctA. Caches acctA's identity (by acctA's token fingerprint).
-        let http1 = ScriptedHTTP(usage: usageBody, accountUUID: "acctA")
-        let s1 = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "TK-old", lastKnown: "acctA"))]),
-            http: http1, history: history
-        )
-        let r1 = await s1.refresh(bindings: [binding("p")], now: now)
-        #expect(r1.accounts.first?.identity.uuid == "acctA")
-
-        // Pass 2: same launcher, a *new* token (re-login to acctB), hint still says acctA.
-        let http2 = ScriptedHTTP(usage: usageBody, accountUUID: "acctB")
-        let s2 = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "TK-new", lastKnown: "acctA"))]),
-            http: http2, history: history
-        )
-        let r2 = await s2.refresh(bindings: [binding("p")], now: now.addingTimeInterval(120))
-        #expect(r2.accounts.first?.identity.uuid == "acctB") // authoritative, not the stale hint
-        #expect(http2.profileCallCount == 1) // the unseen fingerprint forced a fresh lookup
-        #expect(await history.sampleCount(accountUUID: "acctB") == 1)
-    }
-
-    @Test
-    func profileFailureKeepsProvisionalIdentity() async {
-        // `/profile` unreachable → keep the provisional key rather than dropping the account;
-        // usage still works, just keyed per binding until a later poll settles it.
-        let http = ScriptedHTTP { url, _ in
-            if url.path.hasSuffix(CoreConstants.usageAPIProfilePath) {
-                return HTTPResponse(status: 500, body: Data())
-            }
-            return HTTPResponse(status: 200, body: usageBody)
-        }
-        let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p"))]),
-            http: http,
-            history: history
-        )
-        let result = await service.refresh(bindings: [binding("p")], now: now)
-        #expect(result.accounts.first?.identity.uuid == "p")
-        #expect(result.accounts.first?.state == .fresh)
-        #expect(await history.sampleCount(accountUUID: "p") == 1)
-    }
-
-    @Test
-    func storedProfileIsReusedInsteadOfRefetched() async {
-        // The name is cached, so a second pass costs no extra /profile call. The uuid comes from
-        // /profile even though the config carried a hint: the hint is a cached guess and can be
-        // stale, while /profile is authoritative about which account the token belongs to.
-        let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct-authoritative")
-        let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
-            http: http,
-            history: history
-        )
-        _ = await service.refresh(bindings: [binding("p")], now: now)
-        // Past the 60s floor so the second pass genuinely fetches usage again.
-        let later = now.addingTimeInterval(120)
-        let result = await service.refresh(bindings: [binding("p")], now: later)
-        #expect(result.accounts.first?.identity.uuid == "acct-authoritative")
-        #expect(result.accounts.first?.identity.email == "user@example.com")
-        #expect(http.usageCallCount == 2)
-        #expect(http.profileCallCount == 1) // fetched once, reused after
-    }
-
-    @Test
-    func staleProfileIsRefetchedAfterTTL() async {
-        let http = ScriptedHTTP(usage: usageBody)
-        let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
-            http: http,
-            history: history
-        )
-        _ = await service.refresh(bindings: [binding("p")], now: now)
-        let afterTTL = now.addingTimeInterval(UsageService.profileTTLSeconds + 60)
-        _ = await service.refresh(bindings: [binding("p")], now: afterTTL)
-        #expect(http.profileCallCount == 2) // the day-old answer is re-asked, not trusted
     }
 
     // MARK: - Throttle / expiry
@@ -215,7 +78,7 @@ struct UsageServiceTests {
     func expiredTokenSkipsFetchLoginNeeded() async {
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
-        let expired = token("p", expiresAt: Date(timeIntervalSince1970: 1), lastKnown: "acct")
+        let expired = token("p", expiresAt: Date(timeIntervalSince1970: 1))
         let service = makeService(
             provider: StubProvider(results: ["p": .success(expired)]),
             http: http,
@@ -231,7 +94,7 @@ struct UsageServiceTests {
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -252,7 +115,7 @@ struct UsageServiceTests {
         }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -269,7 +132,7 @@ struct UsageServiceTests {
         let history = UsageHistoryStore(path: ":memory:")
         let http401 = ScriptedHTTP { _, _ in HTTPResponse(status: 401, body: Data()) }
         let serviceA = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http401,
             history: history
         )
@@ -282,7 +145,7 @@ struct UsageServiceTests {
         // A different token value (fingerprint change = re-login) → retries.
         let httpOK = ScriptedHTTP(usage: usageBody)
         let serviceB = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "NEW", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p", value: "NEW"))]),
             http: httpOK,
             history: history
         )
@@ -296,7 +159,7 @@ struct UsageServiceTests {
         let http = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: http,
             history: history
         )
@@ -310,13 +173,13 @@ struct UsageServiceTests {
         // Seed a good sample so the later stale read has data.
         let ok = ScriptedHTTP(usage: usageBody)
         _ = await makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: ok, history: history
         ).refresh(bindings: [binding("p")], now: now)
         // Transport failure > 60s later → offline backoff (with reason .offline).
         let down = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
         let service = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", lastKnown: "acct"))]),
+            provider: StubProvider(results: ["p": .success(token("p"))]),
             http: down, history: history
         )
         let failed = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(120))
@@ -358,7 +221,7 @@ struct UsageServiceTests {
         let http = ScriptedHTTP(usage: usageBody)
         // One binding: pass 1 → .decryptFailed (all fail) → self-heal invalidates + retries →
         // pass 2 → success. If self-heal didn't run, the account would never resolve.
-        let provider = TwoPassProvider(firstPassCount: 1, healed: token("p", lastKnown: "acct"))
+        let provider = TwoPassProvider(firstPassCount: 1, healed: token("p"))
         let service = UsageService(
             resolver: AccountResolver(provider: provider),
             client: AnthropicOAuthClient(http: http),

@@ -75,8 +75,7 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             organizationUUID: organizationUUID(fromComposite: compositeKey),
             subscriptionType: value["subscriptionType"] as? String,
             rateLimitTier: value["rateLimitTier"] as? String,
-            bindingID: binding.id,
-            lastKnownAccountUUID: root[CoreConstants.desktopLastAccountKey] as? String
+            bindingID: binding.id
         ))
     }
 

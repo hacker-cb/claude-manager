@@ -98,8 +98,7 @@ extension UsageServiceTests {
     func token(
         _ bindingID: String,
         value: String? = nil,
-        expiresAt: Date = Date(timeIntervalSince1970: 4_000_000_000),
-        lastKnown: String? = nil
+        expiresAt: Date = Date(timeIntervalSince1970: 4_000_000_000)
     ) -> DesktopToken {
         DesktopToken(
             token: value ?? "TK-\(bindingID)",
@@ -108,8 +107,7 @@ extension UsageServiceTests {
             organizationUUID: "org",
             subscriptionType: "max",
             rateLimitTier: "default_claude_max_20x",
-            bindingID: bindingID,
-            lastKnownAccountUUID: lastKnown
+            bindingID: bindingID
         )
     }
 

@@ -5,10 +5,10 @@ import Foundation
 /// later, CLI instances) can bind to the same `AccountIdentity`; usage is fetched and
 /// cached once per `uuid`, keyed by it everywhere.
 ///
-/// `uuid` is the account UUID resolved from the decrypted token's organization/account
-/// (the source of truth); `config.json`'s `lastKnownAccountUuid` is only a fast hint used
-/// before that reconciliation. The profile-oriented fields are filled from `/oauth/profile`
-/// (cached long) and are all optional so a snapshot with just a `uuid` is still valid.
+/// `uuid` is the authoritative account UUID from `/oauth/profile`; before that answers it holds
+/// the token's fingerprint as a per-token placeholder (never a `config.json` hint, which can lag
+/// the token). The profile-oriented fields are filled from `/oauth/profile` (cached long) and are
+/// all optional so a snapshot with just a `uuid` is still valid.
 public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifiable {
     /// Account UUID — the dedup / cache key.
     public var uuid: String

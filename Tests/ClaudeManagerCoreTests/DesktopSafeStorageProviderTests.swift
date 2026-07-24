@@ -30,14 +30,12 @@ struct DesktopSafeStorageProviderTests {
     /// with no real token.
     private func writeConfig(
         cache: [String: Any],
-        lastAccount: String? = nil,
         into dir: URL
     ) throws -> URL {
         let key = SafeStorageDecryptor.deriveKey(password: password)!
         let cacheData = try JSONSerialization.data(withJSONObject: cache)
         let blob = SafeStorageDecryptorTests.makeV10Blob(cacheData, key: key)
-        var root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString()]
-        if let lastAccount { root[CoreConstants.desktopLastAccountKey] = lastAccount }
+        let root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString()]
         let url = dir.appendingPathComponent("config.json")
         try JSONSerialization.data(withJSONObject: root).write(to: url)
         return url
@@ -67,7 +65,7 @@ struct DesktopSafeStorageProviderTests {
                     "rateLimitTier": "default_claude_max_20x"
                 ]
             ]
-            let url = try writeConfig(cache: cache, lastAccount: "acct-uuid", into: dir)
+            let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
 
@@ -76,7 +74,6 @@ struct DesktopSafeStorageProviderTests {
             #expect(token.organizationUUID == org)
             #expect(token.subscriptionType == "max")
             #expect(token.rateLimitTier == "default_claude_max_20x")
-            #expect(token.lastKnownAccountUUID == "acct-uuid")
             #expect(token.bindingID == "p")
             #expect(abs(token.expiresAt.timeIntervalSince1970 - 1_785_320_075.857) < 0.01)
             #expect(!token.isExpired(now: Date(timeIntervalSince1970: 1_785_000_000)))

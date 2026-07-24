@@ -163,11 +163,12 @@ public enum CoreConstants {
     public static let safeStorageBlobPrefix = "v10"
 
     /// `config.json` keys inside a Desktop account's user-data dir. `tokenCacheV2` is the
-    /// current encrypted token cache; `tokenCache` is the legacy fallback.
-    /// `lastKnownAccountUuid` is a *hint* for the account UUID (the token is the truth).
+    /// current encrypted token cache; `tokenCache` is the legacy fallback. The account UUID is
+    /// deliberately *not* read from `config.json` — its `lastKnownAccountUuid` can lag the actual
+    /// token, so identity comes only from the token (its fingerprint locally, `/profile`
+    /// authoritatively), never a config hint that could file usage under the wrong account.
     public static let desktopTokenCacheKeyV2 = "oauth:tokenCacheV2"
     public static let desktopTokenCacheKeyV1 = "oauth:tokenCache"
-    public static let desktopLastAccountKey = "lastKnownAccountUuid"
 
     /// The decrypted `tokenCacheV2` is a JSON **map** keyed
     /// `"<clientId>:<orgUuid>:<audience>:<space-separated scopes>"`. The audience
