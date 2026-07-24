@@ -30,6 +30,47 @@ self-updates transparently because there is nothing of ours to rebuild.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the macOS facts that follow from this
 choice.
 
+## Signing launchers: `codesign`, not the in-process signer
+
+A launcher bundle has to carry a signature or macOS refuses to execute it (see
+[ARCHITECTURE.md](ARCHITECTURE.md) § macOS facts). It can only ever be an **ad-hoc**
+signature: launchers are generated on the user's machine, where no Developer ID
+certificate exists. That is enough here — ad-hoc gives integrity, which is what the
+execution policy wants, and the bundle is not quarantined, so authenticity (certificate,
+Team ID, notarization) never enters the picture.
+
+The open question was how to produce it, and the in-process route was tried first:
+`Security.framework`'s `SecCodeSigner` signs with no subprocess and no dependency on a
+command-line tool. It ships no public header (only the readers `SecStaticCode.h` /
+`SecCode.h` do), but the symbols are exported from `Security.tbd` and have been stable
+since 10.5, so a small pinned re-declaration was enough to call it from Swift. It signed
+correctly.
+
+**It was rejected because it deadlocks under a saturated thread pool.**
+`SecCodeSigner::Signer::prepare` fans its resource hashing out over a dispatch group and
+blocks the calling thread in `Dispatch::Group::wait()`. When many launchers are built at
+once — exactly what the parallel test suite does — every worker ends up parked in
+`__ulock_wait` with nothing left to run the hashing, and the process wedges forever. A
+sample of the hung run showed all cooperative-pool threads inside `signAdHoc`. Neither
+mitigation helped: serializing signing behind a process-wide lock just moved the threads
+from `dispatch_group_wait` to the lock, and running the call on a dedicated non-pool
+thread still starved the group of workers. (`SystemCommandRunner` carries a comment
+about the same class of starvation biting `Process.waitUntilExit`.)
+
+So signing shells out to `/usr/bin/codesign` through the existing `CommandRunner` seam.
+The subprocess has its own thread pool, so the hazard cannot arise; the seam is the one
+every other external tool already uses (`lsregister`, `iconutil`, `pgrep`, …); and
+`codesign` is base macOS rather than an Xcode Command Line Tools shim — on a test machine
+the known CLT shims (`git`, `clang`) are the same 118,928-byte stub with an identical
+md5, while `codesign` is a distinct 459,824-byte binary. A signing failure is surfaced as
+`ClaudeManagerError.codeSigningFailed` rather than a raw command error, because the
+consequence is specific: an unsigned launcher will not run.
+
+Tests assert the *result* through the public reader API (`SecStaticCodeCheckValidity` +
+`SecCodeCopySigningInformation`) rather than by echoing the `codesign` invocation, and
+the store suites delegate `codesign` to the real system (like `iconutil`), so they
+exercise the signing path the app actually takes.
+
 ## Disabling clone auto-updates, and the overlay shape
 
 Every clone `exec`s the one on-disk Claude.app, so a clone running Claude's Squirrel

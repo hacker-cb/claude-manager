@@ -10,16 +10,18 @@ public enum CoreConstants {
     public static let markerKey = "ClaudeManagerLauncher"
 
     /// Version of the generated launcher *wrapper* — the bash script rendered by
-    /// `LauncherScript.render` plus the keys written by `LauncherBundle.writeInfoPlist`.
-    /// It is stamped into every launcher's marker at build time. **Bump it whenever
-    /// that generated output changes**: a launcher whose stored version is lower than
-    /// this reads back as stale (`Discovered.isStale` / `ManagedProfile.needsRebuild`),
-    /// and the app offers a rebuild. This is the wrapper format version, NOT the app's
-    /// `MARKETING_VERSION`.
+    /// `LauncherScript.render`, the keys written by `LauncherBundle.writeInfoPlist`, and
+    /// the rest of the bundle `LauncherBundle.build` produces. It is stamped into every
+    /// launcher's marker at build time. **Bump it whenever that generated output
+    /// changes**: a launcher whose stored version is lower than this reads back as stale
+    /// (`Discovered.isStale` / `ManagedProfile.needsRebuild`), and the app offers a
+    /// rebuild. This is the wrapper format version, NOT the app's `MARKETING_VERSION`.
     ///
     /// History: 1 = MVP. 2 = adds `LSArchitecturePriority` so profiles run native
-    /// (arm64) instead of translated under Rosetta.
-    public static let currentWrapperVersion = 2
+    /// (arm64) instead of translated under Rosetta. 3 = the bundle is ad-hoc signed;
+    /// without a signature macOS refuses to execute a newly built launcher at all, so
+    /// every unsigned bundle must be flagged for rebuild.
+    public static let currentWrapperVersion = 3
 
     /// The single source of the staleness rule: whether a launcher stamped with
     /// `version` predates `currentWrapperVersion` and should be offered a rebuild.
@@ -27,6 +29,21 @@ public enum CoreConstants {
     /// the Doctor warning and the UI rebuild affordance can never disagree.
     public static func wrapperVersionIsStale(_ version: Int) -> Bool {
         version < currentWrapperVersion
+    }
+
+    /// First wrapper version whose launchers macOS will actually execute: v3 is where
+    /// the bundle became ad-hoc signed, and an unsigned launcher is refused by
+    /// AppleSystemPolicy — it appears in the Dock and is killed. Everything below is
+    /// therefore **dead**, not merely dated.
+    public static let minimumRunnableWrapperVersion = 3
+
+    /// Whether a launcher stamped with `version` is one macOS refuses to launch, so a
+    /// rebuild is the only way to make it work again. Kept apart from
+    /// `wrapperVersionIsStale` on purpose: staleness means "misses the latest
+    /// improvements" and the app words it as optional, while this means "does not run"
+    /// and is surfaced as an error.
+    public static func wrapperVersionIsUnrunnable(_ version: Int) -> Bool {
+        version < minimumRunnableWrapperVersion
     }
 
     /// The `MARKETING_VERSION` placeholder a local/dev build carries (see project.yml).
@@ -110,6 +127,9 @@ public enum CoreConstants {
     public static let lsregisterPath =
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
     public static let iconutilPath = "/usr/bin/iconutil"
+    /// Base-system tool (not an Xcode Command Line Tools shim) — used to ad-hoc sign
+    /// every launcher bundle, without which macOS refuses to run it.
+    public static let codesignPath = "/usr/bin/codesign"
     public static let openPath = "/usr/bin/open"
     public static let pgrepPath = "/usr/bin/pgrep"
     public static let psPath = "/bin/ps"

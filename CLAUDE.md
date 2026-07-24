@@ -41,9 +41,14 @@ scripts/                          # app-icon generator + release (build/dmg/nota
 Full reasoning for each is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the
 short form:
 
-- **Bump `CoreConstants.currentWrapperVersion`** whenever `LauncherScript.render` or
-  `LauncherBundle.writeInfoPlist` output changes — otherwise existing launchers are
-  never flagged stale for rebuild.
+- **Bump `CoreConstants.currentWrapperVersion`** whenever `LauncherScript.render`,
+  `LauncherBundle.writeInfoPlist`, or anything else about the built bundle changes —
+  otherwise existing launchers are never flagged stale for rebuild.
+- **Ad-hoc signing is the last write into a launcher bundle.** macOS refuses to
+  *execute* an unsigned `.app` (AppleSystemPolicy kills it seconds after it appears in
+  the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
+  staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
+  never add a write below that call, and never sign anywhere but `build`.
 - **Keep `CFBundleIconName` out of launcher Info.plists** — otherwise macOS reads
   `Assets.car` and ignores our `.icns`.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of

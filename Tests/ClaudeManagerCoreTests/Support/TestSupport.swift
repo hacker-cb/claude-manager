@@ -1,6 +1,91 @@
 import CoreGraphics
 import Foundation
+import Security
 @testable import ClaudeManagerCore
+
+/// Reads a bundle's signature through the public Security API — deliberately not by
+/// inspecting the `codesign` invocation, so a test asserts the on-disk result rather
+/// than echoing the call that produced it. Equivalent to what
+/// `codesign --verify --strict` + `codesign -dv` report.
+enum SignatureProbe {
+    /// Strictly validate the bundle's signature (every sealed resource included) and
+    /// confirm it is ad-hoc. False if the bundle is unsigned, tampered with, or signed
+    /// with an identity.
+    static func isValidAdHoc(_ bundleURL: URL) -> Bool {
+        let strict = SecCSFlags(rawValue: kSecCSStrictValidate)
+        guard let code = staticCode(bundleURL),
+              SecStaticCodeCheckValidity(code, strict, nil) == errSecSuccess,
+              let flags = signingFlags(code)
+        else { return false }
+        return flags & SecCodeSignatureFlags.adhoc.rawValue != 0
+    }
+
+    /// True when the path carries any signature at all (valid or not) — lets a test
+    /// tell "never signed" apart from "signed, then invalidated".
+    static func isSigned(_ bundleURL: URL) -> Bool {
+        guard let code = staticCode(bundleURL) else { return false }
+        return signingFlags(code) != nil
+    }
+
+    private static func staticCode(_ bundleURL: URL) -> SecStaticCode? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, [], &code) == errSecSuccess else { return nil }
+        return code
+    }
+
+    private static func signingFlags(_ code: SecStaticCode) -> UInt32? {
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, [], &info) == errSecSuccess,
+              let dictionary = info as? [String: Any],
+              let flags = dictionary[kSecCodeInfoFlags as String] as? UInt32
+        else { return nil }
+        return flags
+    }
+}
+
+/// Rewrite a built launcher's stored wrapper version, simulating a bundle made by an
+/// older Claude Manager — the only way to produce a stale/unsigned-era bundle, since a
+/// fresh `build` always stamps `currentWrapperVersion`. Note this also breaks the
+/// bundle's signature (it writes into a sealed bundle), which is exactly what a
+/// pre-signing launcher looks like.
+func setWrapperVersion(_ version: Int, atAppPath appPath: String) throws {
+    let infoURL = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
+    guard var info = RealClaude.plist(at: infoURL),
+          var marker = info[CoreConstants.markerKey] as? [String: Any]
+    else { throw Fixture.FixtureError(message: "no marker at \(appPath)") }
+    marker["wrapperVersion"] = version
+    info[CoreConstants.markerKey] = marker
+    let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+    try data.write(to: infoURL)
+}
+
+/// A runner whose `codesign` (and every other tool) is stubbed as succeeding — for the
+/// suites that build launchers to assert on something *other* than the signature.
+/// Forking the real signer per bundle is left to `LauncherSigningTests`, which is
+/// serialized precisely because those subprocesses are what a small CI runner chokes on.
+func stubbedSigningRunner() -> RecordingCommandRunner {
+    RecordingCommandRunner(handler: idleStub)
+}
+
+/// A runner on which no tool can be launched at all (the executable is missing) —
+/// distinct from a tool that ran and failed, which is what `failingCodesignRunner`
+/// models.
+struct UnrunnableToolRunner: CommandRunner {
+    func run(_ executable: String, _: [String]) throws -> CommandOutput {
+        throw ClaudeManagerError.commandLaunchFailed(executable: executable, message: "no such tool")
+    }
+}
+
+/// A runner whose `codesign` always fails, for driving `LauncherBundle`'s
+/// signing-failure path. Every other tool succeeds silently.
+func failingCodesignRunner() -> RecordingCommandRunner {
+    RecordingCommandRunner { executable, arguments in
+        if executable == CoreConstants.codesignPath {
+            return CommandOutput(exitCode: 1, standardOutput: "", standardError: "test: signing refused")
+        }
+        return idleStub(executable, arguments)
+    }
+}
 
 /// A `CommandRunner` that records every invocation and returns programmable
 /// output. Optionally delegates specific executables (e.g. `iconutil`) to the real
@@ -14,6 +99,11 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var _invocations: [Invocation] = []
     private var handler: @Sendable (String, [String]) -> CommandOutput
+    /// Executables passed through to the real system, checked in `run` — deliberately
+    /// *not* baked into `handler`, which `setHandler` replaces wholesale. A suite that
+    /// swaps the handler mid-test would otherwise silently lose the passthrough and, for
+    /// `codesign`, go back to building bundles that are never really signed.
+    private var delegated: Set<String> = []
 
     init(handler: @escaping @Sendable (String, [String]) -> CommandOutput = { _, _ in
         CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
@@ -35,29 +125,43 @@ final class RecordingCommandRunner: CommandRunner, @unchecked Sendable {
         self.handler = handler
     }
 
+    /// Narrow (or clear) the real-system passthrough — for a test that needs to stub a
+    /// tool `delegating` runs for real, e.g. making `codesign` fail on demand.
+    func setDelegated(_ delegated: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        self.delegated = delegated
+    }
+
     func run(_ executable: String, _ arguments: [String]) throws -> CommandOutput {
         lock.lock()
         _invocations.append(Invocation(executable: executable, arguments: arguments))
         let handler = handler
+        let isDelegated = delegated.contains(executable)
         lock.unlock()
+        if isDelegated {
+            return (try? SystemCommandRunner().run(executable, arguments))
+                ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
+        }
         return handler(executable, arguments)
     }
 
     /// Runner that delegates `delegated` executables to the real system and routes
-    /// everything else through `stub`.
+    /// everything else through `stub`. The passthrough survives a later `setHandler`
+    /// — see the `delegated` field.
+    ///
+    /// `codesign` is **not** in the default set: only the signing suites need a real
+    /// signature, and forking `codesign` from every store test costs a subprocess per
+    /// launcher write — enough to wedge a 3-core CI runner (`SystemCommandRunner`
+    /// documents the starvation hazard). Ask for it explicitly via
+    /// `makeStoreEnv(signingForReal: true)`.
     static func delegating(
         _ delegated: Set<String> = [CoreConstants.iconutilPath],
         stub: @escaping @Sendable (String, [String]) -> CommandOutput
     ) -> RecordingCommandRunner {
-        let system = SystemCommandRunner()
-        let runner = RecordingCommandRunner()
-        runner.setHandler { executable, arguments in
-            if delegated.contains(executable) {
-                return (try? system.run(executable, arguments))
-                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
-            }
-            return stub(executable, arguments)
-        }
+        let runner = RecordingCommandRunner(handler: stub)
+        runner.lock.lock()
+        runner.delegated = delegated
+        runner.lock.unlock()
         return runner
     }
 }
@@ -223,7 +327,13 @@ struct StoreEnv {
 
 /// `iconutil` runs for real (so icons are genuine `.icns`); every other tool is
 /// stubbed, so no process is killed and the Dock is never restarted for real.
+///
+/// `signingForReal: true` additionally runs `codesign` for real against the temp
+/// install dir — what the signature suites assert on. It is opt-in because a real
+/// signature costs a subprocess per launcher write, and every store suite paying that
+/// is enough to wedge a small CI runner.
 func makeStoreEnv(
+    signingForReal: Bool = false,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -232,7 +342,10 @@ func makeStoreEnv(
     let profilesDir = root.appendingPathComponent("profiles")
     try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
     let real = try Fixture.makeFakeRealApp(in: root, iconData: Fixture.baseICNSData())
-    let runner = RecordingCommandRunner.delegating(stub: stub)
+    let delegated: Set<String> = signingForReal
+        ? [CoreConstants.iconutilPath, CoreConstants.codesignPath]
+        : [CoreConstants.iconutilPath]
+    let runner = RecordingCommandRunner.delegating(delegated, stub: stub)
     let managedPreferencesURLs = [root.appendingPathComponent("no-mdm.plist")]
     let defaultAccountUserDataPath = root.appendingPathComponent("default-account/Claude").path
     let shipItStatePath = root.appendingPathComponent("ShipItState.plist").path

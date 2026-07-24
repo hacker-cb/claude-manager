@@ -116,7 +116,15 @@ struct ProfileRow: View {
                                 "Claude \(managed.availableClaudeVersion ?? "update") available — restart to update"
                             )
                     }
-                    if managed.needsRebuild {
+                    // Two different messages behind one badge: an unsigned launcher does
+                    // not start at all (macOS refuses it), so it must not read as the
+                    // optional "update available" nudge a merely-dated one gets.
+                    if managed.isUnrunnable {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .help("Won't launch — this launcher is unsigned. Rebuild it to fix.")
+                    } else if managed.needsRebuild {
                         Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)

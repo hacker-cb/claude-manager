@@ -9,11 +9,16 @@ public struct Doctor {
     let processProbe: ProcessProbe
     let fileManager: FileManager
     let managedConfigWriter: ManagedConfigWriter
+    let codeSigner: CodeSigner
 
+    /// `bundle` and `codeSigner` are required, not defaulted: both would otherwise
+    /// silently fall back to a fresh `SystemCommandRunner` and bypass the caller's
+    /// injected one — which is exactly what the test suite relies on not happening.
     public init(
         realClaude: RealClaude?,
         configuration: ProfileStoreConfiguration,
-        bundle: LauncherBundle = LauncherBundle(),
+        bundle: LauncherBundle,
+        codeSigner: CodeSigner,
         processProbe: ProcessProbe,
         fileManager: FileManager = .default,
         managedConfigWriter: ManagedConfigWriter? = nil
@@ -21,6 +26,7 @@ public struct Doctor {
         self.realClaude = realClaude
         self.configuration = configuration
         self.bundle = bundle
+        self.codeSigner = codeSigner
         self.processProbe = processProbe
         self.fileManager = fileManager
         self.managedConfigWriter = managedConfigWriter ?? ManagedConfigWriter(fileManager: fileManager)
@@ -37,6 +43,7 @@ public struct Doctor {
             diagnostics.append(launcherDiagnostic(for: launcher))
         }
 
+        diagnostics.append(contentsOf: signatureDiagnostics(discovered))
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
@@ -141,12 +148,41 @@ public struct Doctor {
         )
     }
 
+    /// Whether each launcher carries a signature macOS would accept. Split from
+    /// `launcherDiagnostic` because it is the one failure that leaves every other check
+    /// green: an unsigned or seal-broken bundle has its script, its marker and its
+    /// profile dir all intact, and still cannot start.
+    ///
+    /// Two distinct causes, reported as errors — the launcher does not run either way:
+    /// a bundle predating ad-hoc signing (wrapper < 3, no signature was ever written),
+    /// and a v3+ bundle whose seal has since been broken (something wrote into it).
+    private func signatureDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
+        discovered.compactMap { launcher in
+            if launcher.isUnrunnable {
+                return Diagnostic(
+                    severity: .error,
+                    title: "\(launcher.displayName): unsigned — macOS will not run it, rebuild to fix",
+                    detail: "wrapper v\(launcher.wrapperVersion) predates launcher signing "
+                        + "(v\(CoreConstants.minimumRunnableWrapperVersion))"
+                )
+            }
+            guard !codeSigner.isValidlySigned(bundleURL: launcher.appURL) else { return nil }
+            return Diagnostic(
+                severity: .error,
+                title: "\(launcher.displayName): signature is broken — macOS will not run it, rebuild to fix",
+                detail: PathUtils.abbreviatingHome(launcher.appURL.path)
+            )
+        }
+    }
+
     /// A soft warning per launcher built by an older wrapper than the current one —
     /// it still runs, but a rebuild would refresh its script/Info.plist (e.g. to run
     /// native instead of under Rosetta). Separate from `launcherDiagnostic` so an
-    /// otherwise-ok launcher is reported as both "ok" and "stale".
+    /// otherwise-ok launcher is reported as both "ok" and "stale". A launcher that is
+    /// *unrunnable* is left to `signatureDiagnostics`, so "rebuild is optional" wording
+    /// never lands on a launcher that cannot start.
     private func staleLauncherDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        discovered.filter(\.isStale).map { launcher in
+        discovered.filter { $0.isStale && !$0.isUnrunnable }.map { launcher in
             Diagnostic(
                 severity: .warning,
                 title: "\(launcher.displayName): built by an older launcher format — rebuild to update",

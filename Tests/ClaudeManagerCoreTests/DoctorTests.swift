@@ -53,7 +53,10 @@ func buildDoctorLauncher(
         bundleID: Profile.defaultBundleID(for: name),
         appPath: scene.installDir.appendingPathComponent("\(display).app").path
     )
-    try LauncherBundle().build(
+    // Signing is stubbed here: these suites assert on Doctor's *other* checks, and the
+    // real signer/verifier pair is exercised in `LauncherSigningTests` instead — one
+    // subprocess per launcher across every Doctor test is a cost CI shouldn't pay.
+    try LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)).build(
         profile: profile,
         realBinaryPath: realBinaryPath ?? scene.real.binaryURL.path,
         icnsData: Data("i".utf8)
@@ -69,6 +72,11 @@ func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .d
             defaultAccountUserDataPath: scene.defaultAccountPath,
             shipItStatePath: scene.shipItStatePath
         ),
+        bundle: LauncherBundle(runner: runner),
+        // Stubbed verifier, matching the stubbed signer in `buildDoctorLauncher`:
+        // `idleStub` reports success, so these bundles read as validly signed. Real
+        // signing and real verification are covered by `LauncherSigningTests`.
+        codeSigner: CodeSigner(runner: runner),
         processProbe: ProcessProbe(runner: runner),
         // Hermetic MDM state: point at an absent path so tests never depend on the
         // host machine's real managed-preferences.
@@ -104,6 +112,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
+            codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
         #expect(diags.contains { $0.severity == .error && $0.title.contains("Real Claude.app is missing") })
@@ -122,6 +132,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
+            codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
         ).run()
         #expect(diags.contains { $0.severity == .error && $0.title.contains("no executable") })
@@ -196,6 +208,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
+            codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         ).run()
@@ -220,6 +234,8 @@ struct DoctorTests {
                 defaultAccountUserDataPath: scene.defaultAccountPath,
                 shipItStatePath: scene.shipItStatePath
             ),
+            bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
+            codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
         ).run()

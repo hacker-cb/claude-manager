@@ -48,16 +48,6 @@ public enum StopOutcome: Sendable, Equatable {
     case stillRunning(pid: Int32)
 }
 
-/// Outcome of `rebuildAll`: which launchers were regenerated, which were skipped
-/// because they were running (a live bundle can't be rewritten), and which failed
-/// (e.g. an icon-pipeline error, or a bundle removed mid-batch) — a single bad
-/// launcher never aborts the rest.
-public struct RebuildAllResult: Sendable {
-    public let rebuilt: [Profile]
-    public let skippedRunning: [Profile]
-    public let failed: [Profile]
-}
-
 /// The façade the app talks to: scan, add, remove, open, stop, edit, rebuild
 /// launchers, and run diagnostics. Composed of small injectable services so the whole
 /// thing is testable against temp directories and a mock `CommandRunner`.
@@ -68,6 +58,7 @@ public struct ProfileStore {
     let runner: CommandRunner
     let fileManager: FileManager
     let bundle: LauncherBundle
+    let codeSigner: CodeSigner
     let processProbe: ProcessProbe
     let iconCache: IconCache
     let iconPipeline: IconPipeline
@@ -85,7 +76,8 @@ public struct ProfileStore {
         self.runner = runner
         self.fileManager = fileManager
         self.signalSender = signalSender
-        bundle = LauncherBundle(fileManager: fileManager)
+        bundle = LauncherBundle(fileManager: fileManager, runner: runner)
+        codeSigner = CodeSigner(runner: runner)
         processProbe = ProcessProbe(runner: runner)
         iconCache = IconCache(runner: runner, fileManager: fileManager)
         iconPipeline = IconPipeline(packer: IcnsPacker(runner: runner, fileManager: fileManager))
@@ -233,15 +225,27 @@ public struct ProfileStore {
         try ensureInstallDirectoryWritable()
 
         let reused = directoryHasContents(profile.profilePath)
+        let profileDirExisted = fileManager.fileExists(atPath: profile.profilePath)
         try fileManager.createDirectory(at: profile.profileURL, withIntermediateDirectories: true)
 
-        let icns = try iconPipeline.makeBadgeICNS(
-            realClaude: realClaude,
-            label: profile.label,
-            color: profile.color,
-            style: configuration.badgeStyle
-        )
-        try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+        do {
+            let icns = try iconPipeline.makeBadgeICNS(
+                realClaude: realClaude,
+                label: profile.label,
+                color: profile.color,
+                style: configuration.badgeStyle
+            )
+            try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+        } catch {
+            // A failed add must leave nothing behind: without this the profile dir we
+            // just created outlives the failure and Doctor reports it as an orphan the
+            // user never made. Only ever removes a dir this call created and left
+            // empty — never pre-existing account data.
+            if !profileDirExisted, !directoryHasContents(profile.profilePath) {
+                try? fileManager.removeItem(at: profile.profileURL)
+            }
+            throw error
+        }
 
         // Skip the screen-flashing Dock restart for a brand-new bundle (nothing
         // cached for its path); restart on a forced rebuild or a trashed twin.
@@ -374,68 +378,6 @@ public struct ProfileStore {
         }
     }
 
-    /// Rebuild one launcher end-to-end from the current wrapper format — its bash
-    /// script (freshly stamped with the real-binary path and `currentWrapperVersion`),
-    /// its Info.plist marker, and its badge icon (rendered with the current style).
-    /// This is how a stale launcher is brought up to date and how the user forces a
-    /// fresh regenerate. Refuses while the profile is running: rewriting the bundle
-    /// under a live instance is unsafe (the same reason `update` refuses).
-    public func rebuild(_ profile: Profile, restartDock: Bool = true) throws {
-        try ensureRealBinaryPresent()
-        guard fileManager.fileExists(atPath: profile.appPath) else {
-            throw ClaudeManagerError.launcherNotFound(name: profile.name)
-        }
-        if let pid = runningPID(for: profile) {
-            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
-        }
-        let icns = try iconPipeline.makeBadgeICNS(
-            realClaude: realClaude,
-            label: profile.label,
-            color: profile.color,
-            style: configuration.badgeStyle
-        )
-        try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
-        iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
-        // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
-        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
-        try? reconcileManagedConfig(for: profile)
-    }
-
-    /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
-    /// batch. A running launcher is *skipped*, not failed — a live bundle can't be
-    /// rewritten — and returned so the caller can report it.
-    @discardableResult
-    public func rebuildAll() throws -> RebuildAllResult {
-        try ensureRealBinaryPresent()
-        var rebuilt: [Profile] = []
-        var skippedRunning: [Profile] = []
-        var failed: [Profile] = []
-        for managed in list() {
-            if managed.isRunning {
-                skippedRunning.append(managed.profile)
-                continue
-            }
-            do {
-                try rebuild(managed.profile, restartDock: false)
-                rebuilt.append(managed.profile)
-            } catch ClaudeManagerError.profileRunning {
-                // Started between the scan and the rebuild — skip it too.
-                skippedRunning.append(managed.profile)
-            } catch {
-                // A single launcher's failure (icon pipeline, bundle vanished
-                // mid-batch, …) must not abort the rest — record it and continue.
-                failed.append(managed.profile)
-            }
-        }
-        if !rebuilt.isEmpty { iconCache.restartDock() }
-        // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
-        // (harmless while live — read at next launch). No extra scan: reuse the sets.
-        for profile in skippedRunning {
-            try? reconcileManagedConfig(for: profile)
-        }
-        return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
-    }
-
     // MARK: - Helpers
 
     /// Fail fast if the real Claude binary this store wraps is absent. Every mutation
@@ -443,7 +385,8 @@ public struct ProfileStore {
     /// `rebuildAll`) shares this precondition. `open` is deliberately *not* guarded:
     /// it launches a launcher whose real-binary path was baked in at build time —
     /// surfacing a stale one of those is `Doctor`'s job, not this check's.
-    private func ensureRealBinaryPresent() throws {
+    /// `internal`, not `private`: the rebuild paths live in `ProfileStore+Rebuild`.
+    func ensureRealBinaryPresent() throws {
         guard realClaude.binaryExists(fileManager: fileManager) else {
             throw ClaudeManagerError.realClaudeNotFound
         }

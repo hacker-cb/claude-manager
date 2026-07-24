@@ -89,7 +89,7 @@ struct ProfileStoreMutationEdgeTests {
         }
         // A launcher whose profile dir was never created (e.g. never launched).
         let profile = env.store.draft(name: env.name("ghost"))
-        try LauncherBundle().build(
+        try LauncherBundle(runner: stubbedSigningRunner()).build(
             profile: profile,
             realBinaryPath: env.real.binaryURL.path,
             icnsData: Data("i".utf8)
