@@ -55,9 +55,25 @@ public struct LauncherBundle {
     // MARK: - Build
 
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
-    /// at the same path — callers enforce the force/running policy first.
-    public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws {
+    /// at the same path — callers enforce the force/running policy first. Returns whether
+    /// the badge icon actually changed vs. what was installed at this path, so a caller
+    /// can skip the screen-flashing Dock refresh when it didn't.
+    @discardableResult
+    public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws -> Bool {
         let appURL = profile.appURL
+
+        // Whether the badge icon changes vs. what's already installed here. A rebuild that
+        // leaves the icon byte-identical (a wrapper-format bump, a script fix) needs no
+        // Dock refresh at all; only a real icon change does. A brand-new path has no prior
+        // icon and counts as changed — callers pair this with "was a bundle already here"
+        // to decide whether a pinned tile could be stale. Compared against the freshly
+        // rendered `icnsData`, so a non-deterministic renderer degrades gracefully: the
+        // worst case is a redundant refresh hint, never a spurious silent flash.
+        let previousIcon = try? Data(
+            contentsOf: appURL.appendingPathComponent("Contents/Resources/Badge.icns")
+        )
+        let iconChanged = previousIcon != icnsData
+
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
 
@@ -126,6 +142,7 @@ public struct LauncherBundle {
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
+        return iconChanged
     }
 
     func writeInfoPlist(at url: URL, profile: Profile, marker: LauncherMarker) throws {

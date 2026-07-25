@@ -34,7 +34,7 @@ struct ProfileStoreManagedConfigTests {
         try fm.removeItem(at: tier(profile))
         #expect(!probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
 
-        try env.store.rebuild(profile, restartDock: false)
+        try env.store.rebuild(profile)
         #expect(probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
     }
 

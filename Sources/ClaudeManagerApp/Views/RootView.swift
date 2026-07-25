@@ -101,12 +101,37 @@ struct RootView: View {
             if let staged = model.stagedUpdate {
                 stagedUpdateBanner(staged)
             }
+            if model.dockRefreshPending {
+                dockRefreshBanner
+            }
         }
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(key: BannerHeightKey.self, value: proxy.size.height)
             }
         )
+    }
+
+    /// Shown after a rebuild/edit changed a launcher's icon. A pinned Dock tile keeps the
+    /// old icon until the launcher is next opened; the button forces it now at the cost of
+    /// one screen flash (restarting the Dock is the only reliable way — there is no
+    /// documented per-tile refresh). Dismiss leaves the tiles to self-heal on next open.
+    private var dockRefreshBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(.blue)
+            Text("Launcher icons updated — their Dock tiles refresh the next time you open them.")
+                .font(.callout)
+            Spacer()
+            Button("Refresh Dock now") { Task { await model.refreshDock() } }
+                .help("Restarts the Dock so pinned icons update now — the screen briefly flashes")
+            Button { model.dismissDockRefresh() } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss — the icons still update the next time each launcher opens")
+        }
+        .padding(8)
+        .background(.blue.opacity(0.12))
     }
 
     private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {

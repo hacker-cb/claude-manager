@@ -15,15 +15,36 @@ struct ProfileStoreMutationEdgeTests {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
-        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
+        _ = try env.store.add(AddProfileRequest(name: env.name("work"), color: .named("blue")))
         // A second add without force is refused; with force it rebuilds in place.
         #expect(throws: ClaudeManagerError.self) {
             try env.store.add(AddProfileRequest(name: env.name("work")))
         }
-        let rebuilt = try env.store.add(AddProfileRequest(name: env.name("work"), force: true))
+        // Force-rebuild with a new color: the badge icon changes at a path whose Dock tile
+        // could be cached, so a refresh is *pending* — but it is opt-in, never a silent
+        // screen-flashing restart.
+        let rebuilt = try env.store.add(AddProfileRequest(
+            name: env.name("work"),
+            color: .named("red"),
+            force: true
+        ))
         #expect(fm.fileExists(atPath: rebuilt.profile.appPath))
-        // A forced rebuild restarts the Dock (its icon may be cached); a fresh add didn't.
-        #expect(!env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
+        #expect(rebuilt.dockRefreshPending == true)
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
+    }
+
+    @Test
+    func editingTheBadgeColorReportsPendingDockRefreshWithoutFlashing() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store
+            .add(AddProfileRequest(name: env.name("work"), color: .named("blue"))).profile
+        var edited = original
+        edited.color = .named("red") // changes the rendered badge in place
+        let result = try env.store.update(original: original, to: edited)
+        #expect(result.dockRefreshPending == true)
+        // Offered as opt-in, never a silent screen-flashing restart.
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
     @Test

@@ -34,6 +34,19 @@ public struct AddResult: Sendable {
     public let profile: Profile
     /// True when the profile dir already held data (likely still signed in).
     public let reusedProfileData: Bool
+    /// True when this write changed the launcher's icon at a path whose Dock tile could
+    /// already be cached (a forced rebuild, or a trashed same-named twin) — so a pinned
+    /// tile may show the old icon until the launcher is next opened, and the app may offer
+    /// an opt-in "Refresh Dock now". False for a brand-new bundle (nothing cached at a
+    /// fresh path) or when the icon is byte-identical.
+    public let dockRefreshPending: Bool
+}
+
+public struct UpdateResult: Sendable {
+    public let profile: Profile
+    /// See `AddResult.dockRefreshPending`: true when the edit changed the icon at an
+    /// in-place path (or a rename onto a trashed twin) whose Dock tile could be stale.
+    public let dockRefreshPending: Bool
 }
 
 public struct RemovalResult: Sendable {
@@ -228,6 +241,7 @@ public struct ProfileStore {
         let profileDirExisted = fileManager.fileExists(atPath: profile.profilePath)
         try fileManager.createDirectory(at: profile.profileURL, withIntermediateDirectories: true)
 
+        let iconChanged: Bool
         do {
             let icns = try iconPipeline.makeBadgeICNS(
                 realClaude: realClaude,
@@ -235,7 +249,9 @@ public struct ProfileStore {
                 color: profile.color,
                 style: configuration.badgeStyle
             )
-            try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+            iconChanged = try bundle.build(
+                profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
+            )
         } catch {
             // A failed add must leave nothing behind: without this the profile dir we
             // just created outlives the failure and Doctor reports it as an orphan the
@@ -247,21 +263,26 @@ public struct ProfileStore {
             throw error
         }
 
-        // Skip the screen-flashing Dock restart for a brand-new bundle (nothing
-        // cached for its path); restart on a forced rebuild or a trashed twin.
-        let restartDock = request.force || bundle.hasTrashedTwin(appURL: profile.appURL)
-        iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+        // Register so Finder/LaunchServices pick up the icon — never flash the screen. A
+        // pinned tile can only be stale when a bundle was already here (forced rebuild or a
+        // trashed twin) *and* the icon changed; that tile self-heals on next open, or via
+        // the app's opt-in "Refresh Dock now". A brand-new path has nothing cached.
+        iconCache.register(appURL: profile.appURL)
+        let dockRefreshPending =
+            iconChanged && (request.force || bundle.hasTrashedTwin(appURL: profile.appURL))
 
         // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
         // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
         try? reconcileManagedConfig(for: profile)
 
-        return AddResult(profile: profile, reusedProfileData: reused)
+        return AddResult(
+            profile: profile, reusedProfileData: reused, dockRefreshPending: dockRefreshPending
+        )
     }
 
     /// Apply edits by rebuilding the launcher, trashing the old bundle on rename.
     @discardableResult
-    public func update(original: Profile, to updated: Profile) throws -> Profile {
+    public func update(original: Profile, to updated: Profile) throws -> UpdateResult {
         try ensureRealBinaryPresent()
         if let pid = runningPID(for: original) {
             throw ClaudeManagerError.profileRunning(name: original.name, pid: pid)
@@ -296,19 +317,24 @@ public struct ProfileStore {
             color: updated.color,
             style: configuration.badgeStyle
         )
-        try bundle.build(profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
+        let iconChanged = try bundle.build(
+            profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
+        )
 
         if renaming, fileManager.fileExists(atPath: original.appPath) {
             _ = try? bundle.moveToTrash(appURL: original.appURL)
         }
 
-        // In-place rebuild has a stale cached icon → restart the Dock; a fresh
-        // path only needs a restart if a same-named twin is in the Trash.
-        let restartDock = !renaming || bundle.hasTrashedTwin(appURL: updated.appURL)
-        iconCache.refresh(appURL: updated.appURL, restartDock: restartDock)
+        // Register so the new icon is picked up on next fetch/open — never flash the
+        // screen. A pinned tile can be stale only for an in-place edit (or a rename onto a
+        // trashed twin) that changed the icon; it self-heals on next open, or via the
+        // app's opt-in refresh. A fresh rename path has nothing cached.
+        iconCache.register(appURL: updated.appURL)
+        let dockRefreshPending =
+            iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
         // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
         try? reconcileManagedConfig(for: updated)
-        return updated
+        return UpdateResult(profile: updated, dockRefreshPending: dockRefreshPending)
     }
 
     /// Move the launcher to Trash (and optionally delete the profile data).
