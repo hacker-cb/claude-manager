@@ -243,7 +243,7 @@ public struct UsageService: Sendable {
         guard !clearsTerminal(stored, context.fingerprint, context.interactive) else { return nil }
         switch stored.backoffReason {
         case .terminal: return .loginNeeded
-        case .rateLimited: return .rateLimited(until: until)
+        case .rateLimited: return .rateLimited
         case .offline, .none: return context.latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
     }
@@ -265,7 +265,7 @@ public struct UsageService: Sendable {
         let (backoffUntil, reason) = Self.backoff(for: error, after: stored, now: now)
         let state: UsageState = switch error {
         case .unauthorized: .loginNeeded
-        case .rateLimited: .rateLimited(until: backoffUntil)
+        case .rateLimited: .rateLimited
         case .transport: .offline
         case .httpError, .malformedBody: latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
