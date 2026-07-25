@@ -5,12 +5,15 @@ import Security
 /// background-path outcome when the app isn't yet in the item's ACL (or the keychain is
 /// locked) — the caller serves stale and defers the real prompt to a foreground gesture.
 public enum KeychainError: Error, Equatable, Sendable {
-    /// No such item, or access denied outright.
+    /// No such generic-password item under the service — genuinely absent (`errSecItemNotFound`).
+    /// Distinct from an access/auth failure: the UI tells the user to sign in for this one, so an
+    /// item that *exists* but couldn't be read must not land here.
     case notFound
     /// A prompt would be required but UI was suppressed (`kSecUseAuthenticationUISkip`) —
     /// or the keychain is locked. Non-fatal: retry interactively on a user gesture.
     case interactionNotAllowed
-    /// Any other `OSStatus` from `SecItemCopyMatching`.
+    /// Any other `OSStatus` from `SecItemCopyMatching`, including an auth failure
+    /// (`errSecAuthFailed`) — an existing item we couldn't read, which is *not* a missing item.
     case unexpected(OSStatus)
 }
 
