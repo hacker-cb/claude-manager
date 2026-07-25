@@ -370,7 +370,7 @@ struct ProfileStoreTests {
     }
 
     @Test
-    func rebuildAllRestartsDockOnce() throws {
+    func rebuildAllDefersDockRefreshAndNeverFlashes() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         _ = try env.store.add(AddProfileRequest(name: env.name("work")))
@@ -379,8 +379,10 @@ struct ProfileStoreTests {
         #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
         #expect(result.skippedRunning.isEmpty)
         #expect(result.failed.isEmpty)
-        // Exactly one Dock restart for the whole batch (per-launcher rebuilds defer it).
-        #expect(env.runner.invocations(of: CoreConstants.killallPath).count == 1)
+        // Rebuilding unchanged launchers regenerates byte-identical badges, so nothing is
+        // pending and the screen-flashing Dock restart is never issued (opt-in only).
+        #expect(result.dockRefreshPending == false)
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 }
 

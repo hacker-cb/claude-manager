@@ -340,11 +340,21 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
   regenerate the whole bundle (script + Info.plist + icon) from the current format; a
   *running* launcher is skipped, not failed (a live bundle can't be rewritten). The
   marker reads an absent version as `1`, so pre-versioning launchers are stale.
-- **Icon cache is sticky.** After writing a bundle's `.icns`, run `lsregister -f`,
-  `touch`, and `killall Dock`. `killall Dock` flashes the screen, so it is gated
-  (`IconCache.refresh(restartDock:)`): a brand-new bundle skips it (nothing cached for
-  that path); a forced rebuild, a same-named twin in Trash, or a launcher rebuild
-  restarts the Dock (the batch rebuild does it once).
+- **Icon cache is sticky, but a rebuild never flashes the screen.** After writing a
+  bundle's `.icns`, `IconCache.register` runs `lsregister -f` + `touch` (a mtime bump is
+  LaunchServices' change signal — the same thing Sparkle-style updaters do) so the new
+  icon is picked up on the next fetch and, decisively, the *next time the launcher is
+  opened*: the Dock caches an app's tile at launch, so a pinned launcher self-heals when
+  the user next runs it (which they do right after rebuilding). What `register` cannot do
+  is repaint an *already-drawn, pinned, not-running* tile — there is no documented
+  per-bundle refresh; only `killall Dock` forces it, and that flashes the whole screen
+  (the Dock repaints the wallpaper as it relaunches). So the Dock restart is **never**
+  issued silently by a rebuild. Instead every write reports whether the icon actually
+  changed (`LauncherBundle.build` byte-compares the new `.icns` against the installed one;
+  `add`/`update`/`rebuild`/`rebuildAll` surface a `dockRefreshPending` flag) and the app
+  offers a single opt-in **Refresh Dock now** banner — which is the only path that calls
+  `IconCache.restartDock`. A rebuild that leaves the icon byte-identical (a wrapper-format
+  bump, the common case) sets nothing and shows no banner.
 - **Process detection.** Main Claude processes are `ps` lines at
   `.../Contents/MacOS/<exe>` with **ppid == 1** (launchd). The ppid filter excludes
   Electron's renderer/utility/MCP children (forked from the main). Paths may contain
@@ -378,7 +388,7 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
   launcher is never observable unsigned, and a signing failure leaves the previous
   working bundle in place. (The signature survives the swap because it lives in
   `Contents/_CodeSignature/`, ordinary files that move with the directory.)
-  `IconCache.refresh` is safe — `lsregister -f` and `touch` change mtime, not content.
+  `IconCache.register` is safe — `lsregister -f` and `touch` change mtime, not content.
   Note that `spctl -a -t exec` still reports `rejected` for an ad-hoc signed bundle: it
   assesses *notarization*, not execution policy, so it is not a useful success signal
   here. `codesign --verify --strict` (or `SecStaticCodeCheckValidity`) plus an actual
@@ -401,7 +411,7 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
 ## Sandboxing &amp; distribution
 
 The app is **not sandboxed** — it writes launcher bundles next to Claude.app, runs
-`lsregister` / `iconutil`, and restarts the Dock. It ships **Developer ID +
+`lsregister` / `iconutil`, and can restart the Dock (the opt-in icon refresh). It ships **Developer ID +
 notarized**, never the App Store. Hardened Runtime is on; entitlements are minimal
 (no sandbox, apple-events for activation). See [RELEASING.md](RELEASING.md) for the
 signing, notarization, and auto-update pipeline.

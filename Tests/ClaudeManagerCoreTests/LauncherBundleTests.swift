@@ -60,6 +60,21 @@ struct LauncherBundleTests {
     }
 
     @Test
+    func buildReportsWhetherIconChanged() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
+        let profile = makeProfile(installDir: dir)
+        // First build: no prior icon at this path → reported as changed.
+        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)))
+        // Same bytes again → unchanged (a wrapper-format bump / script fix leaves the icon
+        // byte-identical, so no Dock refresh is needed).
+        #expect(try !bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)))
+        // Different bytes → changed.
+        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("B".utf8)))
+    }
+
+    @Test
     func writesInfoPlistWithMarkerAndNoIconName() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }

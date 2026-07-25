@@ -202,7 +202,7 @@ struct LauncherSigningTests {
         var edited = profile
         edited.displayName = env.display("work") + " Renamed"
         edited.color = .named("red")
-        let updated = try env.store.update(original: profile, to: edited)
+        let updated = try env.store.update(original: profile, to: edited).profile
 
         #expect(SignatureProbe.isValidAdHoc(URL(fileURLWithPath: updated.appPath)))
     }
