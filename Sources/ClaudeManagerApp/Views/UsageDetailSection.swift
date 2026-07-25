@@ -119,7 +119,12 @@ struct UsageDetailSection: View {
     private var noSourceHeaderNote: String {
         switch failure {
         case .noTokenCache: "not signed in"
-        case .keychainUnavailable: "authorize keychain access"
+        case let .keychainUnavailable(error):
+            switch keychainNoteKind(error) {
+            case .authorize: "authorize keychain access"
+            case .missing: "keychain item missing"
+            case .error: "keychain error"
+            }
         default: "source unavailable"
         }
     }
@@ -140,7 +145,12 @@ struct UsageDetailSection: View {
         }
         switch failure {
         case .noTokenCache: return "This account isn't signed in on this profile."
-        case .keychainUnavailable: return "Refresh to authorize keychain access."
+        case let .keychainUnavailable(error):
+            switch keychainNoteKind(error) {
+            case .authorize: return "Refresh to authorize keychain access."
+            case .missing: return keychainNotFoundNote
+            case .error: return "Usage source unavailable — a keychain error blocked the token."
+            }
         case .some: return "Usage unavailable for this account."
         case nil: return nil
         }
@@ -151,11 +161,40 @@ struct UsageDetailSection: View {
     private var noSourceEmptyNote: String {
         switch failure {
         case .noTokenCache: "This account isn't signed in on this profile."
-        case .keychainUnavailable:
-            "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+        case let .keychainUnavailable(error):
+            switch keychainNoteKind(error) {
+            case .authorize:
+                "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+            case .missing: keychainNotFoundNote
+            case .error: "Usage source unavailable — a keychain error blocked the token."
+            }
         default: "Usage source unavailable for this account."
         }
     }
+
+    /// A missing keychain item can't be authorized — Refresh won't prompt — so point at the real
+    /// cause: Claude Desktop's safeStorage item isn't present for this profile.
+    private var keychainNotFoundNote: String {
+        "Claude's keychain item wasn't found — open Claude and sign in on this profile, then Refresh."
+    }
+
+    /// The user-facing category of a keychain failure, classified in one place so the three notes
+    /// above can't drift on which `KeychainError` means what — only the copy differs by context.
+    private func keychainNoteKind(_ error: KeychainError) -> KeychainNoteKind {
+        switch error {
+        case .interactionNotAllowed: .authorize
+        case .notFound: .missing
+        case .unexpected: .error
+        }
+    }
+}
+
+/// How a keychain read failure reads to the user: a fixable access refusal (`authorize`), a missing
+/// item (`missing`), or a genuine malfunction (`error`). One classification, three context copies.
+private enum KeychainNoteKind {
+    case authorize
+    case missing
+    case error
 }
 
 /// One limit as a titled bar + `X% used · resets …`.
