@@ -33,35 +33,40 @@ public actor SafeStorageKeyStore {
     /// normally share one password, the first read decrypts and the common machine prompts exactly
     /// once. Sorted for a stable which-prompts-first order across runs.
     ///
-    /// Throws `KeychainError.notFound` when no item exists under the service at all, the last
-    /// `KeychainError` when items exist but none could be read (→ keychain-unavailable), or
-    /// `SafeStorageError.decryptFailed` when a secret *was* read but no key decrypted (→ a wrong /
-    /// rotated key, or this binding's blob is corrupt).
+    /// Throws `KeychainError.notFound` when no item exists under the service at all; a
+    /// `KeychainError` (preferring the actionable `.interactionNotAllowed`) when items exist but
+    /// **none** could be read; or `SafeStorageError.decryptFailed` when at least one secret *was*
+    /// read yet no derived key decrypted. Reading a secret proves the keychain is available, so
+    /// that last case must not surface a sibling account's `.interactionNotAllowed` — authorizing
+    /// can't fix a key we already hold that simply doesn't decrypt this blob (rotated key / corrupt
+    /// cache); it's a login-needed/decrypt failure, and mislabelling it sends the user chasing a
+    /// prompt that changes nothing.
     public func key(interactive: Bool = false, accepts: @Sendable (Data) -> Bool) throws -> Data {
         if let cachedKey { return cachedKey }
         let service = CoreConstants.safeStorageKeychainService
         let accounts = try keychain.accounts(service: service).sorted()
         guard !accounts.isEmpty else { throw KeychainError.notFound }
         var keychainError: KeychainError?
+        var readAnySecret = false
         for account in accounts {
-            let derived: Data
+            let password: Data
             do {
-                let password = try keychain.secret(
-                    service: service,
-                    account: account,
-                    interactive: interactive
-                )
-                guard let key = SafeStorageDecryptor.deriveKey(password: password) else { continue }
-                derived = key
+                password = try keychain.secret(service: service, account: account, interactive: interactive)
             } catch let error as KeychainError {
-                keychainError = error
+                // Record a read failure, preferring the actionable `.interactionNotAllowed` over a
+                // later `.notFound`. Only consulted below if *no* account could be read at all.
+                if keychainError != .interactionNotAllowed { keychainError = error }
                 continue
             }
+            readAnySecret = true
+            guard let derived = SafeStorageDecryptor.deriveKey(password: password) else { continue }
             if accepts(derived) {
                 cachedKey = derived
                 return derived
             }
         }
+        // A key we could read but none decrypted → decrypt failure, not keychain-unavailable.
+        if readAnySecret { throw SafeStorageError.decryptFailed }
         if let keychainError { throw keychainError }
         throw SafeStorageError.decryptFailed
     }

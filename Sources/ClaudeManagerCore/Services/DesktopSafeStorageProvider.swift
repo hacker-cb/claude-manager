@@ -42,8 +42,17 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         let key: Data
         do {
             key = try await keyStore.key(interactive: interactive) { [decryptor] candidate in
-                if case .success = decryptor.decrypt(v10Blob: blob, key: candidate) { return true }
-                return false
+                // Accept a candidate only if it decrypts the blob to a JSON *object* — the token
+                // cache's shape — not merely on PKCS7 success. A wrong key (a stale account tried
+                // before the live one) unpads cleanly ~1/256 of the time on garbage bytes; keying
+                // acceptance on decrypt-success alone would cache that garbage key and never reach
+                // the live account, breaking every binding fleet-wide. Requiring valid JSON makes a
+                // false accept astronomically unlikely (garbage that both unpads and parses as an
+                // object).
+                guard case let .success(plaintext) = decryptor.decrypt(v10Blob: blob, key: candidate),
+                      (try? JSONSerialization.jsonObject(with: plaintext)) is [String: Any]
+                else { return false }
+                return true
             }
         } catch let error as KeychainError {
             return .failure(.keychainUnavailable(error))

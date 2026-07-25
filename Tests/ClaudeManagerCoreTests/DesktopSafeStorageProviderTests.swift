@@ -223,6 +223,65 @@ struct DesktopSafeStorageProviderTests {
     }
 
     @Test
+    func interactionNotAllowedIsNotMaskedByALaterNotFound() async throws {
+        try await withTempDir { dir in
+            // "Claude" (tried first) is present but not yet authorized → .interactionNotAllowed;
+            // "Claude Key" (tried later) is gone → .notFound. The fixable state must win, so the UI
+            // offers "authorize keychain access" (a Refresh really prompts) — not "item missing".
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .failure(.interactionNotAllowed),
+                "Claude Key": .failure(.notFound)
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.keychainUnavailable(.interactionNotAllowed)))
+        }
+    }
+
+    @Test
+    func readableAccountThatDoesNotDecryptIsDecryptFailedNotKeychainAuth() async throws {
+        try await withTempDir { dir in
+            // "Claude" (first) is present but unauthorized → .interactionNotAllowed; "Claude Key"
+            // reads fine but its key doesn't decrypt this blob (rotated cache for this binding).
+            // The keychain handed us a usable key, so the failure is a decrypt failure — surfacing
+            // the sibling's .interactionNotAllowed would tell the user to authorize a key we hold.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .failure(.interactionNotAllowed),
+                "Claude Key": .success(Data("wrong-readable-password".utf8))
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            switch result {
+            case .failure(.decryptFailed): break
+            default: Issue.record("expected decryptFailed, got \(result)")
+            }
+        }
+    }
+
+    @Test
+    func providerSkipsAStaleAccountAndUsesTheOneThatDecrypts() async throws {
+        try await withTempDir { dir in
+            // "Claude" (sorted first, tried first) holds a stale password whose derived key does not
+            // decrypt this blob to token-cache JSON; "Claude Key" holds the live one. The provider's
+            // probe must reject the stale key and fall through — not cache it on a chance PKCS7 unpad.
+            let cache: [String: Any] = [inferenceCompositeKey(): [
+                "token": "T",
+                "expiresAt": 1_785_320_075_857
+            ]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .success(Data("stale-password".utf8)),
+                "Claude Key": .success(password)
+            ])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
     func keyStorePicksTheAccountWhoseKeyDecrypts() async throws {
         // "Claude" holds a stale password, "Claude Key" the live one. The store must keep the key
         // the caller's probe accepts — the one that actually decrypts — not the first that reads.
