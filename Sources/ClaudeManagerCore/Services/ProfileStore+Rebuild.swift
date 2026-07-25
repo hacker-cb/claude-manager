@@ -113,11 +113,4 @@ public extension ProfileStore {
             dockRefreshPending: dockRefreshPending
         )
     }
-
-    /// Restart the Dock so already-pinned launcher tiles repaint with a just-changed icon.
-    /// This is the opt-in "Refresh Dock now" the app offers after a rebuild changed an icon
-    /// — it flashes the screen, so it is never issued silently by a rebuild.
-    func refreshDock() {
-        iconCache.restartDock()
-    }
 }
