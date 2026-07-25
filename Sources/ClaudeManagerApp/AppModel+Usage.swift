@@ -113,11 +113,13 @@ extension AppModel {
 
     /// Called after every list refresh. Resolves usage **only when the launcher set changed** —
     /// a newly added launcher otherwise has neither usage nor a failure to show, and would sit
-    /// unexplained until the next tick (forever, under "Manually only"). An unchanged set does
-    /// nothing: usage is driven by its own interval, never by a list refresh, which also fires
-    /// automatically (launch, activation, after open/stop) and would both defeat "Manually only"
-    /// and raise the keychain prompt at launch. Non-interactive for that same reason — adding a
-    /// launcher must never pop an authorization dialog.
+    /// unexplained until the next poll tick. An unchanged set does nothing: usage is driven by its
+    /// own interval, never by a list refresh, which also fires automatically (launch, activation,
+    /// after open/stop) and would both defeat "Manually only" and raise the keychain prompt at
+    /// launch. Non-interactive for that same reason — adding a launcher must never pop an
+    /// authorization dialog. Under "Manually only" (`usagePollIntervalMinutes == 0`) this
+    /// deliberately short-circuits and fetches nothing: that mode is served by the pane's explicit
+    /// "Not checked yet — use Refresh" empty state plus a user-triggered refresh, not by this hook.
     func refreshUsageIfBindingsChanged() async {
         // The running set decides the cadence, and the sleeping poll task computed its interval
         // before that changed. Opening a profile would otherwise wait out the whole idle
