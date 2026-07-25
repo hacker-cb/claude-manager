@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Why a keychain read couldn't return a secret. `interactionNotAllowed` is the *expected*
@@ -40,12 +41,23 @@ public struct SecItemKeychainReader: KeychainReading {
     public init() {}
 
     public func accounts(service: String) throws -> [String] {
+        // Fail fast rather than prompt or hide. On a locked login keychain (SSH session, manual
+        // lock) the enumeration must not pop an unlock dialog mid-poll and — crucially under
+        // `kSecMatchLimitAll` — must not *silently omit* auth-required items (which the deprecated
+        // `kSecUseAuthenticationUISkip` does, leaving an empty set that reads as `.notFound`). An
+        // `LAContext` with `interactionNotAllowed` makes the whole call fail with
+        // `errSecInteractionNotAllowed` instead → `.interactionNotAllowed` (serve stale, retry
+        // interactively). This is the non-deprecated form of `kSecUseAuthenticationUIFail`.
+        let noninteractive = LAContext()
+        noninteractive.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
+            // Attributes only — never the data — so an unlocked keychain consults no item's ACL and
+            // doesn't prompt (verified against the real dual-account item).
             kSecReturnAttributes as String: true,
-            // Attributes only — never the data — so this stays prompt-free and lock-agnostic.
             kSecReturnData as String: false,
+            kSecUseAuthenticationContext as String: noninteractive,
             kSecMatchLimit as String: kSecMatchLimitAll
         ]
         var result: CFTypeRef?
