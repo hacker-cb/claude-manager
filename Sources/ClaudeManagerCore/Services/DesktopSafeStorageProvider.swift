@@ -18,6 +18,16 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         self.decryptor = decryptor
     }
 
+    /// Scratch state threaded through `SafeStorageKeyStore.key`'s `accepts` probe: the plaintext the
+    /// accepted candidate produced (so the caller decrypts the blob once, not twice) and the most
+    /// recent rejection reason (so a not-v10 / corrupt blob is reported precisely, not as a generic
+    /// wrong-key `decryptFailed`). `@unchecked Sendable` because the probe closure is `@Sendable`,
+    /// but it runs synchronously inside the actor before `key` returns — no concurrent access.
+    private final class ProbeResult: @unchecked Sendable {
+        var plaintext: Data?
+        var lastFailure: TokenProviderError = .decryptFailed(.decryptFailed)
+    }
+
     public func token(
         for binding: TokenBinding,
         interactive: Bool
@@ -34,27 +44,59 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.noTokenCache)
         }
 
+        // Resolve the safeStorage key by which keychain account's password actually decrypts this
+        // blob — the account name under the service varies by Claude Desktop version (`Claude` vs
+        // `Claude Key`), and a stale item can sit beside the live one, so the store enumerates them
+        // and this probe picks the live one. A cached key is returned as-is; only the first
+        // resolution runs the probe. The probe records the plaintext it produced (reused below so
+        // the blob is decrypted once, not twice) and, on rejection, the precise reason.
+        let probe = ProbeResult()
         let key: Data
         do {
-            key = try await keyStore.derivedKey(interactive: interactive)
+            key = try await keyStore.key(interactive: interactive) { [decryptor] candidate in
+                switch decryptor.decrypt(v10Blob: blob, key: candidate) {
+                case let .success(plaintext):
+                    // Accept only if it decrypts to a JSON *object* — the token cache's shape — not
+                    // merely on PKCS7 success. A wrong key (a stale account tried before the live
+                    // one) unpads cleanly ~1/256 of the time on garbage; accepting on decrypt alone
+                    // would cache that garbage key and never reach the live account. Requiring valid
+                    // JSON makes a false accept astronomically unlikely.
+                    guard (try? JSONSerialization.jsonObject(with: plaintext)) is [String: Any] else {
+                        probe.lastFailure = .malformedCache
+                        return false
+                    }
+                    probe.plaintext = plaintext
+                    return true
+                case let .failure(error):
+                    probe.lastFailure = .decryptFailed(error)
+                    return false
+                }
+            }
         } catch let error as KeychainError {
             return .failure(.keychainUnavailable(error))
-        } catch let error as SafeStorageError {
-            return .failure(.decryptFailed(error))
+        } catch is SafeStorageError {
+            // Every readable account's key failed the probe. Report the precise reason the probe
+            // last saw (e.g. `.notV10` when the blob scheme changed, or `.malformedCache`) rather
+            // than a blanket `.decryptFailed(.decryptFailed)`, so a blob-shape failure isn't misread
+            // as a rotated key and doesn't trip the fleet-wide self-heal.
+            return .failure(probe.lastFailure)
         } catch {
             return .failure(.malformedCache)
         }
 
-        // No side effects on failure here: the key store is shared across the whole fleet,
-        // so invalidating it because *one* binding's blob won't decrypt would drop a key that
-        // decrypts every other account fine (causing repeated keychain prompts). Rotated-key
-        // self-heal is handled fleet-wide by UsageService — invalidate once only when *every*
-        // binding fails to decrypt — where the whole-fleet view can tell rotation from a single
-        // corrupt blob.
+        // Reuse the plaintext the probe already produced on a fresh resolution; only the cached-key
+        // path (the probe didn't run this call) decrypts here. No side effects on failure: the
+        // shared fleet key must not be invalidated for one binding's corrupt blob — rotated-key
+        // self-heal is handled fleet-wide by UsageService (invalidate once only when *every* binding
+        // fails), where the whole-fleet view can tell rotation from a single corrupt blob.
         let plaintext: Data
-        switch decryptor.decrypt(v10Blob: blob, key: key) {
-        case let .success(data): plaintext = data
-        case let .failure(error): return .failure(.decryptFailed(error))
+        if let captured = probe.plaintext {
+            plaintext = captured
+        } else {
+            switch decryptor.decrypt(v10Blob: blob, key: key) {
+            case let .success(data): plaintext = data
+            case let .failure(error): return .failure(.decryptFailed(error))
+            }
         }
 
         guard let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {

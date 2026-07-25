@@ -5,11 +5,59 @@ import Testing
 struct DesktopSafeStorageProviderTests {
     // MARK: - Harness
 
-    /// Stub keychain: returns a fixed secret, or throws a chosen `KeychainError`.
+    /// Stub keychain: one account under the service, returning a fixed secret or a chosen
+    /// `KeychainError`. Enumeration always finds the account (the item exists); the read is what
+    /// succeeds or fails — mirroring a present item whose data ACL blocks a background read.
     private struct StubKeychain: KeychainReading {
         let result: Result<Data, KeychainError>
+        func accounts(service _: String) throws -> [String] {
+            ["Claude"]
+        }
+
         func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
             try result.get()
+        }
+    }
+
+    /// Stub keychain with a per-account result. `accounts` reports exactly the keys present (an
+    /// empty map → no item under the service), and a read of an absent account throws `.notFound`
+    /// — so a test can model a machine that stores the password under any one account name, both,
+    /// or a name no static list would contain.
+    private struct PerAccountKeychain: KeychainReading {
+        let byAccount: [String: Result<Data, KeychainError>]
+        func accounts(service _: String) throws -> [String] {
+            Array(byAccount.keys)
+        }
+
+        func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
+            try (byAccount[account] ?? .failure(.notFound)).get()
+        }
+    }
+
+    /// Answers differently by the `interactive` flag and records which accounts were read
+    /// interactively — modelling an item locked to a background read but readable once authorized,
+    /// so a test can assert how many Always-Allow dialogs a resolution would raise.
+    private final class InteractiveRecordingKeychain: KeychainReading, @unchecked Sendable {
+        typealias Answer = (background: Result<Data, KeychainError>, interactive: Result<Data, KeychainError>)
+        private let table: [String: Answer]
+        private let lock = NSLock()
+        private var interactiveReadsStore: [String] = []
+        init(_ table: [String: Answer]) {
+            self.table = table
+        }
+
+        var interactiveReads: [String] {
+            lock.withLock { interactiveReadsStore }
+        }
+
+        func accounts(service _: String) throws -> [String] {
+            Array(table.keys)
+        }
+
+        func secret(service _: String, account: String, interactive: Bool) throws -> Data {
+            if interactive { lock.withLock { interactiveReadsStore.append(account) } }
+            guard let entry = table[account] else { throw KeychainError.notFound }
+            return try (interactive ? entry.interactive : entry.background).get()
         }
     }
 
@@ -154,8 +202,175 @@ struct DesktopSafeStorageProviderTests {
         }
     }
 
-    // MARK: - Failure modes (all non-fatal)
+    @Test
+    func readsTheOnlyAccountUnderTheServiceEvenWhenItIsNotClaude() async throws {
+        try await withTempDir { dir in
+            // The token cache is encrypted under `password`, which lives under "Claude Key" — the
+            // async provider's account name — while "Claude" has no item at all. Enumerating the
+            // service finds "Claude Key" and uses it, instead of reporting a missing "Claude".
+            let cache: [String: Any] = [inferenceCompositeKey(): [
+                "token": "T",
+                "expiresAt": 1_785_320_075_857
+            ]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: ["Claude Key": .success(password)])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
 
+    @Test
+    func readsAnAccountNameNoStaticListWouldContain() async throws {
+        try await withTempDir { dir in
+            // A hypothetical future provider rename stores the password under an account name we
+            // never enumerated by hand. Because resolution keys off the stable *service* and not a
+            // fixed account set, it still finds and uses it — this is what "don't guess" buys.
+            let cache: [String: Any] = [inferenceCompositeKey(): ["token": "T"]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: ["Claude Nightly Key": .success(password)])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
+    func noItemUnderTheServiceIsKeychainNotFound() async throws {
+        try await withTempDir { dir in
+            // Enumeration returns nothing → the item is genuinely absent (Claude never signed in on
+            // this machine), which must read as `.notFound` — the state the UI tells the user to fix
+            // by signing in, not the "authorize keychain" prompt that can't help.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [:])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.keychainUnavailable(.notFound)))
+        }
+    }
+
+    @Test
+    func interactionNotAllowedIsNotMaskedByALaterNotFound() async throws {
+        try await withTempDir { dir in
+            // "Claude" (tried first) is present but not yet authorized → .interactionNotAllowed;
+            // "Claude Key" (tried later) is gone → .notFound. The fixable state must win, so the UI
+            // offers "authorize keychain access" (a Refresh really prompts) — not "item missing".
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .failure(.interactionNotAllowed),
+                "Claude Key": .failure(.notFound)
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.keychainUnavailable(.interactionNotAllowed)))
+        }
+    }
+
+    @Test
+    func readableAccountThatDoesNotDecryptIsDecryptFailedNotKeychainAuth() async throws {
+        try await withTempDir { dir in
+            // "Claude" (first) is present but unauthorized → .interactionNotAllowed; "Claude Key"
+            // reads fine but its key doesn't decrypt this blob (rotated cache for this binding).
+            // The keychain handed us a usable key, so the failure is a decrypt failure — surfacing
+            // the sibling's .interactionNotAllowed would tell the user to authorize a key we hold.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .failure(.interactionNotAllowed),
+                "Claude Key": .success(Data("wrong-readable-password".utf8))
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            // The point is it's a *decrypt-side* failure (the readable key just doesn't work), not
+            // `.keychainUnavailable(.interactionNotAllowed)` from the sibling — which reason of the
+            // two (wrong key vs decrypted-but-not-JSON) depends on the stub password is irrelevant.
+            switch result {
+            case .failure(.decryptFailed), .failure(.malformedCache): break
+            default: Issue.record("expected a decrypt-side failure, not keychain-auth, got \(result)")
+            }
+        }
+    }
+
+    @Test
+    func notV10BlobIsReportedAsNotV10NotWrongKey() async throws {
+        try await withTempDir { dir in
+            // A cache whose scheme isn't `v10` (a future format) must surface as
+            // `.decryptFailed(.notV10)`, NOT `.decryptFailed(.decryptFailed)` — the latter reads as
+            // wrong-key evidence to `UsageService.shouldSelfHeal` and needlessly invalidates the
+            // fleet key every poll.
+            let notV10 = Data("v20-some-future-scheme-payload-bytes".utf8)
+            let root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: notV10.base64EncodedString()]
+            let url = dir.appendingPathComponent("config.json")
+            try JSONSerialization.data(withJSONObject: root).write(to: url)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.decryptFailed(.notV10)))
+        }
+    }
+
+    @Test
+    func staleAuthorizedAccountDoesNotCauseASecondInteractivePrompt() async throws {
+        try await withTempDir { dir in
+            let cache: [String: Any] = [inferenceCompositeKey(): [
+                "token": "T",
+                "expiresAt": 1_785_320_075_857
+            ]]
+            let url = try writeConfig(cache: cache, into: dir)
+            // "Claude" (sorted first) is already authorized — readable in the prompt-free pass — but
+            // holds a stale password; "Claude Key" is locked to background reads and live once
+            // authorized. Resolution must reject the readable stale account without a prompt and
+            // prompt only for "Claude Key" — one dialog, not two.
+            let stale = Data("stale-password".utf8)
+            let keychain = InteractiveRecordingKeychain([
+                "Claude": (background: .success(stale), interactive: .success(stale)),
+                "Claude Key": (background: .failure(.interactionNotAllowed), interactive: .success(password))
+            ])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: true).get()
+            #expect(token.token == "T")
+            #expect(keychain.interactiveReads == ["Claude Key"])
+        }
+    }
+
+    @Test
+    func providerSkipsAStaleAccountAndUsesTheOneThatDecrypts() async throws {
+        try await withTempDir { dir in
+            // "Claude" (sorted first, tried first) holds a stale password whose derived key does not
+            // decrypt this blob to token-cache JSON; "Claude Key" holds the live one. The provider's
+            // probe must reject the stale key and fall through — not cache it on a chance PKCS7 unpad.
+            let cache: [String: Any] = [inferenceCompositeKey(): [
+                "token": "T",
+                "expiresAt": 1_785_320_075_857
+            ]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: [
+                "Claude": .success(Data("stale-password".utf8)),
+                "Claude Key": .success(password)
+            ])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
+    func keyStorePicksTheAccountWhoseKeyDecrypts() async throws {
+        // "Claude" holds a stale password, "Claude Key" the live one. The store must keep the key
+        // the caller's probe accepts — the one that actually decrypts — not the first that reads.
+        let live = try #require(SafeStorageDecryptor.deriveKey(password: password))
+        let keychain = PerAccountKeychain(byAccount: [
+            "Claude": .success(Data("stale-password".utf8)),
+            "Claude Key": .success(password)
+        ])
+        let store = SafeStorageKeyStore(keychain: keychain)
+        let resolved = try? await store.key(interactive: false) { $0 == live }
+        #expect(resolved == live)
+        #expect(await store.isUnlocked)
+    }
+}
+
+// MARK: - Failure modes (all non-fatal)
+
+extension DesktopSafeStorageProviderTests {
     @Test
     func missingConfigIsConfigUnreadable() async {
         let url = URL(fileURLWithPath: "/nonexistent/config.json")
@@ -223,6 +438,26 @@ struct DesktopSafeStorageProviderTests {
             let result = await provider(keychain: StubKeychain(result: .success(password)))
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
             #expect(result == .failure(.noUsableEntry))
+        }
+    }
+
+    @Test
+    func aFailedInteractiveReadIsNotMaskedAsInteractionNotAllowed() async throws {
+        try await withTempDir { dir in
+            // "Claude" needs a prompt on the background pass, then its interactive read fails outright
+            // (user-canceled / auth error → `.unexpected`). The stale "needs a prompt" recorded in
+            // pass 1 must not mask that: the real keychain error surfaces, not "authorize keychain
+            // access" for a prompt the user just dismissed.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = InteractiveRecordingKeychain([
+                "Claude": (
+                    background: .failure(.interactionNotAllowed),
+                    interactive: .failure(.unexpected(-128))
+                )
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: true)
+            #expect(result == .failure(.keychainUnavailable(.unexpected(-128))))
         }
     }
 }

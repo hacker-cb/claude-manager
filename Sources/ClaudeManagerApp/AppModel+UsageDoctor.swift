@@ -22,6 +22,15 @@ extension AppModel {
                     + "\u{201C}Always Allow\u{201D} when macOS asks."
             )
         }
+        if !anyFresh, let status = unexpectedKeychainStatus() {
+            return Diagnostic(
+                severity: .warning,
+                title: "A keychain error is blocking usage tracking",
+                detail: "macOS returned an unexpected keychain error (OSStatus \(status)) while "
+                    + "reading an account token. Quit and reopen Claude Manager; if it persists, open "
+                    + "Keychain Access and check the \u{201C}Claude Safe Storage\u{201D} item."
+            )
+        }
         if accounts.contains(where: { $0.state == .loginNeeded }) {
             return Diagnostic(
                 severity: .warning,
@@ -39,9 +48,23 @@ extension AppModel {
     /// a fix ("Always Allow") that cannot possibly help.
     private func keychainAccessBlocked(_: [AccountUsage]) -> Bool {
         usageBindingFailures.values.contains { failure in
-            if case .keychainUnavailable = failure { return true }
+            // Only an access *refusal* is fixable by authorizing. A missing item (`.notFound`) can't
+            // be — offering "Always Allow" for it sends the user chasing a prompt that never appears.
+            // A `.unexpected(status)` isn't authorizable either; it gets its own diagnostic below.
+            if case .keychainUnavailable(.interactionNotAllowed) = failure { return true }
             return false
         }
+    }
+
+    /// The OSStatus behind a `.keychainUnavailable(.unexpected)` failure, if one is blocking usage.
+    /// This is a genuine keychain malfunction — not a fixable access refusal, not a missing item —
+    /// which `keychainAccessBlocked` deliberately excludes (its "Always Allow" remedy wouldn't help).
+    /// Surfaced separately so the user sees an actionable error instead of Doctor showing nothing.
+    private func unexpectedKeychainStatus() -> OSStatus? {
+        for failure in usageBindingFailures.values {
+            if case let .keychainUnavailable(.unexpected(status)) = failure { return status }
+        }
+        return nil
     }
 
     /// One row of the raw-response inspector: an account and its latest stored `/usage` body.

@@ -146,12 +146,20 @@ public enum CoreConstants {
 
     // MARK: - Desktop safeStorage (Electron) token decryption
 
-    /// Keychain generic-password item that holds the Electron safeStorage AES *password*
-    /// — one item shared by every Claude Desktop clone (they share bundle id
+    /// Keychain generic-password **service** that holds the Electron safeStorage AES *password*
+    /// — one secret shared by every Claude Desktop clone (they share bundle id
     /// `com.anthropic.claudefordesktop`). The per-account OAuth token itself lives inside
     /// each account's `config.json`, encrypted with the key derived from this password.
+    ///
+    /// The **account** is deliberately *not* a constant: Chromium's `os_crypt` migration to the
+    /// async provider stores the same password under a second account (`keychain_password_mac.mm`
+    /// writes `"Claude"` = the app name; `os_crypt/async/.../keychain_key_provider.mm` writes
+    /// `"Claude Key"` = app name + `" Key"`), and which of the two a given machine carries depends
+    /// on its Claude version and migration state — one, the other, or both. The `service` is the
+    /// only stable anchor across that churn, so `SafeStorageKeyStore` enumerates every item under
+    /// it (account-agnostic) and keeps whichever password actually decrypts the token cache,
+    /// instead of guessing an account name that a future provider rename would break.
     public static let safeStorageKeychainService = "Claude Safe Storage"
-    public static let safeStorageKeychainAccount = "Claude"
 
     /// PBKDF2 parameters Electron's macOS safeStorage uses to turn the keychain password
     /// into the AES-128 key (same scheme as Chrome "Safe Storage"): HMAC-SHA1, salt

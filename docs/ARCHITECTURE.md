@@ -229,14 +229,31 @@ throttle, and the ledger still key on the real account.
 live inside each account's `config.json` under `oauth:tokenCacheV2`, encrypted by
 Electron safeStorage. `SafeStorageDecryptor` reproduces the recipe with **CommonCrypto**
 (CryptoKit has neither PBKDF2 nor AES-CBC, so this adds zero SPM deps): read the keychain
-secret ("Claude Safe Storage"), `PBKDF2-HMAC-SHA1(salt "saltysalt", 1003 iters, 16 bytes)`
+secret, `PBKDF2-HMAC-SHA1(salt "saltysalt", 1003 iters, 16 bytes)`
 → AES-128-CBC (IV = 16 spaces), strip the `v10` prefix, PKCS7-unpad. The plaintext is a
 map keyed `<clientId>:<orgUuid>:<audience>:<scopes>`; the audience contains colons, so
-entries are matched by substring, never split on `:`. `SafeStorageKeyStore` (an actor)
-caches the derived key for the process lifetime, so a fleet of accounts costs **one**
+entries are matched by substring, never split on `:`.
+
+The keychain **service** (`"Claude Safe Storage"` = `<app name> Safe Storage`) is stable,
+but the **account** is not, and we deliberately don't hard-code it. Chromium's `os_crypt`
+migration to its async provider stores the *same* password under a second account:
+`keychain_password_mac.mm` (sync) writes `"Claude"`, `keychain_key_provider.mm` (async)
+writes `"Claude Key"` — and a given machine carries one, the other, or both depending on its
+Claude version and migration state (all three were observed while building this; the shipping
+`v10` blob decrypts under either password). So `SafeStorageKeyStore` (an actor) enumerates
+every account under the service — attributes only, `kSecReturnData: false`, so the discovery
+never prompts — and keeps whichever derived key actually *decrypts* the token cache (a probe
+the caller supplies). Guessing an account name would silently break on the next provider
+rename; keying off the stable service does not. Reading is **two-pass**: a prompt-free
+non-interactive pass over every account first (so an already-authorized account — even a stale
+one — is tested without a dialog), then an interactive pass only for accounts that are actually
+locked, so a stale item never adds a second "Always Allow" prompt merely by existing. The
+derived key is then cached for the process lifetime, so a fleet of accounts costs **one**
 keychain access — and one "Always Allow" prompt. Background polls read with
-`kSecUseAuthenticationUISkip` so a locked/unauthorized keychain fails fast (serve stale)
-instead of prompting mid-poll; the prompt is deferred to an interactive Refresh.
+`kSecUseAuthenticationUISkip` so a locked/unauthorized
+keychain fails fast (serve stale) instead of prompting mid-poll; the prompt is deferred to an
+interactive Refresh. No item at all under the service reads as `.notFound` (Claude never
+signed in here) — distinct from an access refusal, so the UI can point at the right fix.
 
 **Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
 self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,
