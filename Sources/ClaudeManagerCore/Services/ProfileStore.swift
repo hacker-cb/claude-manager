@@ -92,7 +92,7 @@ public struct ProfileStore {
         bundle = LauncherBundle(fileManager: fileManager, runner: runner)
         codeSigner = CodeSigner(runner: runner)
         processProbe = ProcessProbe(runner: runner)
-        iconCache = IconCache(runner: runner, fileManager: fileManager)
+        iconCache = IconCache(runner: runner)
         iconPipeline = IconPipeline(packer: IcnsPacker(runner: runner, fileManager: fileManager))
     }
 

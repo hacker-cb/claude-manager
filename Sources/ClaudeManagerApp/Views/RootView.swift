@@ -128,6 +128,7 @@ struct RootView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Dismiss")
             .help("Dismiss — the icons still update the next time each launcher opens")
         }
         .padding(8)

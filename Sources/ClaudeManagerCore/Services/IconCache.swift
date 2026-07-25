@@ -7,11 +7,9 @@ import Foundation
 /// no-flash step every write does; the screen-flashing `restartDock` is opt-in.
 public struct IconCache {
     let runner: CommandRunner
-    let fileManager: FileManager
 
-    public init(runner: CommandRunner, fileManager: FileManager = .default) {
+    public init(runner: CommandRunner) {
         self.runner = runner
-        self.fileManager = fileManager
     }
 
     /// Re-register the bundle so LaunchServices and Finder pick up the rewritten icon on
