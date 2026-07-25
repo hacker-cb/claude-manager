@@ -40,13 +40,14 @@ struct LauncherRebuildTests {
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
-    /// The opt-in "Refresh Dock now" is the only path that restarts the Dock.
+    /// The opt-in "Refresh Dock now" restarts the Dock via `IconCache.restartDock()` — the
+    /// one path that flashes the screen. It depends only on the CommandRunner, not on a
+    /// located Claude.app, so the app can invoke it directly.
     @Test
-    func refreshDockRestartsTheDock() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        env.store.refreshDock()
-        #expect(env.runner.invocations(of: CoreConstants.killallPath).count == 1)
+    func restartDockInvokesKillallDock() {
+        let runner = RecordingCommandRunner()
+        IconCache(runner: runner).restartDock()
+        #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments) == [["Dock"]])
     }
 
     @Test

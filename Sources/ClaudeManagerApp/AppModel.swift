@@ -410,11 +410,12 @@ final class AppModel: ObservableObject {
     /// The opt-in "Refresh Dock now": restart the Dock so pinned tiles repaint with the
     /// new icon. Flashes the screen once, by explicit user request, then clears the banner.
     func refreshDock() async {
-        // Clear the banner only once the restart actually ran. `perform` returns nil (and
-        // routes an error to `currentError`) when Claude.app can't be located, so the Dock
-        // was never restarted — keep the banner and its retry affordance rather than
-        // silently dropping the only way to try again.
-        guard await perform({ store in store.refreshDock() }) != nil else { return }
+        // Restarting the Dock (`killall Dock`) has no dependency on Claude.app, so run it
+        // directly rather than through `perform` — which requires a located `realClaude` and
+        // would otherwise surface an unrelated "Claude not found" error while never
+        // restarting the Dock. Off-main because it forks a subprocess. Always runs while the
+        // banner is up, so the banner clears unconditionally afterwards.
+        await Task.detached { IconCache(runner: SystemCommandRunner()).restartDock() }.value
         dockRefreshPending = false
     }
 
