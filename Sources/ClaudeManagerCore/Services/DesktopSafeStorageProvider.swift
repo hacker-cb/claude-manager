@@ -34,9 +34,16 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.noTokenCache)
         }
 
+        // Resolve the safeStorage key by which candidate account's password actually decrypts this
+        // blob — the account name varies by Claude Desktop version (`Claude` vs `Claude Key`), and
+        // a stale item can sit beside the live one. A cached key is returned as-is; only the first
+        // resolution runs this probe.
         let key: Data
         do {
-            key = try await keyStore.derivedKey(interactive: interactive)
+            key = try await keyStore.key(interactive: interactive) { [decryptor] candidate in
+                if case .success = decryptor.decrypt(v10Blob: blob, key: candidate) { return true }
+                return false
+            }
         } catch let error as KeychainError {
             return .failure(.keychainUnavailable(error))
         } catch let error as SafeStorageError {

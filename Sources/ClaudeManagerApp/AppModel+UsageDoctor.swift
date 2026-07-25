@@ -39,7 +39,9 @@ extension AppModel {
     /// a fix ("Always Allow") that cannot possibly help.
     private func keychainAccessBlocked(_: [AccountUsage]) -> Bool {
         usageBindingFailures.values.contains { failure in
-            if case .keychainUnavailable = failure { return true }
+            // Only an access *refusal* is fixable by authorizing. A missing item (`.notFound`) can't
+            // be — offering "Always Allow" for it sends the user chasing a prompt that never appears.
+            if case .keychainUnavailable(.interactionNotAllowed) = failure { return true }
             return false
         }
     }

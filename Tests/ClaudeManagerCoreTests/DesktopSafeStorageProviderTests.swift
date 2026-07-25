@@ -13,6 +13,15 @@ struct DesktopSafeStorageProviderTests {
         }
     }
 
+    /// Stub keychain with a per-account result — an absent account throws `.notFound`, mirroring a
+    /// machine that stores the password under only one of the candidate account names.
+    private struct PerAccountKeychain: KeychainReading {
+        let byAccount: [String: Result<Data, KeychainError>]
+        func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
+            try (byAccount[account] ?? .failure(.notFound)).get()
+        }
+    }
+
     private let clientID = CoreConstants.oauthClientID
     private let org = "11111111-2222-3333-4444-555555555555"
     private let password = Data("kc-password".utf8)
@@ -152,6 +161,39 @@ struct DesktopSafeStorageProviderTests {
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
             #expect(abs(token.expiresAt.timeIntervalSince1970 - 1_785_320_075.857) < 0.01)
         }
+    }
+
+    @Test
+    func fallsBackToTheSecondCandidateAccountWhenTheFirstIsAbsent() async throws {
+        try await withTempDir { dir in
+            // The token cache is encrypted under `password`, which lives under "Claude Key" — the
+            // newer Claude Desktop account name — while "Claude" has no item at all. The provider
+            // must fall through to "Claude Key" instead of reporting the missing "Claude" as failure.
+            let cache: [String: Any] = [inferenceCompositeKey(): [
+                "token": "T",
+                "expiresAt": 1_785_320_075_857
+            ]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: ["Claude Key": .success(password)])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
+    func keyStorePicksTheCandidateWhoseKeyDecrypts() async throws {
+        // "Claude" holds a stale password, "Claude Key" the live one. The store must keep the key
+        // the caller's probe accepts — the one that actually decrypts — not the first that reads.
+        let live = try #require(SafeStorageDecryptor.deriveKey(password: password))
+        let keychain = PerAccountKeychain(byAccount: [
+            "Claude": .success(Data("stale-password".utf8)),
+            "Claude Key": .success(password)
+        ])
+        let store = SafeStorageKeyStore(keychain: keychain)
+        let resolved = try? await store.key(interactive: false) { $0 == live }
+        #expect(resolved == live)
+        #expect(await store.isUnlocked)
     }
 
     // MARK: - Failure modes (all non-fatal)

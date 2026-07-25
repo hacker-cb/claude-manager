@@ -119,7 +119,10 @@ struct UsageDetailSection: View {
     private var noSourceHeaderNote: String {
         switch failure {
         case .noTokenCache: "not signed in"
-        case .keychainUnavailable: "authorize keychain access"
+        // Only a genuine access refusal is fixable by authorizing; a missing item can't be.
+        case .keychainUnavailable(.interactionNotAllowed): "authorize keychain access"
+        case .keychainUnavailable(.notFound): "keychain item missing"
+        case .keychainUnavailable: "keychain error"
         default: "source unavailable"
         }
     }
@@ -140,7 +143,9 @@ struct UsageDetailSection: View {
         }
         switch failure {
         case .noTokenCache: return "This account isn't signed in on this profile."
-        case .keychainUnavailable: return "Refresh to authorize keychain access."
+        case .keychainUnavailable(.interactionNotAllowed): return "Refresh to authorize keychain access."
+        case .keychainUnavailable(.notFound): return keychainNotFoundNote
+        case .keychainUnavailable: return "Usage source unavailable — a keychain error blocked the token."
         case .some: return "Usage unavailable for this account."
         case nil: return nil
         }
@@ -151,10 +156,17 @@ struct UsageDetailSection: View {
     private var noSourceEmptyNote: String {
         switch failure {
         case .noTokenCache: "This account isn't signed in on this profile."
-        case .keychainUnavailable:
+        case .keychainUnavailable(.interactionNotAllowed):
             "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+        case .keychainUnavailable(.notFound): keychainNotFoundNote
         default: "Usage source unavailable for this account."
         }
+    }
+
+    /// A missing keychain item can't be authorized — Refresh won't prompt — so point at the real
+    /// cause: Claude Desktop's safeStorage item isn't present for this profile.
+    private var keychainNotFoundNote: String {
+        "Claude's keychain item wasn't found — open Claude and sign in on this profile, then Refresh."
     }
 }
 

@@ -17,21 +17,48 @@ public actor SafeStorageKeyStore {
         self.keychain = keychain
     }
 
-    /// The 16-byte AES key, deriving (and caching) it on first use. Throws `KeychainError`
-    /// when the secret can't be read; `SafeStorageError.decryptFailed` if derivation fails
-    /// (effectively never for a valid password).
-    public func derivedKey(interactive: Bool = false) throws -> Data {
+    /// The 16-byte AES key for the fleet, cached after the first successful resolution.
+    ///
+    /// A cached key is returned **as-is** — the whole fleet shares one, so a single binding's
+    /// corrupt blob must not re-resolve it (that's a decrypt failure for *that* binding, handled by
+    /// the caller), and a genuine key rotation is caught fleet-wide by `UsageService` invalidating
+    /// this cache when *every* binding fails.
+    ///
+    /// Resolution (no cache yet) is where `accepts` earns its keep: the keychain **account** that
+    /// holds the password differs across Claude Desktop versions
+    /// (`CoreConstants.safeStorageKeychainAccounts`), and a machine can carry a stale one beside the
+    /// live one, so the right key is the one that actually *decrypts* — not a fixed account. Each
+    /// candidate is tried in turn and the first whose derived key satisfies `accepts` (the caller's
+    /// decrypt probe) is cached. A candidate whose item is absent costs no prompt, so the common
+    /// single-account machine still prompts exactly once.
+    ///
+    /// Throws the last `KeychainError` when no candidate's secret could be read at all
+    /// (→ keychain-unavailable), or `SafeStorageError.decryptFailed` when a secret *was* read but
+    /// no candidate key decrypted (→ a wrong / rotated key, or this binding's blob is corrupt).
+    public func key(interactive: Bool = false, accepts: @Sendable (Data) -> Bool) throws -> Data {
         if let cachedKey { return cachedKey }
-        let password = try keychain.secret(
-            service: CoreConstants.safeStorageKeychainService,
-            account: CoreConstants.safeStorageKeychainAccount,
-            interactive: interactive
-        )
-        guard let key = SafeStorageDecryptor.deriveKey(password: password) else {
-            throw SafeStorageError.decryptFailed
+        var keychainError: KeychainError?
+        for account in CoreConstants.safeStorageKeychainAccounts {
+            let derived: Data
+            do {
+                let password = try keychain.secret(
+                    service: CoreConstants.safeStorageKeychainService,
+                    account: account,
+                    interactive: interactive
+                )
+                guard let key = SafeStorageDecryptor.deriveKey(password: password) else { continue }
+                derived = key
+            } catch let error as KeychainError {
+                keychainError = error
+                continue
+            }
+            if accepts(derived) {
+                cachedKey = derived
+                return derived
+            }
         }
-        cachedKey = key
-        return key
+        if let keychainError { throw keychainError }
+        throw SafeStorageError.decryptFailed
     }
 
     /// Whether the key is already cached (no keychain access needed). Lets the UI know it

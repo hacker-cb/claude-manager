@@ -151,7 +151,11 @@ public enum CoreConstants {
     /// `com.anthropic.claudefordesktop`). The per-account OAuth token itself lives inside
     /// each account's `config.json`, encrypted with the key derived from this password.
     public static let safeStorageKeychainService = "Claude Safe Storage"
-    public static let safeStorageKeychainAccount = "Claude"
+    /// The item's **account** varies by Claude Desktop version — older builds store the password
+    /// under `"Claude"`, newer ones under `"Claude Key"` (and a machine may carry both). Tried in
+    /// order, and the caller keeps whichever one actually decrypts the token cache, so we never
+    /// guess wrong on a machine where only one exists or where the stale one lingers.
+    public static let safeStorageKeychainAccounts = ["Claude", "Claude Key"]
 
     /// PBKDF2 parameters Electron's macOS safeStorage uses to turn the keychain password
     /// into the AES-128 key (same scheme as Chrome "Safe Storage"): HMAC-SHA1, salt
