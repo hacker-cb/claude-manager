@@ -88,10 +88,15 @@ public actor SafeStorageKeyStore {
             if let key = resolve(account, interactive: false) { cachedKey = key; return key }
         }
         // Pass 2 — only with the caller's blessing, and only for accounts that genuinely need a
-        // prompt (unreadable in pass 1). `for-in` captures the array by value, so a read re-denied
-        // here (which re-defers the account) doesn't get revisited in this same loop.
+        // prompt (unreadable in pass 1). Clear the list first and iterate a snapshot, so `resolve`
+        // re-adds *only* the accounts that STILL answer `.interactionNotAllowed` interactively. An
+        // account whose interactive read instead fails outright (user-canceled / `errSecAuthFailed`
+        // → `.unexpected`) drops out of the list, so its recorded `keychainError` — not a stale
+        // "needs a prompt" from pass 1 — wins in the precedence below.
         if interactive {
-            for account in deferredToInteractive {
+            let pending = deferredToInteractive
+            deferredToInteractive.removeAll()
+            for account in pending {
                 if let key = resolve(account, interactive: true) { cachedKey = key; return key }
             }
         }
