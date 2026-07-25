@@ -120,6 +120,36 @@ struct LauncherRebuildTests {
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
+    @Test
+    func rebuildAllReportsPendingWhenTheBadgeStyleChanged() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
+        _ = try env.store.add(AddProfileRequest(name: env.name("home")))
+        // The "Apply to all launchers" path: a second store over the same install dir with a
+        // different badge style. Every badge re-renders differently, so the batch reports a
+        // pending Dock refresh — still opt-in, so it never restarts the Dock itself.
+        var restyled = BadgeStyle.default
+        restyled.shape = BadgeStyle.Shape.allCases.first { $0 != restyled.shape } ?? restyled.shape
+        let restyledStore = ProfileStore(
+            realClaude: env.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: env.installDir,
+                defaultProfilesDirectory: env.profilesDir,
+                badgeStyle: restyled,
+                managedPreferencesURLs: env.managedPreferencesURLs,
+                defaultProfileUserDataPath: env.defaultProfileUserDataPath,
+                shipItStatePath: env.shipItStatePath
+            ),
+            runner: env.runner,
+            signalSender: { _, _ in 0 }
+        )
+        let result = try restyledStore.rebuildAll()
+        #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
+        #expect(result.dockRefreshPending == true)
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
+    }
+
     /// The soft "older launcher format" warning is reserved for launchers that still
     /// run. Every version below `minimumRunnableWrapperVersion` is reported as an error
     /// instead (see `LauncherSigningTests`), so with the two constants currently equal
