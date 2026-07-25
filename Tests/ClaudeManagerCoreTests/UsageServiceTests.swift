@@ -110,8 +110,13 @@ struct UsageServiceTests {
 
     @Test
     func rateLimitedBacksOffAndSkipsWithinWindow() async {
+        // The server's `retry-after`, chosen strictly below the no-header default so the probe
+        // below can tell an honored window apart from the default. Everything else is derived from
+        // these two constants, so the test stays correct if `defaultBackoffSeconds` changes.
+        let retryAfter: TimeInterval = 120
+        #expect(retryAfter < UsageService.defaultBackoffSeconds)
         let http = ScriptedHTTP { _, _ in
-            HTTPResponse(status: 429, body: Data(), headers: ["retry-after": "120"])
+            HTTPResponse(status: 429, body: Data(), headers: ["retry-after": "\(Int(retryAfter))"])
         }
         let history = UsageHistoryStore(path: ":memory:")
         let service = makeService(
@@ -121,13 +126,17 @@ struct UsageServiceTests {
         )
         let first = await service.refresh(bindings: [binding("p")], now: now)
         #expect(first.accounts.first?.state == .rateLimited)
-        // 60s later, still inside the 120s backoff → no new request.
-        let second = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(60))
+        // Inside the honored window → no new request.
+        let second = await service.refresh(
+            bindings: [binding("p")],
+            now: now.addingTimeInterval(retryAfter / 2)
+        )
         #expect(http.usageCallCount == 1)
         #expect(second.accounts.first?.state == .rateLimited)
-        // Past the 120s the server asked for, but before the 300s default backoff — the poll fires
-        // again, proving the `retry-after` window was honored rather than the default applied.
-        _ = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(150))
+        // Strictly between the honored `retry-after` and the default backoff: the poll fires again,
+        // proving the server's window was honored rather than the default applied.
+        let probe = (retryAfter + UsageService.defaultBackoffSeconds) / 2
+        _ = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(probe))
         #expect(http.usageCallCount == 2)
     }
 
