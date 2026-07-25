@@ -86,6 +86,10 @@ extension UsageServiceTests {
             self.secrets = secrets
         }
 
+        func accounts(service _: String) throws -> [String] {
+            ["Claude"]
+        }
+
         func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
             lock.lock(); defer { lock.unlock() }
             // Empty sequence → surface a clean keychain miss, not an index underflow crash.
@@ -134,6 +138,10 @@ extension UsageServiceTests {
         let secret: Data
         init(_ secret: Data) {
             self.secret = secret
+        }
+
+        func accounts(service _: String) throws -> [String] {
+            ["Claude"]
         }
 
         func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {

@@ -18,6 +18,12 @@ public enum KeychainError: Error, Equatable, Sendable {
 /// provider can be tested with a stub — production has no "Claude Safe Storage" item on CI,
 /// and tests must never touch the real one.
 public protocol KeychainReading: Sendable {
+    /// Every generic-password **account** present under `service`, attributes only. Returns the
+    /// data ACL untouched (`kSecReturnData: false`), so it never prompts and never unlocks — a
+    /// cheap way to discover which account name a given machine stores the password under without
+    /// hard-coding the version-dependent set. An empty array means no such item exists.
+    func accounts(service: String) throws -> [String]
+
     /// Read the secret bytes for `(service, account)`. When `interactive` is false the read
     /// uses `kSecUseAuthenticationUISkip`, so a not-yet-authorized item (or locked keychain)
     /// fails fast with `.interactionNotAllowed` instead of blocking a background poll on a
@@ -29,6 +35,30 @@ public protocol KeychainReading: Sendable {
 /// The real reader: `SecItemCopyMatching` against the login keychain.
 public struct SecItemKeychainReader: KeychainReading {
     public init() {}
+
+    public func accounts(service: String) throws -> [String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            // Attributes only — never the data — so this stays prompt-free and lock-agnostic.
+            kSecReturnData as String: false,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            let items = result as? [[String: Any]] ?? []
+            return items.compactMap { $0[kSecAttrAccount as String] as? String }
+        case errSecItemNotFound:
+            return []
+        case errSecInteractionNotAllowed:
+            throw KeychainError.interactionNotAllowed
+        default:
+            throw KeychainError.unexpected(status)
+        }
+    }
 
     public func secret(service: String, account: String, interactive: Bool) throws -> Data {
         var query: [String: Any] = [

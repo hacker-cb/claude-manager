@@ -5,18 +5,30 @@ import Testing
 struct DesktopSafeStorageProviderTests {
     // MARK: - Harness
 
-    /// Stub keychain: returns a fixed secret, or throws a chosen `KeychainError`.
+    /// Stub keychain: one account under the service, returning a fixed secret or a chosen
+    /// `KeychainError`. Enumeration always finds the account (the item exists); the read is what
+    /// succeeds or fails — mirroring a present item whose data ACL blocks a background read.
     private struct StubKeychain: KeychainReading {
         let result: Result<Data, KeychainError>
+        func accounts(service _: String) throws -> [String] {
+            ["Claude"]
+        }
+
         func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
             try result.get()
         }
     }
 
-    /// Stub keychain with a per-account result — an absent account throws `.notFound`, mirroring a
-    /// machine that stores the password under only one of the candidate account names.
+    /// Stub keychain with a per-account result. `accounts` reports exactly the keys present (an
+    /// empty map → no item under the service), and a read of an absent account throws `.notFound`
+    /// — so a test can model a machine that stores the password under any one account name, both,
+    /// or a name no static list would contain.
     private struct PerAccountKeychain: KeychainReading {
         let byAccount: [String: Result<Data, KeychainError>]
+        func accounts(service _: String) throws -> [String] {
+            Array(byAccount.keys)
+        }
+
         func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
             try (byAccount[account] ?? .failure(.notFound)).get()
         }
@@ -164,11 +176,11 @@ struct DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func fallsBackToTheSecondCandidateAccountWhenTheFirstIsAbsent() async throws {
+    func readsTheOnlyAccountUnderTheServiceEvenWhenItIsNotClaude() async throws {
         try await withTempDir { dir in
             // The token cache is encrypted under `password`, which lives under "Claude Key" — the
-            // newer Claude Desktop account name — while "Claude" has no item at all. The provider
-            // must fall through to "Claude Key" instead of reporting the missing "Claude" as failure.
+            // async provider's account name — while "Claude" has no item at all. Enumerating the
+            // service finds "Claude Key" and uses it, instead of reporting a missing "Claude".
             let cache: [String: Any] = [inferenceCompositeKey(): [
                 "token": "T",
                 "expiresAt": 1_785_320_075_857
@@ -182,7 +194,36 @@ struct DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func keyStorePicksTheCandidateWhoseKeyDecrypts() async throws {
+    func readsAnAccountNameNoStaticListWouldContain() async throws {
+        try await withTempDir { dir in
+            // A hypothetical future provider rename stores the password under an account name we
+            // never enumerated by hand. Because resolution keys off the stable *service* and not a
+            // fixed account set, it still finds and uses it — this is what "don't guess" buys.
+            let cache: [String: Any] = [inferenceCompositeKey(): ["token": "T"]]
+            let url = try writeConfig(cache: cache, into: dir)
+            let keychain = PerAccountKeychain(byAccount: ["Claude Nightly Key": .success(password)])
+            let token = try await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
+    func noItemUnderTheServiceIsKeychainNotFound() async throws {
+        try await withTempDir { dir in
+            // Enumeration returns nothing → the item is genuinely absent (Claude never signed in on
+            // this machine), which must read as `.notFound` — the state the UI tells the user to fix
+            // by signing in, not the "authorize keychain" prompt that can't help.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = PerAccountKeychain(byAccount: [:])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.keychainUnavailable(.notFound)))
+        }
+    }
+
+    @Test
+    func keyStorePicksTheAccountWhoseKeyDecrypts() async throws {
         // "Claude" holds a stale password, "Claude Key" the live one. The store must keep the key
         // the caller's probe accepts — the one that actually decrypts — not the first that reads.
         let live = try #require(SafeStorageDecryptor.deriveKey(password: password))

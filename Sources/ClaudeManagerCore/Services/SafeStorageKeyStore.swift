@@ -24,25 +24,30 @@ public actor SafeStorageKeyStore {
     /// the caller), and a genuine key rotation is caught fleet-wide by `UsageService` invalidating
     /// this cache when *every* binding fails.
     ///
-    /// Resolution (no cache yet) is where `accepts` earns its keep: the keychain **account** that
-    /// holds the password differs across Claude Desktop versions
-    /// (`CoreConstants.safeStorageKeychainAccounts`), and a machine can carry a stale one beside the
-    /// live one, so the right key is the one that actually *decrypts* — not a fixed account. Each
-    /// candidate is tried in turn and the first whose derived key satisfies `accepts` (the caller's
-    /// decrypt probe) is cached. A candidate whose item is absent costs no prompt, so the common
-    /// single-account machine still prompts exactly once.
+    /// Resolution (no cache yet) is where `accepts` earns its keep. The keychain **account** that
+    /// holds the password is version-dependent (`"Claude"` from the sync provider, `"Claude Key"`
+    /// from the async one — see `CoreConstants.safeStorageKeychainService`), and a machine can
+    /// carry a stale one beside the live one, so nothing is hard-coded: we enumerate every account
+    /// under the stable service (attributes only → no prompt) and read each in turn, caching the
+    /// first whose derived key satisfies `accepts` (the caller's decrypt probe). Since the accounts
+    /// normally share one password, the first read decrypts and the common machine prompts exactly
+    /// once. Sorted for a stable which-prompts-first order across runs.
     ///
-    /// Throws the last `KeychainError` when no candidate's secret could be read at all
-    /// (→ keychain-unavailable), or `SafeStorageError.decryptFailed` when a secret *was* read but
-    /// no candidate key decrypted (→ a wrong / rotated key, or this binding's blob is corrupt).
+    /// Throws `KeychainError.notFound` when no item exists under the service at all, the last
+    /// `KeychainError` when items exist but none could be read (→ keychain-unavailable), or
+    /// `SafeStorageError.decryptFailed` when a secret *was* read but no key decrypted (→ a wrong /
+    /// rotated key, or this binding's blob is corrupt).
     public func key(interactive: Bool = false, accepts: @Sendable (Data) -> Bool) throws -> Data {
         if let cachedKey { return cachedKey }
+        let service = CoreConstants.safeStorageKeychainService
+        let accounts = try keychain.accounts(service: service).sorted()
+        guard !accounts.isEmpty else { throw KeychainError.notFound }
         var keychainError: KeychainError?
-        for account in CoreConstants.safeStorageKeychainAccounts {
+        for account in accounts {
             let derived: Data
             do {
                 let password = try keychain.secret(
-                    service: CoreConstants.safeStorageKeychainService,
+                    service: service,
                     account: account,
                     interactive: interactive
                 )
