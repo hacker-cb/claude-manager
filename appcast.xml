@@ -7,6 +7,14 @@
     <language>en</language>
     <!-- ITEMS:START -->
     <item>
+      <title>Version 0.5.1</title>
+      <pubDate>Sat, 25 Jul 2026 21:33:47 +0000</pubDate>
+      <sparkle:version>10</sparkle:version>
+      <sparkle:shortVersionString>0.5.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/hacker-cb/claude-manager/releases/download/v0.5.1/ClaudeManager-0.5.1.zip" sparkle:edSignature="OHbXPHpknUJrgrQGhTUc8SdBfLeNuzxeMRcCdamYCDMOnfE0HK9JSRc+oao5Rxv3y52+swHCiT1xMU8XGb/QAw==" length="2721964" type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Version 0.5.0</title>
       <pubDate>Fri, 24 Jul 2026 15:33:57 +0000</pubDate>
       <sparkle:version>9</sparkle:version>
