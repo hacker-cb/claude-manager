@@ -12,11 +12,11 @@ public enum UsageState: Sendable, Equatable {
     case stale(since: Date)
     /// Token expired or the API rejected it (401/403) — the account needs a fresh login.
     case loginNeeded
-    /// Backed off after a 429 until this time. Never nil in practice — the poller always computes a
-    /// concrete `backoffUntil` (the default window, or exponential off the previous one) even when
-    /// the server sends no `Retry-After`, and nothing constructs `.rateLimited(until: nil)`. The
-    /// optional is a defensive shape, not a state the code actually produces.
-    case rateLimited(until: Date?)
+    /// Backed off after a 429 on the `/usage` read — a *request* throttle ("not your usage limit"),
+    /// not plan exhaustion (that shows as the bars' own data, never as a 429). A pure discriminator:
+    /// when to retry lives in `ThrottleState.backoffUntil` (its single source of truth), and the UI
+    /// deliberately doesn't surface the backoff timing — it's an internal poll concern.
+    case rateLimited
     /// No usable token source (keychain locked / not authorized, or no token cache).
     case noSource
     /// A transport failure (offline); the snapshot, if any, is the last stored one.

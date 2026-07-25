@@ -120,11 +120,15 @@ struct UsageServiceTests {
             history: history
         )
         let first = await service.refresh(bindings: [binding("p")], now: now)
-        #expect(first.accounts.first?.state == .rateLimited(until: now.addingTimeInterval(120)))
+        #expect(first.accounts.first?.state == .rateLimited)
         // 60s later, still inside the 120s backoff → no new request.
         let second = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(60))
         #expect(http.usageCallCount == 1)
-        #expect(second.accounts.first?.state == .rateLimited(until: now.addingTimeInterval(120)))
+        #expect(second.accounts.first?.state == .rateLimited)
+        // Past the 120s the server asked for, but before the 300s default backoff — the poll fires
+        // again, proving the `retry-after` window was honored rather than the default applied.
+        _ = await service.refresh(bindings: [binding("p")], now: now.addingTimeInterval(150))
+        #expect(http.usageCallCount == 2)
     }
 
     @Test
