@@ -440,4 +440,24 @@ extension DesktopSafeStorageProviderTests {
             #expect(result == .failure(.noUsableEntry))
         }
     }
+
+    @Test
+    func aFailedInteractiveReadIsNotMaskedAsInteractionNotAllowed() async throws {
+        try await withTempDir { dir in
+            // "Claude" needs a prompt on the background pass, then its interactive read fails outright
+            // (user-canceled / auth error → `.unexpected`). The stale "needs a prompt" recorded in
+            // pass 1 must not mask that: the real keychain error surfaces, not "authorize keychain
+            // access" for a prompt the user just dismissed.
+            let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let keychain = InteractiveRecordingKeychain([
+                "Claude": (
+                    background: .failure(.interactionNotAllowed),
+                    interactive: .failure(.unexpected(-128))
+                )
+            ])
+            let result = await provider(keychain: keychain)
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: true)
+            #expect(result == .failure(.keychainUnavailable(.unexpected(-128))))
+        }
+    }
 }
