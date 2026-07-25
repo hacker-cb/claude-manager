@@ -83,10 +83,13 @@ public struct SecItemKeychainReader: KeychainReading {
         case errSecSuccess:
             guard let data = item as? Data else { throw KeychainError.notFound }
             return data
-        case errSecItemNotFound, errSecAuthFailed:
+        case errSecItemNotFound:
             throw KeychainError.notFound
         case errSecInteractionNotAllowed:
             throw KeychainError.interactionNotAllowed
+        // `errSecAuthFailed` is an *existing* item we couldn't read (denied / auth failed), not a
+        // missing one — it falls to `default` → `.unexpected`, so the UI shows a keychain error
+        // rather than telling the user to sign in for an item that is actually there.
         default:
             throw KeychainError.unexpected(status)
         }

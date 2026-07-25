@@ -68,7 +68,10 @@ public actor SafeStorageKeyStore {
                 deferredToInteractive.append(account)
                 return nil
             } catch let error as KeychainError {
-                if keychainError != .interactionNotAllowed { keychainError = error }
+                // Only non-`.interactionNotAllowed` errors reach here (that case is caught above and
+                // deferred), so this holds the last `.notFound` / `.unexpected`. It's the fallback
+                // reason surfaced *after* the deferred list — see the throw order at the end.
+                keychainError = error
                 return nil
             } catch {
                 return nil
