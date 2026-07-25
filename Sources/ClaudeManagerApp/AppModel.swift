@@ -54,6 +54,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var currentError: AppError?
 
+    /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile may keep
+    /// showing the old icon until the launcher is next opened. Drives an opt-in "Refresh
+    /// Dock now" banner — a Dock restart flashes the whole screen, so it is never done
+    /// silently. Stays set until the user refreshes or dismisses it (the tiles self-heal
+    /// on next open regardless).
+    @Published private(set) var dockRefreshPending = false
+
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
     /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
     /// Non-private so the `AppModel+Perform` extension (another file) can drive it.
@@ -334,13 +341,17 @@ final class AppModel: ObservableObject {
     /// sheet covers the window-level alert, so a swallowed error would be invisible
     /// until the editor is dismissed).
     func addProfile(_ request: AddProfileRequest) async throws {
-        _ = try await performThrowing { store in try store.add(request) }
+        let result = try await performThrowing { store in try store.add(request) }
+        if result.dockRefreshPending { dockRefreshPending = true }
         await refresh()
     }
 
     /// Apply edits. Throws for the same reason as `addProfile`.
     func updateProfile(original: Profile, to updated: Profile) async throws {
-        _ = try await performThrowing { store in try store.update(original: original, to: updated) }
+        let result = try await performThrowing { store in
+            try store.update(original: original, to: updated)
+        }
+        if result.dockRefreshPending { dockRefreshPending = true }
         await refresh()
     }
 
@@ -379,7 +390,8 @@ final class AppModel: ObservableObject {
     /// Rebuild one launcher from the current wrapper format (script + Info.plist +
     /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
     func rebuild(_ profile: Profile) async {
-        _ = await perform { store in try store.rebuild(profile) }
+        let pending = await perform { store in try store.rebuild(profile) }
+        if pending == true { dockRefreshPending = true }
         await refresh()
     }
 
@@ -388,10 +400,29 @@ final class AppModel: ObservableObject {
     /// notice via the same channel `stop` uses for its running warning.
     func rebuildAll() async {
         guard let result = await perform({ store in try store.rebuildAll() }) else { return }
+        if result.dockRefreshPending { dockRefreshPending = true }
         if let notice = rebuildAllNotice(for: result) {
             currentError = AppError(message: notice)
         }
         await refresh()
+    }
+
+    /// The opt-in "Refresh Dock now": restart the Dock so pinned tiles repaint with the
+    /// new icon. Flashes the screen once, by explicit user request, then clears the banner.
+    func refreshDock() async {
+        // Restarting the Dock (`killall Dock`) has no dependency on Claude.app, so run it
+        // directly rather than through `perform` — which requires a located `realClaude` and
+        // would otherwise surface an unrelated "Claude not found" error while never
+        // restarting the Dock. Off-main because it forks a subprocess. Always runs while the
+        // banner is up, so the banner clears unconditionally afterwards.
+        await Task.detached { IconCache(runner: SystemCommandRunner()).restartDock() }.value
+        dockRefreshPending = false
+    }
+
+    /// Dismiss the Dock-refresh banner without restarting the Dock — each launcher's tile
+    /// self-heals the next time it is opened.
+    func dismissDockRefresh() {
+        dockRefreshPending = false
     }
 
     /// A non-fatal summary when a batch rebuild didn't touch every launcher, or `nil`

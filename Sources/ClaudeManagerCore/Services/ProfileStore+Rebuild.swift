@@ -22,6 +22,10 @@ public struct RebuildAllResult: Sendable {
     public let rebuilt: [Profile]
     public let skippedRunning: [Profile]
     public let failed: [Failure]
+    /// True when at least one rebuilt launcher's icon actually changed, so a pinned Dock
+    /// tile could be stale and the app may offer an opt-in "Refresh Dock now". A batch that
+    /// only re-stamped the wrapper format (icons byte-identical) leaves this false.
+    public let dockRefreshPending: Bool
 }
 
 /// Regenerating launchers from the current wrapper format — one at a time or as a
@@ -32,8 +36,12 @@ public extension ProfileStore {
     /// its Info.plist marker, and its badge icon (rendered with the current style).
     /// This is how a stale launcher is brought up to date and how the user forces a
     /// fresh regenerate. Refuses while the profile is running: rewriting the bundle
-    /// under a live instance is unsafe (the same reason `update` refuses).
-    func rebuild(_ profile: Profile, restartDock: Bool = true) throws {
+    /// under a live instance is unsafe (the same reason `update` refuses). Returns whether
+    /// the icon actually changed — `rebuild` is always in-place, so a changed icon means a
+    /// pinned Dock tile could be stale (the app offers an opt-in refresh); an unchanged one
+    /// (a wrapper-format bump, the common case) needs no refresh and never flashes.
+    @discardableResult
+    func rebuild(_ profile: Profile) throws -> Bool {
         try ensureRealBinaryPresent()
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
@@ -47,30 +55,38 @@ public extension ProfileStore {
             color: profile.color,
             style: configuration.badgeStyle
         )
-        try bundle.build(profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns)
-        iconCache.refresh(appURL: profile.appURL, restartDock: restartDock)
+        let iconChanged = try bundle.build(
+            profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
+        )
+        // Register so the new icon is picked up on next fetch/open — never flash the
+        // screen (see `IconCache`).
+        iconCache.register(appURL: profile.appURL)
         // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
         // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
         try? reconcileManagedConfig(for: profile)
+        return iconChanged
     }
 
-    /// Rebuild every launcher (see `rebuild`), restarting the Dock once for the
-    /// batch. A running launcher is *skipped*, not failed — a live bundle can't be
-    /// rewritten — and returned so the caller can report it.
+    /// Rebuild every launcher (see `rebuild`). A running launcher is *skipped*, not failed
+    /// — a live bundle can't be rewritten — and returned so the caller can report it. Never
+    /// restarts the Dock: the batch reports whether any icon changed (`dockRefreshPending`)
+    /// so the app can offer a single opt-in refresh instead of flashing the screen.
     @discardableResult
     func rebuildAll() throws -> RebuildAllResult {
         try ensureRealBinaryPresent()
         var rebuilt: [Profile] = []
         var skippedRunning: [Profile] = []
         var failed: [RebuildAllResult.Failure] = []
+        var dockRefreshPending = false
         for managed in list() {
             if managed.isRunning {
                 skippedRunning.append(managed.profile)
                 continue
             }
             do {
-                try rebuild(managed.profile, restartDock: false)
+                let iconChanged = try rebuild(managed.profile)
                 rebuilt.append(managed.profile)
+                if iconChanged { dockRefreshPending = true }
             } catch ClaudeManagerError.profileRunning {
                 // Started between the scan and the rebuild — skip it too.
                 skippedRunning.append(managed.profile)
@@ -84,12 +100,17 @@ public extension ProfileStore {
                 ))
             }
         }
-        if !rebuilt.isEmpty { iconCache.restartDock() }
+        // No automatic Dock restart — a rebuild never flashes the screen. When an icon
+        // actually changed, the app surfaces an opt-in "Refresh Dock now"; otherwise the
+        // pinned tiles self-heal the next time each launcher is opened.
         // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
         // (harmless while live — read at next launch). No extra scan: reuse the sets.
         for profile in skippedRunning {
             try? reconcileManagedConfig(for: profile)
         }
-        return RebuildAllResult(rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed)
+        return RebuildAllResult(
+            rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed,
+            dockRefreshPending: dockRefreshPending
+        )
     }
 }

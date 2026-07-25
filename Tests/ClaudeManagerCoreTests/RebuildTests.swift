@@ -26,6 +26,30 @@ struct LauncherRebuildTests {
         #expect(info["LSArchitecturePriority"] as? [String] == ["arm64", "x86_64"])
     }
 
+    /// The core of the flicker fix: rebuilding with the same label/color/style regenerates
+    /// a byte-identical badge, so no Dock refresh is pending and the screen-flashing restart
+    /// is never issued. Also pins that the icon pipeline is deterministic — if it weren't,
+    /// every rebuild would report a spurious change and this would fail.
+    @Test
+    func rebuildOfUnchangedLauncherReportsNoPendingRefreshAndNeverFlashes() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let pending = try env.store.rebuild(profile)
+        #expect(pending == false)
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
+    }
+
+    /// The opt-in "Refresh Dock now" restarts the Dock via `IconCache.restartDock()` — the
+    /// one path that flashes the screen. It depends only on the CommandRunner, not on a
+    /// located Claude.app, so the app can invoke it directly.
+    @Test
+    func restartDockInvokesKillallDock() {
+        let runner = RecordingCommandRunner()
+        IconCache(runner: runner).restartDock()
+        #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments) == [["Dock"]])
+    }
+
     @Test
     func rebuildRefusesWhileRunning() throws {
         let env = try makeStoreEnv()
@@ -94,6 +118,36 @@ struct LauncherRebuildTests {
         #expect(result.skippedRunning.isEmpty)
         #expect(Set(result.failed.map(\.profile.name)) == [env.name("one"), env.name("two")])
         // Nothing rebuilt → no batch Dock restart.
+        #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
+    }
+
+    @Test
+    func rebuildAllReportsPendingWhenTheBadgeStyleChanged() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
+        _ = try env.store.add(AddProfileRequest(name: env.name("home")))
+        // The "Apply to all launchers" path: a second store over the same install dir with a
+        // different badge style. Every badge re-renders differently, so the batch reports a
+        // pending Dock refresh — still opt-in, so it never restarts the Dock itself.
+        var restyled = BadgeStyle.default
+        restyled.shape = BadgeStyle.Shape.allCases.first { $0 != restyled.shape } ?? restyled.shape
+        let restyledStore = ProfileStore(
+            realClaude: env.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: env.installDir,
+                defaultProfilesDirectory: env.profilesDir,
+                badgeStyle: restyled,
+                managedPreferencesURLs: env.managedPreferencesURLs,
+                defaultProfileUserDataPath: env.defaultProfileUserDataPath,
+                shipItStatePath: env.shipItStatePath
+            ),
+            runner: env.runner,
+            signalSender: { _, _ in 0 }
+        )
+        let result = try restyledStore.rebuildAll()
+        #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
+        #expect(result.dockRefreshPending == true)
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
