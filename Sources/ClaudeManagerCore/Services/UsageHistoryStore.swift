@@ -202,23 +202,34 @@ public actor UsageHistoryStore {
         guard let db else {
             return memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, resetsBucket))
         }
-        // Match within a full minute (`abs(...) <= 60000`) rather than on exact bucket equality.
-        // This absorbs two same-window cases exact equality would miss: (1) a row written *before*
-        // this version, carrying the raw un-bucketed millis, still matches its bucket on the first
-        // poll after upgrade instead of re-firing once; (2) jitter around a boundary near :30s,
-        // which rounds two polls of one window into *adjacent* minute buckets 60s apart. Distinct
-        // windows are ≥5h apart, far outside ±60s, so the tolerance never merges two of them.
+        // Match `resets_at` within a full minute of the bucket rather than on exact equality, via a
+        // `BETWEEN` range — index-friendly on the primary key's trailing `resets_at` (an `abs()`
+        // predicate would force a scan). The tolerance folds two same-window cases exact equality
+        // would miss onto one key: (1) a row written *before* this version, carrying the raw
+        // un-bucketed millis, still matches its bucket on the first poll after upgrade instead of
+        // re-firing once; (2) jitter around a boundary near :30s, which rounds two polls of one
+        // window into *adjacent* minute buckets 60s apart. Distinct windows are ≥5h apart, far
+        // outside ±60s, so the tolerance never merges two of them.
+        //
+        // A no-reset window (bucket 0) matches *exactly* on 0 — never a ±60s band around the epoch,
+        // which would let the sentinel collide with a real window resetting within a minute of
+        // 1970-01-01 (unreachable in practice, but the sentinel must carry no tolerance).
+        let (low, high): (Int64, Int64) = resetsAt == nil ? (0, 0) : (
+            resetsBucket - 60000,
+            resetsBucket + 60000
+        )
         let sql = """
         SELECT 1 FROM notified_thresholds
         WHERE account_uuid=?1 AND limit_key=?2 AND threshold=?3
-          AND abs(resets_at - ?4) <= 60000 LIMIT 1
+          AND resets_at BETWEEN ?4 AND ?5 LIMIT 1
         """
         guard let stmt = Self.prepare(db, sql) else { return false }
         defer { sqlite3_finalize(stmt) }
         Self.bind(stmt, 1, text: accountUUID)
         Self.bind(stmt, 2, text: limitKey)
         Self.bind(stmt, 3, double: threshold)
-        Self.bind(stmt, 4, int: resetsBucket)
+        Self.bind(stmt, 4, int: low)
+        Self.bind(stmt, 5, int: high)
         return sqlite3_step(stmt) == SQLITE_ROW
     }
 

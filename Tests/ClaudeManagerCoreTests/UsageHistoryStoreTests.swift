@@ -205,6 +205,33 @@ struct UsageHistoryStoreTests {
         }
     }
 
+    /// The no-reset sentinel (stored as 0) must match *only* other no-reset rows for the same limit,
+    /// never a real window that happens to bucket near the epoch — which a ±60s band around 0 would
+    /// wrongly fold in.
+    @Test
+    func nilResetIsExactAndDoesNotCollideWithNearEpochWindow() async {
+        await withStore { store in
+            // A real dated window resetting ~30s past the epoch buckets close to 0.
+            let nearEpoch = Date(timeIntervalSince1970: 30)
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9,
+                resetsAt: nearEpoch, notifiedAt: nearEpoch
+            )
+            // A no-reset window for the same limit must not read as already notified by that row.
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9, resetsAt: nil
+            ) == false)
+            // …but it still dedups against its own sentinel row.
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9,
+                resetsAt: nil, notifiedAt: nearEpoch
+            )
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9, resetsAt: nil
+            ) == true)
+        }
+    }
+
     // MARK: - Retention
 
     @Test
