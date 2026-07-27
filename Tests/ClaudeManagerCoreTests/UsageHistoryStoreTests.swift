@@ -137,6 +137,74 @@ struct UsageHistoryStoreTests {
         }
     }
 
+    /// The server reports a *fixed* window boundary with sub-second jitter (a microsecond fraction
+    /// that wobbles across the whole-second edge). The bucket must map that whole wobble onto one
+    /// key, while still separating a genuinely later window.
+    @Test
+    func resetBucketCollapsesSubSecondJitter() {
+        // 2026-07-28 14:00:00Z, the real boundary behind the observed 102-duplicate storm.
+        let boundary = Date(timeIntervalSince1970: 1_785_247_200)
+        let expected = UsageHistoryStore.resetBucketMillis(boundary)
+        // The real jitter seen in the ledger: 13:59:59.139 … 14:00:00.939 — all one 14:00 bucket.
+        for delta in [-0.861, -0.550, 0.001, 0.357, 0.406, 0.939] {
+            #expect(UsageHistoryStore.resetBucketMillis(boundary.addingTimeInterval(delta)) == expected)
+        }
+        // A no-reset window stays 0, distinct from any dated bucket.
+        #expect(UsageHistoryStore.resetBucketMillis(nil) == 0)
+        // A genuinely later window (a week on) is a different key — the bucket never merges windows.
+        #expect(UsageHistoryStore.resetBucketMillis(boundary.addingTimeInterval(7 * 86400)) != expected)
+    }
+
+    /// Regression: a limit sitting above its threshold for days, polled every few minutes, must
+    /// alert **once** — even though every poll carries its own jittered `resets_at` for the same
+    /// window. Before bucketing, each distinct millis minted a fresh ledger key and re-notified.
+    @Test
+    func jitteringResetsAtDoesNotReNotify() async {
+        await withStore { store in
+            let boundary = Date(timeIntervalSince1970: 1_785_247_200)
+            let jitter = [-0.861, 0.357, 0.406, 0.939, -0.550, 0.001]
+            let first = boundary.addingTimeInterval(jitter[0])
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95, resetsAt: first
+            ) == false)
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95,
+                resetsAt: first, notifiedAt: first
+            )
+            // Every later poll, with its own jittered reset for the same window, reads as already
+            // notified — no second alert.
+            for delta in jitter.dropFirst() {
+                #expect(await store.wasNotified(
+                    accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95,
+                    resetsAt: boundary.addingTimeInterval(delta)
+                ) == true)
+            }
+        }
+    }
+
+    /// A boundary that isn't minute-aligned (a rolling 5h session window resets at an arbitrary
+    /// second) can sit near the :30 rounding seam, where jitter rounds two polls of the *same*
+    /// window into adjacent minute buckets 60s apart. The ledger's full-minute read tolerance must
+    /// still treat them as one window — otherwise the storm recurs for ~1-in-30 session windows.
+    @Test
+    func jitterStraddlingTheMinuteSeamDoesNotReNotify() async {
+        await withStore { store in
+            // 2026-07-28 14:00:30Z — a boundary sitting exactly on the :30 rounding seam.
+            let boundary = Date(timeIntervalSince1970: 1_785_247_230)
+            let low = boundary.addingTimeInterval(-0.4) // 14:00:29.6 → rounds down to 14:00
+            let high = boundary.addingTimeInterval(0.4) // 14:00:30.4 → rounds up to 14:01
+            // Sanity: the two polls really do land in different minute buckets.
+            #expect(UsageHistoryStore.resetBucketMillis(low) != UsageHistoryStore.resetBucketMillis(high))
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.95,
+                resetsAt: low, notifiedAt: low
+            )
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.95, resetsAt: high
+            ) == true)
+        }
+    }
+
     // MARK: - Retention
 
     @Test

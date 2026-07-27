@@ -39,7 +39,10 @@ extension AppModel {
         content.sound = warning.severity == .critical ? .default : nil
 
         // One request per (account, limit, threshold, reset) so re-posts coalesce, not stack.
-        let identifier = "usage.\(uuid).\(warning.limitKey).\(warning.threshold).\(warning.resetsAt?.timeIntervalSince1970 ?? 0)"
+        // Bucket the reset exactly as the ledger does, so the server's sub-second jitter in
+        // `resets_at` can't mint a fresh identifier each poll (which would stack, not coalesce).
+        let resetsBucket = UsageHistoryStore.resetBucketMillis(warning.resetsAt)
+        let identifier = "usage.\(uuid).\(warning.limitKey).\(warning.threshold).\(resetsBucket)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         do {
             try await UNUserNotificationCenter.current().add(request)
