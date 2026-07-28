@@ -104,9 +104,9 @@ struct UsageAccessory: View {
                 // edge, so a tooltip attached to the text alone has to be hit almost exactly — the
                 // reset countdown lives in there and is the reason to hover at all.
                 .contentShape(Rectangle())
-                // Recomputed each minute so the countdown inside is live: a tooltip built once at
-                // render would still read "resets in 29m" half an hour later.
-                .modifier(LiveHelp { helpText(usage: usage, now: $0) })
+                // Recomputed each minute *when* it has a countdown inside: a live tooltip built
+                // once at render would still read "resets in 29m" half an hour later.
+                .modifier(LiveHelp(tooltip: tooltip(usage: usage)))
         }
     }
 
@@ -138,12 +138,18 @@ struct UsageAccessory: View {
         return usage.isQuotableNow ? figure : "\(figure), \(usage.stateNote)"
     }
 
-    /// The cell's tooltip, or nil when there is nothing to say — an empty `.help` would arm a
-    /// hover target that pops a blank box.
-    private func helpText(usage: AccountUsage, now: Date) -> String? {
-        if usage.attentionWord != nil { return usage.stateNote }
-        guard let limit = usage.displayLimit else { return nil }
-        return tooltip(limit: limit, usage: usage, now: now)
+    /// What this cell says on hover, in the shape that decides whether saying it costs a ticker.
+    ///
+    /// All three cases are reachable here, and only one of them moves with time:
+    /// - an account needing the user prints a fixed phrase — `attentionWord` is non-nil only for
+    ///   `.loginNeeded` / `.noSource`, whose `stateNote` is a constant;
+    /// - one with a snapshot prints a reset countdown and an "as of" age, which do move;
+    /// - one being tracked with neither yet — the first fetch hasn't landed, or it is offline with
+    ///   no stored sample — has nothing to say, and the cell still claims its width in that state.
+    private func tooltip(usage: AccountUsage) -> Tooltip {
+        if usage.attentionWord != nil { return .fixed(usage.stateNote) }
+        guard let limit = usage.displayLimit else { return .silent }
+        return .live { liveText(limit: limit, usage: usage, now: $0) }
     }
 
     /// Normal is *hierarchical*, not a literal colour, and that is the point: a selected sidebar
@@ -159,7 +165,7 @@ struct UsageAccessory: View {
         }
     }
 
-    private func tooltip(limit: UsageLimit, usage: AccountUsage, now: Date) -> String {
+    private func liveText(limit: UsageLimit, usage: AccountUsage, now: Date) -> String {
         var parts: [String] = []
         if let account = usage.identity.accountLabel { parts.append(account) }
         parts.append("\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used")
@@ -184,19 +190,36 @@ struct UsageAccessory: View {
 /// minutes. Left alone, a countdown freezes on screen and then jumps, which reads as a live timer
 /// that is quietly lying. A minute ticker costs nothing here and keeps it honest.
 struct LiveHelp: ViewModifier {
-    /// nil for "no tooltip here" — a surface that reserves its space whether or not it has
-    /// anything to say must not arm a hover target that pops an empty box.
-    let text: (Date) -> String?
+    let tooltip: Tooltip
 
     func body(content: Content) -> some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            if let text = text(context.date) {
-                content.help(text)
-            } else {
-                content
+        switch tooltip {
+        case .silent:
+            content
+        case let .fixed(text):
+            content.help(text)
+        case let .live(text):
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                content.help(text(context.date))
             }
         }
     }
+}
+
+/// What a surface says on hover — in three cases, because only one of them has to tick.
+///
+/// The distinction is not cosmetic: a `TimelineView` wakes its subtree once a minute for the
+/// lifetime of the row, so a shape that can only answer "what does it say *now*" has to build one
+/// even for a surface whose answer is "nothing" or "the same as last minute". Naming the three
+/// cases lets the ticker exist only where a relative time actually moves.
+enum Tooltip {
+    /// Nothing to say. A surface that reserves its space whether or not it has anything to say
+    /// must not arm a hover target that pops an empty box.
+    case silent
+    /// A phrase that cannot change while it is on screen — no countdown, no age.
+    case fixed(String)
+    /// A phrase built from the current time, re-read each tick.
+    case live((Date) -> String)
 }
 
 // MARK: - Formatting
