@@ -198,19 +198,44 @@ public actor UsageHistoryStore {
         resetsAt: Date?
     ) -> Bool {
         let threshold = Self.roundedThreshold(threshold)
+        let resetsBucket = Self.resetBucketMillis(resetsAt)
+        // Match `resets_at` within a full minute of the bucket rather than on exact equality, via a
+        // `BETWEEN` range — index-friendly on the primary key's trailing `resets_at` (an `abs()`
+        // predicate would force a scan). The tolerance folds two same-window cases exact equality
+        // would miss onto one key: (1) a row written *before* this version, carrying the raw
+        // un-bucketed millis, still matches its bucket on the first poll after upgrade instead of
+        // re-firing once; (2) jitter around a boundary near :30s, which rounds two polls of one
+        // window into *adjacent* minute buckets 60s apart. Distinct windows are ≥5h apart, far
+        // outside ±60s, so the tolerance never merges two of them.
+        //
+        // A no-reset window (bucket 0) matches *exactly* on 0 — never a ±60s band around the epoch,
+        // which would let the sentinel collide with a real window resetting within a minute of
+        // 1970-01-01 (unreachable in practice, but the sentinel must carry no tolerance).
+        let (low, high): (Int64, Int64) = resetsAt == nil ? (0, 0) : (
+            resetsBucket - Self.resetBucketWidthMillis,
+            resetsBucket + Self.resetBucketWidthMillis
+        )
         guard let db else {
-            return memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, resetsAt))
+            // The degraded path carries the *same* tolerance as the SQL read below — dropping it
+            // here would let a window straddling the :30 seam re-notify (and stack) whenever the
+            // DB is unopenable, which is precisely the storm this ledger exists to stop. Memory
+            // keys are always whole buckets, so walking them covers the `BETWEEN` range exactly.
+            return stride(from: low, through: high, by: Int(Self.resetBucketWidthMillis)).contains {
+                memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, $0))
+            }
         }
         let sql = """
         SELECT 1 FROM notified_thresholds
-        WHERE account_uuid=?1 AND limit_key=?2 AND threshold=?3 AND resets_at=?4 LIMIT 1
+        WHERE account_uuid=?1 AND limit_key=?2 AND threshold=?3
+          AND resets_at BETWEEN ?4 AND ?5 LIMIT 1
         """
         guard let stmt = Self.prepare(db, sql) else { return false }
         defer { sqlite3_finalize(stmt) }
         Self.bind(stmt, 1, text: accountUUID)
         Self.bind(stmt, 2, text: limitKey)
         Self.bind(stmt, 3, double: threshold)
-        Self.bind(stmt, 4, int: resetsAt.map(Self.millis) ?? 0)
+        Self.bind(stmt, 4, int: low)
+        Self.bind(stmt, 5, int: high)
         return sqlite3_step(stmt) == SQLITE_ROW
     }
 
@@ -222,8 +247,9 @@ public actor UsageHistoryStore {
         notifiedAt: Date
     ) {
         let threshold = Self.roundedThreshold(threshold)
+        let resetsBucket = Self.resetBucketMillis(resetsAt)
         guard let db else {
-            memoryNotified.insert(Self.notifiedKey(accountUUID, limitKey, threshold, resetsAt))
+            memoryNotified.insert(Self.notifiedKey(accountUUID, limitKey, threshold, resetsBucket))
             return
         }
         let sql = """
@@ -234,7 +260,7 @@ public actor UsageHistoryStore {
         Self.bind(stmt, 1, text: accountUUID)
         Self.bind(stmt, 2, text: limitKey)
         Self.bind(stmt, 3, double: threshold)
-        Self.bind(stmt, 4, int: resetsAt.map(Self.millis) ?? 0)
+        Self.bind(stmt, 4, int: resetsBucket)
         Self.bind(stmt, 5, int: Self.millis(notifiedAt))
         Self.step(stmt)
     }
@@ -246,13 +272,35 @@ public actor UsageHistoryStore {
         (threshold * 1_000_000).rounded() / 1_000_000
     }
 
+    /// Width of the dedup key's reset bucket (one minute, in millis) — also the tolerance
+    /// `wasNotified` reads with, on both the SQLite and the in-memory path.
+    private static let resetBucketWidthMillis: Int64 = 60000
+
+    /// Bucket a window's reset instant to the nearest minute (in millis) for the dedup key — 0 for
+    /// a no-reset window, matching how the ledger stores a nil `resetsAt`.
+    ///
+    /// The server reports `resets_at` as a *fixed* window boundary carrying sub-second jitter: a
+    /// microsecond fractional part that differs on every response and wobbles across the whole-second
+    /// edge (e.g. `13:59:59.857` then `14:00:00.357` for the same 14:00 boundary). Used raw as an
+    /// equality key, that made each poll look like a new window and re-fired the same warning every
+    /// tick. Rounding to the nearest minute collapses the jitter onto one key; two *genuinely*
+    /// distinct windows are ≥5h apart (session) or ≥7d (weekly), so a one-minute bucket can never
+    /// merge them. A boundary sitting near the :30s rounding seam can still split one window's
+    /// jitter into adjacent buckets, which is why `wasNotified` matches within a full minute
+    /// (±60000) rather than on exact bucket equality.
+    public static func resetBucketMillis(_ resetsAt: Date?) -> Int64 {
+        guard let resetsAt else { return 0 }
+        let minute = resetBucketWidthMillis
+        return (millis(resetsAt) + minute / 2) / minute * minute
+    }
+
     private static func notifiedKey(
         _ uuid: String,
         _ limitKey: String,
         _ threshold: Double,
-        _ resetsAt: Date?
+        _ resetsBucket: Int64
     ) -> String {
-        "\(uuid)|\(limitKey)|\(threshold)|\(resetsAt.map(millis) ?? 0)"
+        "\(uuid)|\(limitKey)|\(threshold)|\(resetsBucket)"
     }
 
     // MARK: - Account profile (identity cache)
