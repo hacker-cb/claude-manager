@@ -164,6 +164,43 @@ struct ManagedProfileTests {
         #expect(!managed(pid: 42, running: nil, available: "1.18286.0").claudeUpdateAvailable)
         #expect(!managed(pid: 42, running: "1.17377.2", available: nil).claudeUpdateAvailable)
     }
+
+    @Test
+    func attentionsCollapseTheHealthAxisButNeverMaskTheRestartNudge() {
+        func managed(
+            wrapper: Int, pid: Int32? = nil, running: String? = nil, available: String? = nil
+        ) -> ManagedProfile {
+            ManagedProfile(
+                profile: makeProfile(), pid: pid, wrapperVersion: wrapper,
+                runningClaudeVersion: running, availableClaudeVersion: available
+            )
+        }
+        let current = CoreConstants.currentWrapperVersion
+        let unsigned = CoreConstants.minimumRunnableWrapperVersion - 1
+
+        // Nothing to say when the launcher is current and the running build is too.
+        #expect(managed(wrapper: current).attentions.isEmpty)
+        // An unsigned launcher satisfies `needsRebuild` as well, and the health axis must not let
+        // the mandatory rebuild be worded as the optional one.
+        #expect(managed(wrapper: unsigned).attentions == [.unrunnable])
+        // The two axes are independent: a restart nudge stands on its own, and would stand beside
+        // a health mark rather than behind it.
+        #expect(
+            managed(wrapper: current, pid: 42, running: "1.0.0", available: "2.0.0").attentions
+                == [.claudeUpdate(version: "2.0.0")]
+        )
+    }
+
+    @Test
+    func theSigningFloorNeverRisesAboveTheCurrentWrapper() {
+        // What makes `attentions`' health precedence load-bearing: `isUnrunnable` must stay a
+        // *subset* of `needsRebuild`, so a launcher macOS refuses to execute always also counts as
+        // stale and the `else if` can never be reached first. Asserted as the invariant rather
+        // than through a stale-but-runnable `ManagedProfile`, because while the two constants are
+        // equal no such version exists to construct — and a test that quietly cannot run is worse
+        // than one that states what it is really pinning.
+        #expect(CoreConstants.minimumRunnableWrapperVersion <= CoreConstants.currentWrapperVersion)
+    }
 }
 
 struct DiagnosticTests {
