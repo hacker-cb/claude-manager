@@ -61,4 +61,29 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         else { return false }
         return VersionOrder.isNewer(available, than: running)
     }
+
+    /// The one launcher condition a compact surface flags, or nil when there's nothing to say.
+    ///
+    /// The precedence is load-bearing, not cosmetic: `isUnrunnable` is a *subset* of
+    /// `needsRebuild`, so an unsigned launcher satisfies both and the wrong order would word a
+    /// hard failure ("won't launch") as the optional nudge it isn't. A restart-to-update comes
+    /// last — it's the only one of the three that isn't about the launcher being broken.
+    public var attention: LauncherAttention? {
+        if isUnrunnable { return .unrunnable }
+        if needsRebuild { return .rebuildAvailable }
+        if claudeUpdateAvailable { return .claudeUpdate(version: availableClaudeVersion) }
+        return nil
+    }
+}
+
+/// What a launcher needs from the user, as one value — so a row that has room for a single mark
+/// picks the same one everywhere instead of re-deriving the precedence per surface.
+public enum LauncherAttention: Equatable, Sendable {
+    /// macOS refuses to execute this launcher (built before ad-hoc signing) — a rebuild is
+    /// mandatory, not optional.
+    case unrunnable
+    /// Built by an older wrapper: it still runs, but a rebuild brings it current.
+    case rebuildAvailable
+    /// The running instance is behind the Claude.app on disk — fixed by a restart, not a rebuild.
+    case claudeUpdate(version: String?)
 }

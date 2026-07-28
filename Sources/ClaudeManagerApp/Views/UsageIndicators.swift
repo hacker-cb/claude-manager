@@ -1,31 +1,30 @@
 import ClaudeManagerCore
 import SwiftUI
 
-/// The app-layer painting of core's `UsageSeverity`: a color plus a **non-color** glyph, so
-/// severity isn't conveyed by color alone (accessibility). The severity itself is decided in core
-/// and unit-tested there — `UsageLimit.displaySeverity` for a real limit (folding in the server's
-/// own flag), `UsageLimit.thresholdSeverity(_:)` for a bare fraction (a money bar with no server
+/// The app-layer painting of core's `UsageSeverity`. The severity itself is decided in core and
+/// unit-tested there — `UsageLimit.displaySeverity` for a real limit (folding in the server's own
+/// flag), `UsageLimit.thresholdSeverity(_:)` for a bare fraction (a money bar with no server
 /// severity, like extra usage) — so this layer only paints it, never re-derives it.
+///
+/// Severity is never carried by colour alone, but the second channel is the **figure**, not a
+/// glyph: every surface that tints by severity prints the percentage right beside it — the
+/// sidebar's `UsageAccessory` and the detail pane's `LimitRow` both do — and "100%" separates the
+/// states more finely than an amber-vs-red icon ever did. The glyph that used to sit here bought
+/// no resolution the number didn't already have, and cost the sidebar its alignment: as a
+/// conditional first child it shoved every warning row's figures sideways.
 ///
 /// `LimitEvaluator` is deliberately not folded into the display severity: its lowest trigger (0.75
 /// on the weekly tier) is exactly where these thresholds already warn and it is more lenient
-/// elsewhere, so it could never escalate the ring — the notification model is the quieter of the
+/// elsewhere, so it could never escalate a bar — the notification model is the quieter of the
 /// two by design, since "worth showing" is a lower bar than "worth interrupting you".
 extension UsageSeverity {
+    /// For a bar in the detail pane, which sits on the pane's own background and can afford a
+    /// literal accent fill. A compact row inside a `List` cannot — see `UsageAccessory.tint`.
     var color: Color {
         switch self {
         case .normal: .accentColor
         case .warning: .orange
         case .critical: .red
-        }
-    }
-
-    /// A glyph for warning/critical; nil at normal (no clutter when there's nothing to flag).
-    var glyph: String? {
-        switch self {
-        case .normal: nil
-        case .warning: "exclamationmark.triangle.fill"
-        case .critical: "exclamationmark.octagon.fill"
         }
     }
 }
@@ -61,59 +60,86 @@ struct UsageBar: View {
     }
 }
 
-/// A compact ring for a sidebar row: a thin severity-colored arc over a faint track, sized to
-/// sit beside `StatusDot`.
-struct UsageRing: View {
-    let fraction: Double
-    var size: CGFloat = 14
-    var lineWidth: CGFloat = 2.5
-    var level: UsageSeverity?
-
-    private var severity: UsageSeverity {
-        level ?? UsageLimit.thresholdSeverity(fraction)
-    }
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(.quaternary, lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: max(0.001, min(1, fraction)))
-                .stroke(severity.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-/// The compact sidebar/row indicator: a binding-limit ring + short label when there's data, a
-/// dimmed "needs attention" glyph for login-needed/no-source, or nothing (tracking off / not yet
-/// loaded). The tooltip carries the reset countdown and freshness.
-struct UsageSidebarIndicator: View {
+/// The sidebar row's single trailing accessory: one fixed-width, right-aligned cell.
+///
+/// Fixed width, always claimed — that is the whole fix. What stood here before was a
+/// `VStack(alignment: .trailing)` of children whose widths differed by an order of magnitude, so
+/// the only thing that ever agreed between rows was the right edge, which is not where the eye
+/// starts reading. Now a single cell means the figures line up as a column you can run down.
+///
+/// Text rather than a ring, because `UsageSnapshot.bindingLimit` picks the highest-utilization
+/// *active* window per account: one row's 97% can be a 5h window and the next row's a weekly one.
+/// A bare arc invites a comparison those different denominators can't support; `7d 97%` says what
+/// the number is a percentage of.
+struct UsageAccessory: View {
     let usage: AccountUsage?
 
+    /// Wide enough for the longest thing the cell prints — a clamped scoped label plus a
+    /// three-digit percentage (`7d·Fab 100%`).
+    static let width: CGFloat = 66
+
     var body: some View {
-        // Attention wins over the ring: a `loginNeeded` / `noSource` account can still carry a
-        // stale snapshot (so `displayLimit` is non-nil), but a normal-looking ring would hide the
-        // action the user must take. The stale numbers stay available in the detail pane.
-        if let usage, usage.needsAttention {
-            Image(systemName: "person.crop.circle.badge.exclamationmark")
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .help(usage.stateNote)
-        } else if let usage, let limit = usage.displayLimit {
-            let level = limit.displaySeverity
-            HStack(spacing: 4) {
-                if let glyph = level.glyph {
-                    Image(systemName: glyph).font(.caption2).foregroundStyle(level.color)
-                }
-                UsageRing(fraction: limit.utilization, level: level)
-                Text(UsageFormat.limitSummary(limit))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+        content
+            .font(.caption2.monospacedDigit())
+            .lineLimit(1)
+            // Shrink rather than truncate: an ellipsis in a number is worse than a slightly
+            // smaller one, and only the rare scoped-window label ever reaches this.
+            .minimumScaleFactor(0.85)
+            .frame(width: Self.width, alignment: .trailing)
+            // The whole reserved cell is the hover target, not the glyph-width of the figure
+            // inside it. `7d 85%` is around 40pt of a 66pt column pinned to the row's trailing
+            // edge, so a tooltip attached to the text alone has to be hit almost exactly — the
+            // reset countdown lives in there and is the reason to hover at all.
+            .contentShape(Rectangle())
             // Recomputed each minute so the countdown inside is live: a tooltip built once at
             // render would still read "resets in 29m" half an hour later.
-            .modifier(LiveHelp { tooltip(limit: limit, usage: usage, now: $0) })
+            .modifier(LiveHelp { helpText(now: $0) })
+    }
+
+    @ViewBuilder private var content: some View {
+        // Attention replaces the figure rather than dimming it: a `loginNeeded` / `noSource`
+        // account can still carry a stale snapshot (so `displayLimit` is non-nil), and a
+        // plausible-looking percentage there hides the action the user has to take. The stale
+        // numbers stay available in the detail pane.
+        if let usage, usage.needsAttention {
+            Text("Sign in").foregroundStyle(.orange)
+        } else if let usage, let limit = usage.displayLimit {
+            Text("\(limit.compactLabel) \(UsageFormat.percent(limit.utilization))")
+                .foregroundStyle(tint(limit.displaySeverity))
+                // Spelled out, and from the *unclamped* label: "7d 85%" read literally is a string
+                // of letters, and the cell's clamp is a width concession VoiceOver doesn't share.
+                .accessibilityLabel(
+                    "\(limit.shortLabel) window, \(UsageFormat.percent(limit.utilization)) used"
+                )
+                // Dimmed once the number has stopped moving: a frozen figure drawn at full
+                // strength reads as live. The tooltip names the state.
+                .opacity(usage.isQuotableNow ? 1 : 0.55)
+        } else {
+            // Tracking off, or no refresh pass has reached this binding yet. The cell still claims
+            // its width so its neighbours don't shift when usage arrives.
+            Color.clear.frame(height: 0)
+        }
+    }
+
+    /// The cell's tooltip, or nil when the cell is empty — an empty `.help` would arm a hover
+    /// target that pops a blank box.
+    private func helpText(now: Date) -> String? {
+        guard let usage else { return nil }
+        if usage.needsAttention { return usage.stateNote }
+        guard let limit = usage.displayLimit else { return nil }
+        return tooltip(limit: limit, usage: usage, now: now)
+    }
+
+    /// Normal is *hierarchical*, not a literal colour, and that is the point: a selected sidebar
+    /// row is filled with the accent-derived selection colour, so the old `.accentColor` normal
+    /// state was painted onto its own background and vanished — on the one row the user is
+    /// looking at, in the state most rows are in. `.secondary` inverts with the selection;
+    /// amber and red are meant to stand out against it.
+    private func tint(_ severity: UsageSeverity) -> AnyShapeStyle {
+        switch severity {
+        case .normal: AnyShapeStyle(.secondary)
+        case .warning: AnyShapeStyle(Color.orange)
+        case .critical: AnyShapeStyle(Color.red)
         }
     }
 
@@ -142,11 +168,17 @@ struct UsageSidebarIndicator: View {
 /// minutes. Left alone, a countdown freezes on screen and then jumps, which reads as a live timer
 /// that is quietly lying. A minute ticker costs nothing here and keeps it honest.
 struct LiveHelp: ViewModifier {
-    let text: (Date) -> String
+    /// nil for "no tooltip here" — a surface that reserves its space whether or not it has
+    /// anything to say must not arm a hover target that pops an empty box.
+    let text: (Date) -> String?
 
     func body(content: Content) -> some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            content.help(text(context.date))
+            if let text = text(context.date) {
+                content.help(text)
+            } else {
+                content
+            }
         }
     }
 }

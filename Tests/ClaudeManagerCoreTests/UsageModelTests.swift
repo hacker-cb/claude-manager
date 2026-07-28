@@ -18,6 +18,22 @@ struct UsageModelTests {
     }
 
     @Test
+    func compactLabelClampsAnUnboundedServerLabelToTheCellItHasToFit() {
+        func limit(_ kind: String, model: String? = nil) -> UsageLimit {
+            UsageLimit(rawKind: kind, utilization: 0, scopeModelName: model)
+        }
+        // The two windows a row usually shows pass through whole.
+        #expect(limit(UsageLimit.kindSession).compactLabel == "5h")
+        #expect(limit(UsageLimit.kindWeeklyAll).compactLabel == "7d")
+        // A scoped window stays recognizable at six characters; an unknown kind is a server
+        // string of any length and must not be able to overflow a fixed-width column.
+        #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fable").compactLabel == "7d·Fab")
+        #expect(limit("quantum_flux").compactLabel == "quantu")
+        // Clamping is a width concession only — the tooltip and VoiceOver keep the full label.
+        #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fable").shortLabel == "7d·Fable")
+    }
+
+    @Test
     func extraUsageDisplayUtilizationPrefersServerThenDividesGuardingZero() {
         func extra(used: Int, limit: Int?, util: Double?) -> ExtraUsage {
             ExtraUsage(

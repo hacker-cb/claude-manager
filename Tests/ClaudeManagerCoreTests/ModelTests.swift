@@ -164,6 +164,41 @@ struct ManagedProfileTests {
         #expect(!managed(pid: 42, running: nil, available: "1.18286.0").claudeUpdateAvailable)
         #expect(!managed(pid: 42, running: "1.17377.2", available: nil).claudeUpdateAvailable)
     }
+
+    @Test
+    func attentionPicksTheMostSevereLauncherCondition() {
+        func managed(
+            wrapper: Int, pid: Int32? = nil, running: String? = nil, available: String? = nil
+        ) -> ManagedProfile {
+            ManagedProfile(
+                profile: makeProfile(), pid: pid, wrapperVersion: wrapper,
+                runningClaudeVersion: running, availableClaudeVersion: available
+            )
+        }
+        let current = CoreConstants.currentWrapperVersion
+        let unsigned = CoreConstants.minimumRunnableWrapperVersion - 1
+
+        // Nothing to say when the launcher is current and the running build is too.
+        #expect(managed(wrapper: current).attention == nil)
+        // An unsigned launcher satisfies `needsRebuild` as well, and the order must not let the
+        // mandatory rebuild be worded as the optional one.
+        #expect(managed(wrapper: unsigned).attention == .unrunnable)
+        #expect(
+            managed(wrapper: unsigned, pid: 42, running: "1.0.0", available: "2.0.0").attention
+                == .unrunnable
+        )
+        // A restart nudge never outranks a launcher that needs rebuilding.
+        #expect(
+            managed(wrapper: current, pid: 42, running: "1.0.0", available: "2.0.0").attention
+                == .claudeUpdate(version: "2.0.0")
+        )
+        // `.rebuildAvailable` is stale-but-runnable, which only exists once the current wrapper
+        // rises above the signing floor. Today they are the same number, so there is no such
+        // version to construct — the case is asserted the moment one appears.
+        if current > CoreConstants.minimumRunnableWrapperVersion {
+            #expect(managed(wrapper: current - 1).attention == .rebuildAvailable)
+        }
+    }
 }
 
 struct DiagnosticTests {

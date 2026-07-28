@@ -98,6 +98,15 @@ public struct UsageLimit: Codable, Sendable, Equatable {
         return rawKind
     }
 
+    /// `shortLabel` clamped for a fixed-width surface. The sidebar reserves one column for the
+    /// label + percentage, and `shortLabel` can be an arbitrary server string — a `rawKind` for a
+    /// window this build doesn't recognize, or a long model name in a scoped one — which would
+    /// either overflow that column or push it around. Six characters keeps `5h` and `7d` whole and
+    /// leaves a scoped window recognizable (`7d·Fab`); the full label stays in the tooltip.
+    public var compactLabel: String {
+        String(shortLabel.prefix(6))
+    }
+
     /// Utilization at which a surface turns amber, then red. Deliberately stricter than
     /// `LimitEvaluator`'s notification model: colour answers "how full is this?", which is worth
     /// showing before it's worth interrupting someone over.
