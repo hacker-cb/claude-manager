@@ -61,4 +61,42 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         else { return false }
         return VersionOrder.isNewer(available, than: running)
     }
+
+    /// What this launcher needs from the user, in display order — empty when there's nothing to
+    /// say, and never more than one mark per axis.
+    ///
+    /// **Two axes, deliberately not collapsed into one.** Launcher health and Claude version are
+    /// independent conditions with different remedies, so folding them into a single "most severe"
+    /// value silently drops the other: a stale-but-runnable launcher whose running instance is
+    /// also behind the app on disk would show only the rebuild flag, while the rebuild it points
+    /// at is the one action unavailable to a *running* profile — leaving the restart that would
+    /// actually fix things unmentioned.
+    ///
+    /// Within the health axis the precedence *is* load-bearing: `isUnrunnable` is a subset of
+    /// `needsRebuild`, so an unsigned launcher satisfies both, and the wrong order would word a
+    /// hard failure ("won't launch") as the optional nudge it isn't.
+    public var attentions: [LauncherAttention] {
+        var marks: [LauncherAttention] = []
+        if isUnrunnable {
+            marks.append(.unrunnable)
+        } else if needsRebuild {
+            marks.append(.rebuildAvailable)
+        }
+        if claudeUpdateAvailable {
+            marks.append(.claudeUpdate(version: availableClaudeVersion))
+        }
+        return marks
+    }
+}
+
+/// What a launcher needs from the user, as a value — so every surface renders the same marks
+/// instead of re-deriving the precedence, and the axes stay visible as separate cases.
+public enum LauncherAttention: Hashable, Sendable {
+    /// macOS refuses to execute this launcher (built before ad-hoc signing) — a rebuild is
+    /// mandatory, not optional.
+    case unrunnable
+    /// Built by an older wrapper: it still runs, but a rebuild brings it current.
+    case rebuildAvailable
+    /// The running instance is behind the Claude.app on disk — fixed by a restart, not a rebuild.
+    case claudeUpdate(version: String?)
 }

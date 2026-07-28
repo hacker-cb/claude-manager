@@ -51,9 +51,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Weak: SwiftUI owns the lifetime; there is exactly one for the life of the process.
     private(set) weak static var shared: AppDelegate?
 
+    /// How long the pointer must rest before a tooltip appears, in **milliseconds**.
+    ///
+    /// AppKit's own default is 1500 ms, which is a long time to hold still over a sidebar row
+    /// whose reset countdown and freshness live only in the tooltip — the compact surfaces here
+    /// deliberately print a figure and put the qualifiers behind hover, so hover has to be cheap.
+    private static let toolTipDelayMilliseconds = 400
+
     override init() {
         super.init()
         Self.shared = self
+        // `NSToolTipManager` reads this undocumented default once, when it is first created, and
+        // exposes no public API for the delay — so it has to be in place before the first tooltip,
+        // which `init()` (the delegate is built during SwiftUI's app setup) guarantees.
+        //
+        // The *registration* domain on purpose: it is the lowest-priority domain, so anyone who
+        // has set `NSInitialToolTipDelay` globally keeps their own value, and nothing is written
+        // to the app's preferences. If a future macOS stops reading the key we silently fall back
+        // to AppKit's 1500 ms — a slower tooltip, never a broken one.
+        UserDefaults.standard.register(
+            defaults: ["NSInitialToolTipDelay": Self.toolTipDelayMilliseconds]
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {

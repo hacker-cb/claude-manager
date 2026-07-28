@@ -101,42 +101,6 @@ struct UsageHistoryStoreTests {
         }
     }
 
-    // MARK: - Notification ledger
-
-    @Test
-    func notificationLedgerDedups() async {
-        await withStore { store in
-            let reset = Date(timeIntervalSince1970: 9999)
-            #expect(await store.wasNotified(
-                accountUUID: "acc",
-                limitKey: "7d",
-                threshold: 0.9,
-                resetsAt: reset
-            ) == false)
-            await store.markNotified(
-                accountUUID: "acc",
-                limitKey: "7d",
-                threshold: 0.9,
-                resetsAt: reset,
-                notifiedAt: Date(timeIntervalSince1970: 5000)
-            )
-            #expect(await store.wasNotified(
-                accountUUID: "acc",
-                limitKey: "7d",
-                threshold: 0.9,
-                resetsAt: reset
-            ) == true)
-            // A different reset window is a fresh notification.
-            let nextReset = Date(timeIntervalSince1970: 20000)
-            #expect(await store.wasNotified(
-                accountUUID: "acc",
-                limitKey: "7d",
-                threshold: 0.9,
-                resetsAt: nextReset
-            ) == false)
-        }
-    }
-
     // MARK: - Retention
 
     @Test
@@ -237,6 +201,40 @@ struct UsageHistoryStoreTests {
             .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == true)
     }
 
+    /// The in-memory ledger must carry the SQL read's full-minute tolerance too. Without it a
+    /// window whose jitter straddles the :30 rounding seam re-notifies on every poll while the DB
+    /// is unopenable — the same storm the ledger exists to stop, only in the degraded mode.
+    @Test
+    func unopenableStoreDedupsAcrossTheMinuteSeam() async {
+        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
+        // 2026-07-28 14:00:30Z — a boundary sitting exactly on the :30 rounding seam.
+        let boundary = Date(timeIntervalSince1970: 1_785_247_230)
+        let low = boundary.addingTimeInterval(-0.4) // 14:00:29.6 → rounds down to 14:00
+        let high = boundary.addingTimeInterval(0.4) // 14:00:30.4 → rounds up to 14:01
+        await store.markNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95,
+            resetsAt: low, notifiedAt: low
+        )
+        #expect(await store.wasNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95, resetsAt: high
+        ) == true)
+        // …while a genuinely distinct window (a session is ≥5h away) still reads as un-notified.
+        #expect(await store.wasNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95,
+            resetsAt: boundary.addingTimeInterval(5 * 3600)
+        ) == false)
+        // And the no-reset sentinel keeps no tolerance in memory either: a real window bucketing
+        // near the epoch must never satisfy a nil-reset check.
+        let nearEpoch = Date(timeIntervalSince1970: 30)
+        await store.markNotified(
+            accountUUID: "acc2", limitKey: "session", threshold: 0.9,
+            resetsAt: nearEpoch, notifiedAt: nearEpoch
+        )
+        #expect(await store.wasNotified(
+            accountUUID: "acc2", limitKey: "session", threshold: 0.9, resetsAt: nil
+        ) == false)
+    }
+
     // MARK: - Provisional → authoritative account re-key
 
     @Test
@@ -278,6 +276,145 @@ struct UsageHistoryStoreTests {
                 threshold: 0.9,
                 resetsAt: nil
             ))
+        }
+    }
+}
+
+/// The dedup ledger's own semantics: how a window's `resets_at` is bucketed into a key, and how
+/// wide a match that key tolerates. Split from `UsageHistoryStoreTests` because it exercises one
+/// self-contained concern (the notification ledger) rather than the store's storage round-trips.
+struct UsageNotificationLedgerTests {
+    private func withStore(_ body: (UsageHistoryStore) async -> Void) async {
+        let store = UsageHistoryStore(path: ":memory:")
+        await body(store)
+    }
+
+    @Test
+    func notificationLedgerDedups() async {
+        await withStore { store in
+            let reset = Date(timeIntervalSince1970: 9999)
+            #expect(await store.wasNotified(
+                accountUUID: "acc",
+                limitKey: "7d",
+                threshold: 0.9,
+                resetsAt: reset
+            ) == false)
+            await store.markNotified(
+                accountUUID: "acc",
+                limitKey: "7d",
+                threshold: 0.9,
+                resetsAt: reset,
+                notifiedAt: Date(timeIntervalSince1970: 5000)
+            )
+            #expect(await store.wasNotified(
+                accountUUID: "acc",
+                limitKey: "7d",
+                threshold: 0.9,
+                resetsAt: reset
+            ) == true)
+            // A different reset window is a fresh notification.
+            let nextReset = Date(timeIntervalSince1970: 20000)
+            #expect(await store.wasNotified(
+                accountUUID: "acc",
+                limitKey: "7d",
+                threshold: 0.9,
+                resetsAt: nextReset
+            ) == false)
+        }
+    }
+
+    /// The server reports a *fixed* window boundary with sub-second jitter (a microsecond fraction
+    /// that wobbles across the whole-second edge). The bucket must map that whole wobble onto one
+    /// key, while still separating a genuinely later window.
+    @Test
+    func resetBucketCollapsesSubSecondJitter() {
+        // 2026-07-28 14:00:00Z, the real boundary behind the observed 102-duplicate storm.
+        let boundary = Date(timeIntervalSince1970: 1_785_247_200)
+        let expected = UsageHistoryStore.resetBucketMillis(boundary)
+        // The real jitter seen in the ledger: 13:59:59.139 … 14:00:00.939 — all one 14:00 bucket.
+        for delta in [-0.861, -0.550, 0.001, 0.357, 0.406, 0.939] {
+            #expect(UsageHistoryStore.resetBucketMillis(boundary.addingTimeInterval(delta)) == expected)
+        }
+        // A no-reset window stays 0, distinct from any dated bucket.
+        #expect(UsageHistoryStore.resetBucketMillis(nil) == 0)
+        // A genuinely later window (a week on) is a different key — the bucket never merges windows.
+        #expect(UsageHistoryStore.resetBucketMillis(boundary.addingTimeInterval(7 * 86400)) != expected)
+    }
+
+    /// Regression: a limit sitting above its threshold for days, polled every few minutes, must
+    /// alert **once** — even though every poll carries its own jittered `resets_at` for the same
+    /// window. Before bucketing, each distinct millis minted a fresh ledger key and re-notified.
+    @Test
+    func jitteringResetsAtDoesNotReNotify() async {
+        await withStore { store in
+            let boundary = Date(timeIntervalSince1970: 1_785_247_200)
+            let jitter = [-0.861, 0.357, 0.406, 0.939, -0.550, 0.001]
+            let first = boundary.addingTimeInterval(jitter[0])
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95, resetsAt: first
+            ) == false)
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95,
+                resetsAt: first, notifiedAt: first
+            )
+            // Every later poll, with its own jittered reset for the same window, reads as already
+            // notified — no second alert.
+            for delta in jitter.dropFirst() {
+                #expect(await store.wasNotified(
+                    accountUUID: "acc", limitKey: "weekly_all", threshold: 0.95,
+                    resetsAt: boundary.addingTimeInterval(delta)
+                ) == true)
+            }
+        }
+    }
+
+    /// A boundary that isn't minute-aligned (a rolling 5h session window resets at an arbitrary
+    /// second) can sit near the :30 rounding seam, where jitter rounds two polls of the *same*
+    /// window into adjacent minute buckets 60s apart. The ledger's full-minute read tolerance must
+    /// still treat them as one window — otherwise the storm recurs for ~1-in-30 session windows.
+    @Test
+    func jitterStraddlingTheMinuteSeamDoesNotReNotify() async {
+        await withStore { store in
+            // 2026-07-28 14:00:30Z — a boundary sitting exactly on the :30 rounding seam.
+            let boundary = Date(timeIntervalSince1970: 1_785_247_230)
+            let low = boundary.addingTimeInterval(-0.4) // 14:00:29.6 → rounds down to 14:00
+            let high = boundary.addingTimeInterval(0.4) // 14:00:30.4 → rounds up to 14:01
+            // Sanity: the two polls really do land in different minute buckets.
+            #expect(UsageHistoryStore.resetBucketMillis(low) != UsageHistoryStore.resetBucketMillis(high))
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.95,
+                resetsAt: low, notifiedAt: low
+            )
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.95, resetsAt: high
+            ) == true)
+        }
+    }
+
+    /// The no-reset sentinel (stored as 0) must match *only* other no-reset rows for the same limit,
+    /// never a real window that happens to bucket near the epoch — which a ±60s band around 0 would
+    /// wrongly fold in.
+    @Test
+    func nilResetIsExactAndDoesNotCollideWithNearEpochWindow() async {
+        await withStore { store in
+            // A real dated window resetting ~30s past the epoch buckets close to 0.
+            let nearEpoch = Date(timeIntervalSince1970: 30)
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9,
+                resetsAt: nearEpoch, notifiedAt: nearEpoch
+            )
+            // A no-reset window for the same limit must not read as already notified by that row.
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9, resetsAt: nil
+            ) == false)
+            // …but it still dedups against its own sentinel row.
+            await store.markNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9,
+                resetsAt: nil, notifiedAt: nearEpoch
+            )
+            #expect(await store.wasNotified(
+                accountUUID: "acc", limitKey: "session", threshold: 0.9, resetsAt: nil
+            ) == true)
         }
     }
 }

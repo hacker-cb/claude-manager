@@ -91,13 +91,21 @@ struct BadgeChip: View {
     }
 }
 
-/// Green/gray running indicator.
+/// Running/stopped as **shape** first, colour second: a filled green disc against a hollow ring.
+/// Green-vs-gray at 8pt was a colour-only encoding — the two are the same mark to a red/green
+/// deficient eye — and `Color.secondary.opacity(0.4)` was a fixed alpha that adapted to neither
+/// dark mode nor a selected row.
 struct StatusDot: View {
     let isRunning: Bool
     var body: some View {
-        Circle()
-            .fill(isRunning ? Color.green : Color.secondary.opacity(0.4))
-            .frame(width: 8, height: 8)
-            .help(isRunning ? "Running" : "Stopped")
+        Group {
+            if isRunning {
+                Circle().fill(Color.green)
+            } else {
+                Circle().strokeBorder(.tertiary, lineWidth: 1.5)
+            }
+        }
+        .frame(width: 8, height: 8)
+        .help(isRunning ? "Running" : "Stopped")
     }
 }
