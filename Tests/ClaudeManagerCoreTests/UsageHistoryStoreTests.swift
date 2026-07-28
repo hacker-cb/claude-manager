@@ -101,7 +101,193 @@ struct UsageHistoryStoreTests {
         }
     }
 
-    // MARK: - Notification ledger
+    // MARK: - Retention
+
+    @Test
+    func prunesSamplesOlderThanRetentionWindow() async {
+        await withStore { store in
+            let now = Date(timeIntervalSince1970: 100 * 86400)
+            await store.record(sample("acc", at: 1 * 86400), rawBody: nil) // 99 days old
+            await store.record(sample("acc", at: 95 * 86400), rawBody: nil) // 5 days old
+            await store.prune(now: now, retentionDays: 90)
+            #expect(await store.sampleCount(accountUUID: "acc") == 1)
+            #expect(await store.latest(accountUUID: "acc")?
+                .capturedAt == Date(timeIntervalSince1970: 95 * 86400))
+        }
+    }
+
+    @Test
+    func prunesToRowCapPerAccount() async {
+        await withStore { store in
+            for i in 1 ... 6 {
+                await store.record(sample("acc", at: Double(i)), rawBody: nil)
+            }
+            await store.prune(now: Date(timeIntervalSince1970: 1000), retentionDays: 90, maxRowsPerAccount: 3)
+            #expect(await store.sampleCount(accountUUID: "acc") == 3)
+            // The newest survive.
+            #expect(await store.latest(accountUUID: "acc")?.capturedAt == Date(timeIntervalSince1970: 6))
+        }
+    }
+
+    @Test
+    func noResetLedgerRowSurvivesPrune() async {
+        await withStore { store in
+            // A limit with no reset time (resetsAt nil) is notified once; it must NOT be wiped by
+            // prune (which would re-notify), unlike dated rows.
+            await store.markNotified(
+                accountUUID: "acc",
+                limitKey: "extra",
+                threshold: 0.9,
+                resetsAt: nil,
+                notifiedAt: Date(timeIntervalSince1970: 1000)
+            )
+            await store.prune(now: Date(timeIntervalSince1970: 100 * 86400), retentionDays: 90)
+            #expect(await store.wasNotified(
+                accountUUID: "acc",
+                limitKey: "extra",
+                threshold: 0.9,
+                resetsAt: nil
+            ) == true)
+        }
+    }
+
+    @Test
+    func outOfOrderRecordKeepsRawOnTrueLatest() async {
+        await withStore { store in
+            await store.record(sample("acc", at: 200), rawBody: Data(#"{"newest":1}"#.utf8))
+            // A sample recorded with an EARLIER captured_at must not steal "latest raw".
+            await store.record(sample("acc", at: 100), rawBody: Data(#"{"older":1}"#.utf8))
+            #expect(await store.latest(accountUUID: "acc")?.capturedAt == Date(timeIntervalSince1970: 200))
+            #expect(await store.latestRawJSON(accountUUID: "acc") == #"{"newest":1}"#)
+        }
+    }
+
+    // MARK: - Degrade-not-crash
+
+    @Test
+    func unopenableStoreDegradesToEmpty() async {
+        // A path under a nonexistent directory can't be created → inert store, no crash. History
+        // is genuinely lost…
+        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
+        await store.record(sample("acc", at: 100), rawBody: nil)
+        #expect(await store.latest(accountUUID: "acc") == nil)
+        #expect(await store.sampleCount(accountUUID: "acc") == 0)
+    }
+
+    @Test
+    func unopenableStoreKeepsThrottleAndLedgerInMemory() async {
+        // …but throttle + dedup keep working in memory, so a dead DB can't strip the caller's
+        // rate-limit backoff (API hammering) or re-notify every tick.
+        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
+        let state = ThrottleState(
+            lastAttemptAt: Date(timeIntervalSince1970: 1000),
+            backoffUntil: Date(timeIntervalSince1970: 1300),
+            backoffReason: .rateLimited,
+            tokenFingerprint: "fp"
+        )
+        await store.setThrottle(state, scope: "acc")
+        #expect(await store.throttle(scope: "acc") == state)
+
+        #expect(await store
+            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == false)
+        await store.markNotified(
+            accountUUID: "acc",
+            limitKey: "7d",
+            threshold: 0.9,
+            resetsAt: nil,
+            notifiedAt: Date()
+        )
+        #expect(await store
+            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == true)
+    }
+
+    /// The in-memory ledger must carry the SQL read's full-minute tolerance too. Without it a
+    /// window whose jitter straddles the :30 rounding seam re-notifies on every poll while the DB
+    /// is unopenable — the same storm the ledger exists to stop, only in the degraded mode.
+    @Test
+    func unopenableStoreDedupsAcrossTheMinuteSeam() async {
+        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
+        // 2026-07-28 14:00:30Z — a boundary sitting exactly on the :30 rounding seam.
+        let boundary = Date(timeIntervalSince1970: 1_785_247_230)
+        let low = boundary.addingTimeInterval(-0.4) // 14:00:29.6 → rounds down to 14:00
+        let high = boundary.addingTimeInterval(0.4) // 14:00:30.4 → rounds up to 14:01
+        await store.markNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95,
+            resetsAt: low, notifiedAt: low
+        )
+        #expect(await store.wasNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95, resetsAt: high
+        ) == true)
+        // …while a genuinely distinct window (a session is ≥5h away) still reads as un-notified.
+        #expect(await store.wasNotified(
+            accountUUID: "acc", limitKey: "session", threshold: 0.95,
+            resetsAt: boundary.addingTimeInterval(5 * 3600)
+        ) == false)
+        // And the no-reset sentinel keeps no tolerance in memory either: a real window bucketing
+        // near the epoch must never satisfy a nil-reset check.
+        let nearEpoch = Date(timeIntervalSince1970: 30)
+        await store.markNotified(
+            accountUUID: "acc2", limitKey: "session", threshold: 0.9,
+            resetsAt: nearEpoch, notifiedAt: nearEpoch
+        )
+        #expect(await store.wasNotified(
+            accountUUID: "acc2", limitKey: "session", threshold: 0.9, resetsAt: nil
+        ) == false)
+    }
+
+    // MARK: - Provisional → authoritative account re-key
+
+    @Test
+    func reassignAccountMovesThrottleSamplesAndLedgerOffTheFingerprint() async {
+        await withStore { store in
+            let fp = "fp16hexdigits00" // stands in for a provisional token fingerprint
+            let uuid = "real-account-uuid"
+            // State written while the account was provisional — all keyed on the fingerprint.
+            await store.setThrottle(
+                ThrottleState(
+                    lastAttemptAt: Date(timeIntervalSince1970: 100),
+                    backoffUntil: Date(timeIntervalSince1970: 1000),
+                    backoffReason: .rateLimited, tokenFingerprint: fp
+                ),
+                scope: fp
+            )
+            await store.record(sample(fp, at: 100), rawBody: nil)
+            await store.markNotified(
+                accountUUID: fp, limitKey: "weekly_all",
+                threshold: 0.9, resetsAt: nil, notifiedAt: Date(timeIntervalSince1970: 100)
+            )
+
+            await store.reassignAccount(fromFingerprint: fp, toAccountUUID: uuid)
+
+            // Everything now lives under the real uuid; nothing is orphaned under the fingerprint.
+            #expect(await store.throttle(scope: uuid)?.backoffReason == .rateLimited)
+            #expect(await store.throttle(scope: fp) == nil)
+            #expect(await store.sampleCount(accountUUID: uuid) == 1)
+            #expect(await store.sampleCount(accountUUID: fp) == 0)
+            #expect(await store.wasNotified(
+                accountUUID: uuid,
+                limitKey: "weekly_all",
+                threshold: 0.9,
+                resetsAt: nil
+            ))
+            #expect(await !store.wasNotified(
+                accountUUID: fp,
+                limitKey: "weekly_all",
+                threshold: 0.9,
+                resetsAt: nil
+            ))
+        }
+    }
+}
+
+/// The dedup ledger's own semantics: how a window's `resets_at` is bucketed into a key, and how
+/// wide a match that key tolerates. Split from `UsageHistoryStoreTests` because it exercises one
+/// self-contained concern (the notification ledger) rather than the store's storage round-trips.
+struct UsageNotificationLedgerTests {
+    private func withStore(_ body: (UsageHistoryStore) async -> Void) async {
+        let store = UsageHistoryStore(path: ":memory:")
+        await body(store)
+    }
 
     @Test
     func notificationLedgerDedups() async {
@@ -229,150 +415,6 @@ struct UsageHistoryStoreTests {
             #expect(await store.wasNotified(
                 accountUUID: "acc", limitKey: "session", threshold: 0.9, resetsAt: nil
             ) == true)
-        }
-    }
-
-    // MARK: - Retention
-
-    @Test
-    func prunesSamplesOlderThanRetentionWindow() async {
-        await withStore { store in
-            let now = Date(timeIntervalSince1970: 100 * 86400)
-            await store.record(sample("acc", at: 1 * 86400), rawBody: nil) // 99 days old
-            await store.record(sample("acc", at: 95 * 86400), rawBody: nil) // 5 days old
-            await store.prune(now: now, retentionDays: 90)
-            #expect(await store.sampleCount(accountUUID: "acc") == 1)
-            #expect(await store.latest(accountUUID: "acc")?
-                .capturedAt == Date(timeIntervalSince1970: 95 * 86400))
-        }
-    }
-
-    @Test
-    func prunesToRowCapPerAccount() async {
-        await withStore { store in
-            for i in 1 ... 6 {
-                await store.record(sample("acc", at: Double(i)), rawBody: nil)
-            }
-            await store.prune(now: Date(timeIntervalSince1970: 1000), retentionDays: 90, maxRowsPerAccount: 3)
-            #expect(await store.sampleCount(accountUUID: "acc") == 3)
-            // The newest survive.
-            #expect(await store.latest(accountUUID: "acc")?.capturedAt == Date(timeIntervalSince1970: 6))
-        }
-    }
-
-    @Test
-    func noResetLedgerRowSurvivesPrune() async {
-        await withStore { store in
-            // A limit with no reset time (resetsAt nil) is notified once; it must NOT be wiped by
-            // prune (which would re-notify), unlike dated rows.
-            await store.markNotified(
-                accountUUID: "acc",
-                limitKey: "extra",
-                threshold: 0.9,
-                resetsAt: nil,
-                notifiedAt: Date(timeIntervalSince1970: 1000)
-            )
-            await store.prune(now: Date(timeIntervalSince1970: 100 * 86400), retentionDays: 90)
-            #expect(await store.wasNotified(
-                accountUUID: "acc",
-                limitKey: "extra",
-                threshold: 0.9,
-                resetsAt: nil
-            ) == true)
-        }
-    }
-
-    @Test
-    func outOfOrderRecordKeepsRawOnTrueLatest() async {
-        await withStore { store in
-            await store.record(sample("acc", at: 200), rawBody: Data(#"{"newest":1}"#.utf8))
-            // A sample recorded with an EARLIER captured_at must not steal "latest raw".
-            await store.record(sample("acc", at: 100), rawBody: Data(#"{"older":1}"#.utf8))
-            #expect(await store.latest(accountUUID: "acc")?.capturedAt == Date(timeIntervalSince1970: 200))
-            #expect(await store.latestRawJSON(accountUUID: "acc") == #"{"newest":1}"#)
-        }
-    }
-
-    // MARK: - Degrade-not-crash
-
-    @Test
-    func unopenableStoreDegradesToEmpty() async {
-        // A path under a nonexistent directory can't be created → inert store, no crash. History
-        // is genuinely lost…
-        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
-        await store.record(sample("acc", at: 100), rawBody: nil)
-        #expect(await store.latest(accountUUID: "acc") == nil)
-        #expect(await store.sampleCount(accountUUID: "acc") == 0)
-    }
-
-    @Test
-    func unopenableStoreKeepsThrottleAndLedgerInMemory() async {
-        // …but throttle + dedup keep working in memory, so a dead DB can't strip the caller's
-        // rate-limit backoff (API hammering) or re-notify every tick.
-        let store = UsageHistoryStore(path: "/nonexistent-dir-xyz/usage.db")
-        let state = ThrottleState(
-            lastAttemptAt: Date(timeIntervalSince1970: 1000),
-            backoffUntil: Date(timeIntervalSince1970: 1300),
-            backoffReason: .rateLimited,
-            tokenFingerprint: "fp"
-        )
-        await store.setThrottle(state, scope: "acc")
-        #expect(await store.throttle(scope: "acc") == state)
-
-        #expect(await store
-            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == false)
-        await store.markNotified(
-            accountUUID: "acc",
-            limitKey: "7d",
-            threshold: 0.9,
-            resetsAt: nil,
-            notifiedAt: Date()
-        )
-        #expect(await store
-            .wasNotified(accountUUID: "acc", limitKey: "7d", threshold: 0.9, resetsAt: nil) == true)
-    }
-
-    // MARK: - Provisional → authoritative account re-key
-
-    @Test
-    func reassignAccountMovesThrottleSamplesAndLedgerOffTheFingerprint() async {
-        await withStore { store in
-            let fp = "fp16hexdigits00" // stands in for a provisional token fingerprint
-            let uuid = "real-account-uuid"
-            // State written while the account was provisional — all keyed on the fingerprint.
-            await store.setThrottle(
-                ThrottleState(
-                    lastAttemptAt: Date(timeIntervalSince1970: 100),
-                    backoffUntil: Date(timeIntervalSince1970: 1000),
-                    backoffReason: .rateLimited, tokenFingerprint: fp
-                ),
-                scope: fp
-            )
-            await store.record(sample(fp, at: 100), rawBody: nil)
-            await store.markNotified(
-                accountUUID: fp, limitKey: "weekly_all",
-                threshold: 0.9, resetsAt: nil, notifiedAt: Date(timeIntervalSince1970: 100)
-            )
-
-            await store.reassignAccount(fromFingerprint: fp, toAccountUUID: uuid)
-
-            // Everything now lives under the real uuid; nothing is orphaned under the fingerprint.
-            #expect(await store.throttle(scope: uuid)?.backoffReason == .rateLimited)
-            #expect(await store.throttle(scope: fp) == nil)
-            #expect(await store.sampleCount(accountUUID: uuid) == 1)
-            #expect(await store.sampleCount(accountUUID: fp) == 0)
-            #expect(await store.wasNotified(
-                accountUUID: uuid,
-                limitKey: "weekly_all",
-                threshold: 0.9,
-                resetsAt: nil
-            ))
-            #expect(await !store.wasNotified(
-                accountUUID: fp,
-                limitKey: "weekly_all",
-                threshold: 0.9,
-                resetsAt: nil
-            ))
         }
     }
 }

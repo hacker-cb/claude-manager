@@ -199,9 +199,6 @@ public actor UsageHistoryStore {
     ) -> Bool {
         let threshold = Self.roundedThreshold(threshold)
         let resetsBucket = Self.resetBucketMillis(resetsAt)
-        guard let db else {
-            return memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, resetsBucket))
-        }
         // Match `resets_at` within a full minute of the bucket rather than on exact equality, via a
         // `BETWEEN` range — index-friendly on the primary key's trailing `resets_at` (an `abs()`
         // predicate would force a scan). The tolerance folds two same-window cases exact equality
@@ -215,9 +212,18 @@ public actor UsageHistoryStore {
         // which would let the sentinel collide with a real window resetting within a minute of
         // 1970-01-01 (unreachable in practice, but the sentinel must carry no tolerance).
         let (low, high): (Int64, Int64) = resetsAt == nil ? (0, 0) : (
-            resetsBucket - 60000,
-            resetsBucket + 60000
+            resetsBucket - Self.resetBucketWidthMillis,
+            resetsBucket + Self.resetBucketWidthMillis
         )
+        guard let db else {
+            // The degraded path carries the *same* tolerance as the SQL read below — dropping it
+            // here would let a window straddling the :30 seam re-notify (and stack) whenever the
+            // DB is unopenable, which is precisely the storm this ledger exists to stop. Memory
+            // keys are always whole buckets, so walking them covers the `BETWEEN` range exactly.
+            return stride(from: low, through: high, by: Int(Self.resetBucketWidthMillis)).contains {
+                memoryNotified.contains(Self.notifiedKey(accountUUID, limitKey, threshold, $0))
+            }
+        }
         let sql = """
         SELECT 1 FROM notified_thresholds
         WHERE account_uuid=?1 AND limit_key=?2 AND threshold=?3
@@ -266,6 +272,10 @@ public actor UsageHistoryStore {
         (threshold * 1_000_000).rounded() / 1_000_000
     }
 
+    /// Width of the dedup key's reset bucket (one minute, in millis) — also the tolerance
+    /// `wasNotified` reads with, on both the SQLite and the in-memory path.
+    private static let resetBucketWidthMillis: Int64 = 60000
+
     /// Bucket a window's reset instant to the nearest minute (in millis) for the dedup key — 0 for
     /// a no-reset window, matching how the ledger stores a nil `resetsAt`.
     ///
@@ -280,7 +290,7 @@ public actor UsageHistoryStore {
     /// (±60000) rather than on exact bucket equality.
     public static func resetBucketMillis(_ resetsAt: Date?) -> Int64 {
         guard let resetsAt else { return 0 }
-        let minute: Int64 = 60000
+        let minute = resetBucketWidthMillis
         return (millis(resetsAt) + minute / 2) / minute * minute
     }
 
