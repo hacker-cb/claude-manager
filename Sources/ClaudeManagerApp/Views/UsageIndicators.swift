@@ -62,12 +62,11 @@ struct UsageBar: View {
 
 /// The sidebar row's single trailing accessory: one fixed-width, right-aligned cell.
 ///
-/// One fixed width, claimed by every row that has anything to say — that is the whole fix. What
+/// One fixed width, claimed by every row with a tracked account — that is the whole fix. What
 /// stood here before was a `VStack(alignment: .trailing)` of children whose widths differed by an
 /// order of magnitude, so the only thing that ever agreed between rows was the right edge, which
-/// is not where the eye starts reading. A single cell makes the figures a column you can run down,
-/// and a row still waiting on its first refresh holds its place rather than shifting its
-/// neighbours when the numbers land.
+/// is not where the eye starts reading. A single cell makes the figures a column you can run down.
+/// See `body` for exactly when the width is claimed and when it isn't.
 ///
 /// Text rather than a ring, because `UsageSnapshot.bindingLimit` picks the highest-utilization
 /// *active* window per account: one row's 97% can be a 5h window and the next row's a weekly one.
@@ -81,12 +80,18 @@ struct UsageAccessory: View {
     static let width: CGFloat = 66
 
     var body: some View {
-        // No cell at all when there is nothing to put in it — tracking switched off, or no refresh
-        // pass has reached this binding yet. Reserving the width unconditionally cost a 240pt
-        // sidebar a quarter of its identity column in the one configuration where the column can
-        // never fill, and left a `TimelineView` ticking once a minute per row forever, in a
-        // menu-bar utility whose user had just asked it to stop reading usage.
-        if let usage, hasContent(usage) {
+        // The cell exists for an account that is being tracked, whether or not it has numbers yet:
+        // one that is offline with no stored sample, or whose first fetch hasn't landed, still
+        // holds its width so the figures don't shove their neighbours around when they arrive.
+        //
+        // No cell at all when there is no `AccountUsage` — tracking switched off (the store is
+        // cleared, so every row is nil) or no refresh pass has reached this binding. Reserving
+        // unconditionally cost a 240pt sidebar a quarter of its identity column in the one
+        // configuration where the column can never fill, and left a `TimelineView` ticking once a
+        // minute per row forever, in a menu-bar utility whose user had just asked it to stop
+        // reading usage. A binding the first pass hasn't covered — a launcher added since the last
+        // check — is the one case that still settles once, when its account appears.
+        if let usage {
             content(usage)
                 .font(.caption2.monospacedDigit())
                 .lineLimit(1)
@@ -103,12 +108,6 @@ struct UsageAccessory: View {
                 // render would still read "resets in 29m" half an hour later.
                 .modifier(LiveHelp { helpText(usage: usage, now: $0) })
         }
-    }
-
-    /// Whether this account has anything to put in the cell — the gate that decides if the column
-    /// is reserved at all.
-    private func hasContent(_ usage: AccountUsage) -> Bool {
-        usage.attentionWord != nil || usage.displayLimit != nil
     }
 
     @ViewBuilder
