@@ -15,6 +15,12 @@ opt_in_rules:
 
 excluded:
   - .build
+  # Claude Code's worktree directory (git-ignored). Every entry here is resolved
+  # relative to this config, so `build` / `scripts` below do NOT cover the copies
+  # inside a worktree — without this line a single checked-out worktree drags its
+  # own build/ (vendored Sparkle sources) and scripts/ into the lint and fails the
+  # pre-commit hook on code that isn't even this working tree's.
+  - .claude/worktrees
   - .tmp-cache
   - build
   - DerivedData
