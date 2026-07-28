@@ -111,25 +111,27 @@ struct UsageDetailSection: View {
         // used to get no note either, so the pane fell silent in the very state it had most to say
         // about. Its failure is the whole story there.
         guard let usage else { return failure.map(Self.headerNote) }
+        /// Every state that still renders bars carries the reading's age. The figures have stopped
+        /// moving, the countdown beside them goes once their window elapses, and a state word alone
+        /// says nothing about *when* — so without a date a day-old 87% reads as the current quota.
+        /// `.stale` already names its own age, and `.fresh` is the one state whose numbers are
+        /// current by definition.
+        func dated(_ text: String, _ warn: Bool) -> (text: String, warn: Bool) {
+            guard let capturedAt = usage.snapshot?.capturedAt else { return (text, warn) }
+            return ("\(text) · as of \(UsageFormat.age(capturedAt, now: now))", warn)
+        }
         switch usage.state {
         case .fresh:
             return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
         case let .stale(since): return ("stale · \(UsageFormat.age(since, now: now))", false)
-        case .rateLimited: return ("rate limited", true)
-        case .offline: return ("offline", false)
-        case .loginNeeded: return ("sign in to refresh", true)
+        case .rateLimited: return dated("rate limited", true)
+        case .offline: return dated("offline", false)
+        case .loginNeeded: return dated("sign in to refresh", true)
         // `.noSource` collapses every token-read failure, so the remedy comes from the cause it
         // carries — a signed-out account must not be told to authorize the keychain.
-        //
-        // Dated, always. These bars are a carried-forward reading whose account we can no longer
-        // reach, and every other cue that they have stopped moving is gone here: `.fresh`'s
-        // "updated N min ago" doesn't render, the countdown is dropped once the window elapses, and
-        // a signed-out profile is deliberately not tinted. Without the age, a day-old 87% reads as
-        // the current quota.
         case let .noSource(reason):
             let note = Self.headerNote(reason)
-            guard let capturedAt = usage.snapshot?.capturedAt else { return note }
-            return ("\(note.text) · as of \(UsageFormat.age(capturedAt, now: now))", note.warn)
+            return dated(note.text, note.warn)
         }
     }
 
@@ -143,6 +145,9 @@ struct UsageDetailSection: View {
         switch failure {
         case .signedOut: ("signed out", false)
         case .noTokenCache: ("not signed in", false)
+        // A launcher created but never opened has no `config.json` until Claude first runs in it.
+        // Nothing is broken there either — it is the normal state of a profile waiting to be used.
+        case .configUnreadable: ("not set up yet", false)
         case let .keychainUnavailable(error):
             switch keychainNoteKind(error) {
             case .authorize: ("authorize keychain access", true)
@@ -182,10 +187,13 @@ struct UsageDetailSection: View {
         switch failure {
         case .signedOut: "Signed out — open Claude on this profile and sign in to see usage."
         case .noTokenCache: "This account isn't signed in on this profile."
+        case .configUnreadable: "Not set up yet — open this profile once, then Refresh."
         case let .keychainUnavailable(error):
             switch keychainNoteKind(error) {
-            case .authorize:
-                "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
+            // The reader is *in* Claude Manager, looking at this pane. Telling them to open it is
+            // the one instruction that cannot be followed — the collapse of the two note tables
+            // brought the wrong one of the pair across.
+            case .authorize: "Refresh to authorize keychain access."
             case .missing: keychainNotFoundNote
             case .error: "Usage source unavailable — a keychain error blocked the token."
             }

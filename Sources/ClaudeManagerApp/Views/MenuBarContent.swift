@@ -151,10 +151,12 @@ struct MenuBarContent: View {
         guard model.usageTrackingEnabled else { return "" }
         // No account for this binding at all: a profile already signed out when the app launched
         // has no snapshot to carry forward, so its bare failure is the only thing that can explain
-        // the blank. A binding no pass has reached yet has neither, and stays silent.
+        // the blank. Only a sign-out, though — the other ways to land here are permanent, normal
+        // states (see `UsageAccessory.attention`), and this row stays silent for them as it always
+        // did.
         guard let usage = model.usage(forBinding: bindingID) else {
-            return model.usageFailure(forBinding: bindingID)
-                .map { "  ·  \(AccountUsage.note(for: $0))" } ?? ""
+            guard model.usageFailure(forBinding: bindingID) == .signedOut else { return "" }
+            return "  ·  \(AccountUsage.note(for: .signedOut))"
         }
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
         // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live

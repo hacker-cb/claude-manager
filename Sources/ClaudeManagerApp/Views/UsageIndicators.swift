@@ -86,9 +86,21 @@ struct UsageAccessory: View {
 
     /// The word this cell prints instead of a percentage, and whether it reads as a warning — from
     /// whichever of the two sources can answer.
+    ///
+    /// The second source is deliberately narrow. A binding with no account has never produced usage
+    /// in this process, and most of the ways that happens are permanent, intentional states: a
+    /// launcher created but not yet opened has no `config.json` at all (`.configUnreadable`), and
+    /// the default binding of someone who only uses launchers is permanently `.noTokenCache`.
+    /// Speaking up for those puts a standing alert on a row whose condition is normal and which no
+    /// action clears — the false alarm this cell's tint discipline exists to avoid.
+    ///
+    /// `.signedOut` is the exception, and provably so: an encrypted *empty* cache exists only
+    /// because Desktop wrote one on logout, so that binding was signed in and no longer is. That is
+    /// the cold start this source was added for, and the only one it answers.
     private var attention: (word: String, warn: Bool)? {
         if let usage { return usage.attention }
-        return failure.map { (AccountUsage.attentionWord(for: $0), !$0.meansNotSignedIn) }
+        guard failure == .signedOut else { return nil }
+        return (AccountUsage.attentionWord(for: .signedOut), false)
     }
 
     var body: some View {
@@ -380,9 +392,22 @@ extension AccountUsage {
     /// discipline the figures beside it follow, applied to the identity. One rule, because the
     /// sidebar row and both pane headers all ask it and must not answer differently for one binding.
     static func accountLine(usage: AccountUsage?, failure: TokenProviderError?) -> String? {
-        var reason = failure
-        if let state = usage?.state, case let .noSource(carried) = state { reason = carried }
-        guard let reason, reason.meansNotSignedIn else { return usage?.identity.accountLabel }
+        if let usage {
+            // A binding that *had* an account and lost its login says so: something changed, and
+            // the e-mail it used to print is no longer true of it.
+            guard case let .noSource(reason) = usage.state, reason.meansNotSignedIn else {
+                return usage.identity.accountLabel
+            }
+            return stateLine(reason)
+        }
+        // Never had one. Only a sign-out speaks here — see `UsageAccessory.attention` for why a
+        // launcher that has never been opened, and a default binding nobody signed into, must not.
+        guard failure == .signedOut else { return nil }
+        return stateLine(.signedOut)
+    }
+
+    /// `note(for:)` as the opening of a line rather than a clause inside one.
+    private static func stateLine(_ reason: TokenProviderError) -> String {
         let note = note(for: reason)
         return note.prefix(1).uppercased() + note.dropFirst()
     }
