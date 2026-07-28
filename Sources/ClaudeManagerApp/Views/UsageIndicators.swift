@@ -372,6 +372,21 @@ extension AccountUsage {
         }
     }
 
+    /// The line that says *which account* a surface is showing: the Anthropic login, or — where the
+    /// binding holds none — that fact. Nil until a pass has learned either.
+    ///
+    /// A signed-out surface must not keep printing its former e-mail. The line answers a
+    /// present-tense question, and that account is one the profile no longer holds; the same
+    /// discipline the figures beside it follow, applied to the identity. One rule, because the
+    /// sidebar row and both pane headers all ask it and must not answer differently for one binding.
+    static func accountLine(usage: AccountUsage?, failure: TokenProviderError?) -> String? {
+        var reason = failure
+        if let state = usage?.state, case let .noSource(carried) = state { reason = carried }
+        guard let reason, reason.meansNotSignedIn else { return usage?.identity.accountLabel }
+        let note = note(for: reason)
+        return note.prefix(1).uppercased() + note.dropFirst()
+    }
+
     /// One word for a compact cell, taken from the failure's own `remedy` — the single
     /// classification, in core and tested there. Painted from rather than re-derived, so this cell
     /// and the detail pane cannot come to disagree about what fixes a given failure.

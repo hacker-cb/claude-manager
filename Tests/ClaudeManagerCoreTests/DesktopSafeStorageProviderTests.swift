@@ -302,6 +302,20 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
+    func anUndecodableCacheValueIsCorruptNotAbsent() async throws {
+        try await withTempDir { dir in
+            // The key is there, its value is not base64. That is a damaged config, not a profile
+            // nobody signed into — and the two must not share a code now that `.noTokenCache`
+            // offers a sign-in and drops the binding out of its account's fan-out.
+            let url = dir.appendingPathComponent("config.json")
+            try Data(#"{"oauth:tokenCacheV2":"not-base64!!"}"#.utf8).write(to: url)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.malformedCache))
+        }
+    }
+
+    @Test
     func lockedKeychainIsKeychainUnavailable() async throws {
         try await withTempDir { dir in
             let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)

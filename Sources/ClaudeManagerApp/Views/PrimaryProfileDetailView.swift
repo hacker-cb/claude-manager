@@ -48,7 +48,10 @@ struct PrimaryProfileDetailView: View {
                 Text("Default profile").font(.title2).bold()
                 // Mirrors the clone pane: the login identifies the account, so it belongs with
                 // the name rather than inside the Usage section.
-                if let account = model.usage(forBinding: TokenBinding.defaultID)?.identity.accountLabel {
+                if let account = AccountUsage.accountLine(
+                    usage: model.usage(forBinding: TokenBinding.defaultID),
+                    failure: model.usageFailure(forBinding: TokenBinding.defaultID)
+                ) {
                     Text(account).font(.callout).foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }

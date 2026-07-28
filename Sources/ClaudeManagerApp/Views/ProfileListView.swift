@@ -62,25 +62,10 @@ struct SidebarProfileRow<Leading: View>: View {
     let attentions: [LauncherAttention]
     @ViewBuilder let leading: Leading
 
-    /// The Anthropic login — what actually says *which account* a row is — or, where the row holds
-    /// none, that fact. Absent until the first usage pass learns either.
-    ///
-    /// A signed-out row must not keep printing its former e-mail: the line answers a present-tense
-    /// question, and the account is one this profile no longer holds. The same discipline the
-    /// figures follow, applied to the identity beside them.
+    /// The Anthropic login this row holds — or, where it holds none, that fact. Shared with both
+    /// detail-pane headers, which ask the same question of the same binding.
     private var subtitle: String? {
-        guard let reason = notSignedInReason else { return usage?.identity.accountLabel }
-        let note = AccountUsage.note(for: reason)
-        return note.prefix(1).uppercased() + note.dropFirst()
-    }
-
-    /// The failure behind this row holding no login at all, from whichever source carries it — nil
-    /// when the row has a login, or failed for a reason that leaves one in place.
-    private var notSignedInReason: TokenProviderError? {
-        var reason = failure
-        if let state = usage?.state, case let .noSource(carried) = state { reason = carried }
-        guard let reason, reason.meansNotSignedIn else { return nil }
-        return reason
+        AccountUsage.accountLine(usage: usage, failure: failure)
     }
 
     var body: some View {
