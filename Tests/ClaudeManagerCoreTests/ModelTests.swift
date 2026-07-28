@@ -166,7 +166,7 @@ struct ManagedProfileTests {
     }
 
     @Test
-    func attentionPicksTheMostSevereLauncherCondition() {
+    func attentionsCollapseTheHealthAxisButNeverMaskTheRestartNudge() {
         func managed(
             wrapper: Int, pid: Int32? = nil, running: String? = nil, available: String? = nil
         ) -> ManagedProfile {
@@ -179,25 +179,27 @@ struct ManagedProfileTests {
         let unsigned = CoreConstants.minimumRunnableWrapperVersion - 1
 
         // Nothing to say when the launcher is current and the running build is too.
-        #expect(managed(wrapper: current).attention == nil)
-        // An unsigned launcher satisfies `needsRebuild` as well, and the order must not let the
-        // mandatory rebuild be worded as the optional one.
-        #expect(managed(wrapper: unsigned).attention == .unrunnable)
+        #expect(managed(wrapper: current).attentions.isEmpty)
+        // An unsigned launcher satisfies `needsRebuild` as well, and the health axis must not let
+        // the mandatory rebuild be worded as the optional one.
+        #expect(managed(wrapper: unsigned).attentions == [.unrunnable])
+        // The two axes are independent: a restart nudge stands on its own, and would stand beside
+        // a health mark rather than behind it.
         #expect(
-            managed(wrapper: unsigned, pid: 42, running: "1.0.0", available: "2.0.0").attention
-                == .unrunnable
+            managed(wrapper: current, pid: 42, running: "1.0.0", available: "2.0.0").attentions
+                == [.claudeUpdate(version: "2.0.0")]
         )
-        // A restart nudge never outranks a launcher that needs rebuilding.
-        #expect(
-            managed(wrapper: current, pid: 42, running: "1.0.0", available: "2.0.0").attention
-                == .claudeUpdate(version: "2.0.0")
-        )
-        // `.rebuildAvailable` is stale-but-runnable, which only exists once the current wrapper
-        // rises above the signing floor. Today they are the same number, so there is no such
-        // version to construct — the case is asserted the moment one appears.
-        if current > CoreConstants.minimumRunnableWrapperVersion {
-            #expect(managed(wrapper: current - 1).attention == .rebuildAvailable)
-        }
+    }
+
+    @Test
+    func theSigningFloorNeverRisesAboveTheCurrentWrapper() {
+        // What makes `attentions`' health precedence load-bearing: `isUnrunnable` must stay a
+        // *subset* of `needsRebuild`, so a launcher macOS refuses to execute always also counts as
+        // stale and the `else if` can never be reached first. Asserted as the invariant rather
+        // than through a stale-but-runnable `ManagedProfile`, because while the two constants are
+        // equal no such version exists to construct — and a test that quietly cannot run is worse
+        // than one that states what it is really pinning.
+        #expect(CoreConstants.minimumRunnableWrapperVersion <= CoreConstants.currentWrapperVersion)
     }
 }
 

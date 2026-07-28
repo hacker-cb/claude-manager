@@ -62,23 +62,36 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
         return VersionOrder.isNewer(available, than: running)
     }
 
-    /// The one launcher condition a compact surface flags, or nil when there's nothing to say.
+    /// What this launcher needs from the user, in display order — empty when there's nothing to
+    /// say, and never more than one mark per axis.
     ///
-    /// The precedence is load-bearing, not cosmetic: `isUnrunnable` is a *subset* of
-    /// `needsRebuild`, so an unsigned launcher satisfies both and the wrong order would word a
-    /// hard failure ("won't launch") as the optional nudge it isn't. A restart-to-update comes
-    /// last — it's the only one of the three that isn't about the launcher being broken.
-    public var attention: LauncherAttention? {
-        if isUnrunnable { return .unrunnable }
-        if needsRebuild { return .rebuildAvailable }
-        if claudeUpdateAvailable { return .claudeUpdate(version: availableClaudeVersion) }
-        return nil
+    /// **Two axes, deliberately not collapsed into one.** Launcher health and Claude version are
+    /// independent conditions with different remedies, so folding them into a single "most severe"
+    /// value silently drops the other: a stale-but-runnable launcher whose running instance is
+    /// also behind the app on disk would show only the rebuild flag, while the rebuild it points
+    /// at is the one action unavailable to a *running* profile — leaving the restart that would
+    /// actually fix things unmentioned.
+    ///
+    /// Within the health axis the precedence *is* load-bearing: `isUnrunnable` is a subset of
+    /// `needsRebuild`, so an unsigned launcher satisfies both, and the wrong order would word a
+    /// hard failure ("won't launch") as the optional nudge it isn't.
+    public var attentions: [LauncherAttention] {
+        var marks: [LauncherAttention] = []
+        if isUnrunnable {
+            marks.append(.unrunnable)
+        } else if needsRebuild {
+            marks.append(.rebuildAvailable)
+        }
+        if claudeUpdateAvailable {
+            marks.append(.claudeUpdate(version: availableClaudeVersion))
+        }
+        return marks
     }
 }
 
-/// What a launcher needs from the user, as one value — so a row that has room for a single mark
-/// picks the same one everywhere instead of re-deriving the precedence per surface.
-public enum LauncherAttention: Equatable, Sendable {
+/// What a launcher needs from the user, as a value — so every surface renders the same marks
+/// instead of re-deriving the precedence, and the axes stay visible as separate cases.
+public enum LauncherAttention: Hashable, Sendable {
     /// macOS refuses to execute this launcher (built before ad-hoc signing) — a rebuild is
     /// mandatory, not optional.
     case unrunnable

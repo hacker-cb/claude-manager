@@ -57,8 +57,8 @@ struct SidebarProfileRow<Leading: View>: View {
     let account: String?
     let isRunning: Bool
     let usage: AccountUsage?
-    /// nil for the default profile, which has no launcher that could be broken or out of date.
-    let attention: LauncherAttention?
+    /// Empty for the default profile, which has no launcher that could be broken or out of date.
+    let attentions: [LauncherAttention]
     @ViewBuilder let leading: Leading
 
     var body: some View {
@@ -68,19 +68,19 @@ struct SidebarProfileRow<Leading: View>: View {
                 // statistic, and while it sat on the trailing side there was no single column
                 // there to align. Anchored to the 44pt column rather than to the badge itself —
                 // a `BadgeChip` is as wide as its label, so hanging the dot off the chip would
-                // put it at a different x in every row, which is the defect being fixed. The halo
-                // keeps an 8pt mark legible wherever it lands: a saturated badge corner, the row
-                // background, or the accent fill of a selected row.
+                // put it at a different x in every row, which is the defect being fixed.
+                //
+                // No opaque disc behind it, tempting as one is for legibility: the stopped state
+                // is a *hollow* ring whose interior is meant to be whatever the row is painted
+                // with, and filling that interior turns it back into the solid disc that means
+                // running — collapsing the shape channel this row introduces and leaving green
+                // vs grey as the only difference again.
                 .frame(width: 44, alignment: .center)
-                .overlay(alignment: .bottomTrailing) {
-                    StatusDot(isRunning: isRunning)
-                        .padding(1.5)
-                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
-                }
+                .overlay(alignment: .bottomTrailing) { StatusDot(isRunning: isRunning) }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(name).font(.body).lineLimit(1)
-                    if let attention { AttentionGlyph(attention: attention) }
+                    ForEach(attentions, id: \.self) { AttentionGlyph(attention: $0) }
                 }
                 if let account {
                     Text(account)
@@ -106,9 +106,7 @@ struct SidebarProfileRow<Leading: View>: View {
     }
 }
 
-/// The single launcher flag a row has room for, painted from the precedence core decides
-/// (`ManagedProfile.attention`). One mark, never two: an unsigned launcher that also has a Claude
-/// update pending says only the thing that stops it from starting.
+/// One launcher flag, painted from the marks core decides (`ManagedProfile.attentions`).
 struct AttentionGlyph: View {
     let attention: LauncherAttention
 
@@ -128,11 +126,15 @@ struct AttentionGlyph: View {
         }
     }
 
-    private var tint: Color {
+    /// Red and amber survive a selected row; blue does not — the selection fill *is* the accent
+    /// colour, so an informational blue glyph on the row the user just clicked is blue on blue.
+    /// The restart nudge takes a hierarchical style instead, for the same reason `UsageAccessory`
+    /// refuses `.accentColor` one column over; the glyph's own shape carries which mark it is.
+    private var tint: AnyShapeStyle {
         switch attention {
-        case .unrunnable: .red
-        case .rebuildAvailable: .orange
-        case .claudeUpdate: .blue
+        case .unrunnable: AnyShapeStyle(Color.red)
+        case .rebuildAvailable: AnyShapeStyle(Color.orange)
+        case .claudeUpdate: AnyShapeStyle(.secondary)
         }
     }
 
@@ -168,7 +170,7 @@ struct PrimaryProfileRow: View {
             account: usage?.identity.accountLabel,
             isRunning: status.isRunning,
             usage: usage,
-            attention: nil
+            attentions: []
         ) {
             // Sized to the clone rows' BadgeChip (22pt) so every row's leading mark lines up.
             Image(systemName: "person.crop.circle")
@@ -204,7 +206,7 @@ struct ProfileRow: View {
             account: model.usage(forBinding: managed.profile.id)?.identity.accountLabel,
             isRunning: managed.isRunning,
             usage: model.usage(forBinding: managed.profile.id),
-            attention: managed.attention
+            attentions: managed.attentions
         ) {
             BadgeChip(
                 label: managed.profile.label,

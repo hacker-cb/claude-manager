@@ -101,10 +101,16 @@ public struct UsageLimit: Codable, Sendable, Equatable {
     /// `shortLabel` clamped for a fixed-width surface. The sidebar reserves one column for the
     /// label + percentage, and `shortLabel` can be an arbitrary server string — a `rawKind` for a
     /// window this build doesn't recognize, or a long model name in a scoped one — which would
-    /// either overflow that column or push it around. Six characters keeps `5h` and `7d` whole and
-    /// leaves a scoped window recognizable (`7d·Fab`); the full label stays in the tooltip.
+    /// either overflow that column or push it around.
+    ///
+    /// The ellipsis is not decoration. A bare `prefix` turns `weekly_opus` and `weekly_sonnet`
+    /// into the same plausible-looking word, which reads as one window named "weekly" rather than
+    /// as an abbreviation — and the menu bar, which prints the full `shortLabel`, then looks like
+    /// it is talking about a different limit. Marking the cut keeps the two surfaces legible as
+    /// the same thing at two widths; the full label stays in the tooltip and the VoiceOver label.
     public var compactLabel: String {
-        String(shortLabel.prefix(6))
+        let full = shortLabel
+        return full.count <= 6 ? full : String(full.prefix(5)) + "…"
     }
 
     /// Utilization at which a surface turns amber, then red. Deliberately stricter than

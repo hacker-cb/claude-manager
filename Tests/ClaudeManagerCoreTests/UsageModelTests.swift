@@ -25,10 +25,15 @@ struct UsageModelTests {
         // The two windows a row usually shows pass through whole.
         #expect(limit(UsageLimit.kindSession).compactLabel == "5h")
         #expect(limit(UsageLimit.kindWeeklyAll).compactLabel == "7d")
-        // A scoped window stays recognizable at six characters; an unknown kind is a server
-        // string of any length and must not be able to overflow a fixed-width column.
-        #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fable").compactLabel == "7d·Fab")
-        #expect(limit("quantum_flux").compactLabel == "quantu")
+        // A six-character label still fits whole — the ellipsis costs a character, so it may only
+        // appear where something was actually dropped.
+        #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fab").compactLabel == "7d·Fab")
+        // Longer than the cell: cut, and *marked* as cut. Without the ellipsis `weekly_opus` and
+        // `weekly_sonnet` both render as a plausible window called "weekly" — one label for two
+        // limits, and neither matching the full spelling the menu bar prints for the same one.
+        #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fable").compactLabel == "7d·Fa…")
+        #expect(limit("weekly_opus").compactLabel == "weekl…")
+        #expect(limit("weekly_sonnet").compactLabel == "weekl…")
         // Clamping is a width concession only — the tooltip and VoiceOver keep the full label.
         #expect(limit(UsageLimit.kindWeeklyScoped, model: "Fable").shortLabel == "7d·Fable")
     }

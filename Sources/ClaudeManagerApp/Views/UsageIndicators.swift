@@ -62,10 +62,12 @@ struct UsageBar: View {
 
 /// The sidebar row's single trailing accessory: one fixed-width, right-aligned cell.
 ///
-/// Fixed width, always claimed — that is the whole fix. What stood here before was a
-/// `VStack(alignment: .trailing)` of children whose widths differed by an order of magnitude, so
-/// the only thing that ever agreed between rows was the right edge, which is not where the eye
-/// starts reading. Now a single cell means the figures line up as a column you can run down.
+/// One fixed width, claimed by every row that has anything to say — that is the whole fix. What
+/// stood here before was a `VStack(alignment: .trailing)` of children whose widths differed by an
+/// order of magnitude, so the only thing that ever agreed between rows was the right edge, which
+/// is not where the eye starts reading. A single cell makes the figures a column you can run down,
+/// and a row still waiting on its first refresh holds its place rather than shifting its
+/// neighbours when the numbers land.
 ///
 /// Text rather than a ring, because `UsageSnapshot.bindingLimit` picks the highest-utilization
 /// *active* window per account: one row's 97% can be a 5h window and the next row's a weekly one.
@@ -74,58 +76,73 @@ struct UsageBar: View {
 struct UsageAccessory: View {
     let usage: AccountUsage?
 
-    /// Wide enough for the longest thing the cell prints — a clamped scoped label plus a
-    /// three-digit percentage (`7d·Fab 100%`).
+    /// Wide enough for the longest thing the cell prints — a clamped window label plus a
+    /// three-digit percentage (`7d·Fa… 100%`).
     static let width: CGFloat = 66
 
     var body: some View {
-        content
-            .font(.caption2.monospacedDigit())
-            .lineLimit(1)
-            // Shrink rather than truncate: an ellipsis in a number is worse than a slightly
-            // smaller one, and only the rare scoped-window label ever reaches this.
-            .minimumScaleFactor(0.85)
-            .frame(width: Self.width, alignment: .trailing)
-            // The whole reserved cell is the hover target, not the glyph-width of the figure
-            // inside it. `7d 85%` is around 40pt of a 66pt column pinned to the row's trailing
-            // edge, so a tooltip attached to the text alone has to be hit almost exactly — the
-            // reset countdown lives in there and is the reason to hover at all.
-            .contentShape(Rectangle())
-            // Recomputed each minute so the countdown inside is live: a tooltip built once at
-            // render would still read "resets in 29m" half an hour later.
-            .modifier(LiveHelp { helpText(now: $0) })
+        // No cell at all when there is nothing to put in it — tracking switched off, or no refresh
+        // pass has reached this binding yet. Reserving the width unconditionally cost a 240pt
+        // sidebar a quarter of its identity column in the one configuration where the column can
+        // never fill, and left a `TimelineView` ticking once a minute per row forever, in a
+        // menu-bar utility whose user had just asked it to stop reading usage.
+        if let usage, hasContent(usage) {
+            content(usage)
+                .font(.caption2.monospacedDigit())
+                .lineLimit(1)
+                // Shrink rather than truncate: an ellipsis in a number is worse than a slightly
+                // smaller one, and only the rare scoped-window label ever reaches this.
+                .minimumScaleFactor(0.85)
+                .frame(width: Self.width, alignment: .trailing)
+                // The whole reserved cell is the hover target, not the glyph-width of the figure
+                // inside it. `7d 85%` is around 40pt of a 66pt column pinned to the row's trailing
+                // edge, so a tooltip attached to the text alone has to be hit almost exactly — the
+                // reset countdown lives in there and is the reason to hover at all.
+                .contentShape(Rectangle())
+                // Recomputed each minute so the countdown inside is live: a tooltip built once at
+                // render would still read "resets in 29m" half an hour later.
+                .modifier(LiveHelp { helpText(usage: usage, now: $0) })
+        }
     }
 
-    @ViewBuilder private var content: some View {
+    /// Whether this account has anything to put in the cell — the gate that decides if the column
+    /// is reserved at all.
+    private func hasContent(_ usage: AccountUsage) -> Bool {
+        usage.attentionWord != nil || usage.displayLimit != nil
+    }
+
+    @ViewBuilder
+    private func content(_ usage: AccountUsage) -> some View {
         // Attention replaces the figure rather than dimming it: a `loginNeeded` / `noSource`
         // account can still carry a stale snapshot (so `displayLimit` is non-nil), and a
         // plausible-looking percentage there hides the action the user has to take. The stale
         // numbers stay available in the detail pane.
-        if let usage, usage.needsAttention {
-            Text("Sign in").foregroundStyle(.orange)
-        } else if let usage, let limit = usage.displayLimit {
+        if let word = usage.attentionWord {
+            Text(word).foregroundStyle(.orange)
+        } else if let limit = usage.displayLimit {
             Text("\(limit.compactLabel) \(UsageFormat.percent(limit.utilization))")
                 .foregroundStyle(tint(limit.displaySeverity))
-                // Spelled out, and from the *unclamped* label: "7d 85%" read literally is a string
-                // of letters, and the cell's clamp is a width concession VoiceOver doesn't share.
-                .accessibilityLabel(
-                    "\(limit.shortLabel) window, \(UsageFormat.percent(limit.utilization)) used"
-                )
+                // Spelled out, from the *unclamped* label, and qualified when the figure has
+                // stopped moving: "7d 85%" read literally is a string of letters, the cell's clamp
+                // is a width concession VoiceOver doesn't share, and the dimming that tells a
+                // sighted user the number is frozen is invisible to a screen reader — which would
+                // otherwise hear an hour-old percentage announced as the current one.
+                .accessibilityLabel(accessibilityLabel(limit: limit, usage: usage))
                 // Dimmed once the number has stopped moving: a frozen figure drawn at full
                 // strength reads as live. The tooltip names the state.
                 .opacity(usage.isQuotableNow ? 1 : 0.55)
-        } else {
-            // Tracking off, or no refresh pass has reached this binding yet. The cell still claims
-            // its width so its neighbours don't shift when usage arrives.
-            Color.clear.frame(height: 0)
         }
     }
 
-    /// The cell's tooltip, or nil when the cell is empty — an empty `.help` would arm a hover
-    /// target that pops a blank box.
-    private func helpText(now: Date) -> String? {
-        guard let usage else { return nil }
-        if usage.needsAttention { return usage.stateNote }
+    private func accessibilityLabel(limit: UsageLimit, usage: AccountUsage) -> String {
+        let figure = "\(limit.shortLabel) window, \(UsageFormat.percent(limit.utilization)) used"
+        return usage.isQuotableNow ? figure : "\(figure), \(usage.stateNote)"
+    }
+
+    /// The cell's tooltip, or nil when there is nothing to say — an empty `.help` would arm a
+    /// hover target that pops a blank box.
+    private func helpText(usage: AccountUsage, now: Date) -> String? {
+        if usage.attentionWord != nil { return usage.stateNote }
         guard let limit = usage.displayLimit else { return nil }
         return tooltip(limit: limit, usage: usage, now: now)
     }
@@ -266,9 +283,23 @@ extension AccountUsage {
     /// Whether the account needs a user action (a re-login / authorization) — surfaced even
     /// without a snapshot to show.
     var needsAttention: Bool {
+        attentionWord != nil
+    }
+
+    /// The word a compact cell prints instead of a percentage when the account needs the user —
+    /// nil when it doesn't.
+    ///
+    /// Only `.loginNeeded` names an action, because it is the only one we can name: the API
+    /// rejected the token, so signing in is genuinely the fix. `.noSource` collapses a locked
+    /// keychain, a missing keychain item and an absent token cache, whose remedies differ and
+    /// none of which is a sign-in — telling that user to sign in sends them to do the one thing
+    /// that cannot help. This cell has no `TokenProviderError` to tell them apart (the detail
+    /// pane does, and words each case), so it stays honest by not instructing at all.
+    var attentionWord: String? {
         switch state {
-        case .loginNeeded, .noSource: true
-        default: false
+        case .loginNeeded: "Sign in"
+        case .noSource: "Unavailable"
+        case .fresh, .stale, .rateLimited, .offline: nil
         }
     }
 
