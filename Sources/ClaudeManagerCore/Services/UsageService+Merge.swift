@@ -17,11 +17,13 @@ public extension UsageService {
     /// last snapshot is kept and restated as `.noSource(reason)`, carrying why it failed to every
     /// surface rather than only to the ones wired to `bindingFailures`.
     ///
-    /// Two things that carry over unchanged and one that must not: the identity and the snapshot
-    /// are keyed by *this* binding, so they are its own history and stay; `bindingIDs` is the
-    /// account-level fan-out from the pass that resolved it, and a sibling that shared the login may
-    /// still be signed in — "shared with 2 profiles" over a login this binding no longer holds is
-    /// the one field that has become false, so it collapses to this binding alone.
+    /// The identity and the snapshot carry over unchanged: the map is keyed by binding, so they are
+    /// *this* binding's own history, not a sibling's. `bindingIDs` is the one field that can have
+    /// become false — it is the account-level fan-out from the pass that resolved it, and it stops
+    /// being true only when this binding leaves the account. So it collapses **only** for a failure
+    /// that means there is no login here at all. A keychain we merely couldn't read this tick
+    /// leaves the sharing exactly as it was, and collapsing it there made "shared with 2 profiles"
+    /// blink out of two panes on the first background poll after an "Allow"-not-"Always Allow".
     static func merge(
         previous: [String: AccountUsage],
         result: UsageRefreshResult
@@ -37,7 +39,7 @@ public extension UsageService {
             // shadowed by the failure its own previous pass recorded.
             guard byBinding[id] == nil, var kept = previous[id], kept.snapshot != nil else { continue }
             kept.state = .noSource(failure)
-            kept.bindingIDs = [id]
+            if failure.meansNotSignedIn { kept.bindingIDs = [id] }
             byBinding[id] = kept
         }
         return byBinding

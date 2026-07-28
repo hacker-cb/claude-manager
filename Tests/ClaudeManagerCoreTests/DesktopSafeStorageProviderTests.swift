@@ -399,20 +399,58 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func anEmptyCacheStillResolvesTheKeyForItsSiblings() async throws {
+    func anEmptyCacheStillElectsTheRightKeyForItsSiblings() async throws {
         try await withTempDir { dir in
             // `{}` is a valid JSON object, so it satisfies the probe's acceptance test — and it has
             // to keep doing so. A signed-out profile probed first in a fleet must resolve the shared
             // key, not reject it and leave every sibling unable to read its own token.
+            //
+            // Two keychain accounts, only the second holding the live password (the store sorts, so
+            // "Claude" is probed before "Claude Key"): the empty blob has to reject the stale
+            // candidate and elect the live one. `isUnlocked` is the assertion that can actually
+            // fail — a probe that refused `{}` would cache nothing and leave the store locked.
             let empty = try writeConfig(cache: [:], into: dir, name: "signed-out.json")
             let live = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
-            let subject = provider(keychain: StubKeychain(result: .success(password)))
+            let store = SafeStorageKeyStore(keychain: PerAccountKeychain(byAccount: [
+                "Claude": .success(Data("stale-password".utf8)),
+                "Claude Key": .success(password)
+            ]))
+            let subject = DesktopSafeStorageProvider(keyStore: store)
 
             let out = await subject.token(for: TokenBinding(id: "out", configURL: empty), interactive: false)
             #expect(out == .failure(.signedOut))
+            #expect(await store.isUnlocked)
+            // And the key it cached is the live one, not the stale sibling's.
             let token = try await subject
                 .token(for: TokenBinding(id: "live", configURL: live), interactive: false).get()
             #expect(token.token == "T")
+        }
+    }
+
+    @Test
+    func bothCacheKeysEmptyIsStillSignedOut() async throws {
+        try await withTempDir { dir in
+            // The shape a real logout leaves: Desktop empties v2 *and* v1, so there is no unread
+            // sibling that could hold a live token and the sign-in remedy is safe to name.
+            let url = try writeConfig(v2: [:], v1: [:], into: dir)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func anEmptyV2BesideAPopulatedV1DoesNotClaimSignedOut() async throws {
+        try await withTempDir { dir in
+            // The election takes v2 over v1 by presence, not by content, so an empty v2 sitting
+            // beside a populated v1 must not be reported as a sign-out: that would tell a signed-in
+            // user to sign in again, to no effect. We haven't read the sibling, so we say the
+            // weaker, true thing — which is exactly what this config produced before `.signedOut`
+            // existed.
+            let url = try writeConfig(v2: [:], v1: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.noUsableEntry))
         }
     }
 

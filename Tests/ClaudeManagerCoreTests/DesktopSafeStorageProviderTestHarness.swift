@@ -93,6 +93,29 @@ extension DesktopSafeStorageProviderTests {
         return url
     }
 
+    /// Write a `config.json` carrying **both** cache keys, encrypted separately. The shape that
+    /// decides whether an empty elected cache may claim `.signedOut`: the election takes v2 over v1
+    /// by presence, so a populated sibling must hold it back.
+    func writeConfig(
+        v2: [String: Any],
+        v1: [String: Any],
+        into dir: URL,
+        name: String = "config.json"
+    ) throws -> URL {
+        let key = SafeStorageDecryptor.deriveKey(password: password)!
+        let v2Blob = try SafeStorageDecryptorTests
+            .makeV10Blob(JSONSerialization.data(withJSONObject: v2), key: key)
+        let v1Blob = try SafeStorageDecryptorTests
+            .makeV10Blob(JSONSerialization.data(withJSONObject: v1), key: key)
+        let root: [String: Any] = [
+            CoreConstants.desktopTokenCacheKeyV2: v2Blob.base64EncodedString(),
+            CoreConstants.desktopTokenCacheKeyV1: v1Blob.base64EncodedString()
+        ]
+        let url = dir.appendingPathComponent(name)
+        try JSONSerialization.data(withJSONObject: root).write(to: url)
+        return url
+    }
+
     func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
         DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
     }

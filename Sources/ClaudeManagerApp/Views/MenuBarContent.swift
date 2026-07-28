@@ -148,7 +148,14 @@ struct MenuBarContent: View {
     }
 
     private func usageSuffix(_ bindingID: String) -> String {
-        guard model.usageTrackingEnabled, let usage = model.usage(forBinding: bindingID) else { return "" }
+        guard model.usageTrackingEnabled else { return "" }
+        // No account for this binding at all: a profile already signed out when the app launched
+        // has no snapshot to carry forward, so its bare failure is the only thing that can explain
+        // the blank. A binding no pass has reached yet has neither, and stays silent.
+        guard let usage = model.usage(forBinding: bindingID) else {
+            return model.usageFailure(forBinding: bindingID)
+                .map { "  ·  \(AccountUsage.note(for: $0))" } ?? ""
+        }
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
         // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
         // countdown, with no room to qualify it — would read as current, so say the state instead.

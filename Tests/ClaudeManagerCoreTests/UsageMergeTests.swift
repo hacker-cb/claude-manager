@@ -92,6 +92,26 @@ struct UsageMergeTests {
     }
 
     @Test
+    func aTransientFailureKeepsTheBindingIDsItStillShares() {
+        // A keychain that couldn't be read leaves the login — and therefore the sharing — exactly
+        // as it was. Collapsing here made "shared with 2 profiles" blink out of both panes on the
+        // first background poll after an "Allow" that wasn't an "Always Allow".
+        let shared = account(uuid: "A", snapshot: snapshot(0.3), bindingIDs: ["one", "two"])
+        let merged = UsageService.merge(
+            previous: ["one": shared, "two": shared],
+            result: UsageRefreshResult(
+                accounts: [],
+                bindingFailures: [
+                    "one": .keychainUnavailable(.interactionNotAllowed),
+                    "two": .keychainUnavailable(.interactionNotAllowed)
+                ]
+            )
+        )
+        #expect(merged["one"]?.bindingIDs == ["one", "two"])
+        #expect(merged["two"]?.bindingIDs == ["one", "two"])
+    }
+
+    @Test
     func theCarriedForwardStateNamesTheFailureThatCausedIt() {
         // The whole point of the payload: the reason has to survive the fold, or the sidebar and
         // the menu bar — which read `UsageState` and nothing else — cannot name a remedy.

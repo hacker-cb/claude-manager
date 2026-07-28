@@ -98,6 +98,57 @@ public enum TokenProviderError: Error, Equatable, Sendable {
     case noUsableEntry
 }
 
+public extension TokenProviderError {
+    /// What the user can actually do about a failure — the **one** classification every surface
+    /// paints from.
+    ///
+    /// Kept apart from the copy itself because the copy legitimately differs per surface (a 66pt
+    /// sidebar cell, a spoken VoiceOver label, a full sentence in the pane) while the rule behind
+    /// it must not: four tables each deciding on their own that `.interactionNotAllowed` means
+    /// "authorize" is how a sidebar comes to say "Sign in" over a pane saying "source unavailable"
+    /// for the same binding.
+    enum Remedy: Sendable, Equatable {
+        /// Open Claude on this profile and sign in.
+        case signIn
+        /// Grant Claude Manager access to Claude's keychain item.
+        case authorizeKeychain
+        /// Nothing we can name — a missing keychain item, an unreadable config, a cache holding no
+        /// entry of ours. Naming one anyway sends the user to do something that cannot help.
+        case none
+    }
+
+    var remedy: Remedy {
+        switch self {
+        case .signedOut, .noTokenCache: .signIn
+        case .keychainUnavailable(.interactionNotAllowed): .authorizeKeychain
+        case .configUnreadable, .keychainUnavailable, .decryptFailed, .malformedCache, .noUsableEntry: .none
+        }
+    }
+
+    /// Whether the binding holds **no Claude login at all**, as opposed to a login we momentarily
+    /// couldn't read.
+    ///
+    /// The distinction decides what may be carried forward from a previous pass: a locked keychain
+    /// leaves the account intact, so its stored fan-out across sibling launchers is still true; a
+    /// binding with no login is no longer part of any account's fan-out.
+    var meansNotSignedIn: Bool {
+        switch self {
+        case .signedOut, .noTokenCache: true
+        case .configUnreadable, .keychainUnavailable, .decryptFailed, .malformedCache, .noUsableEntry: false
+        }
+    }
+
+    /// Whether the cache decrypted to valid JSON — proof the safeStorage key in hand is the right
+    /// one, whatever the binding then failed on. A fleet holding one of these cannot be suffering
+    /// a rotated key, so re-deriving it is futile work to repeat on every tick.
+    var provesKeyDecrypts: Bool {
+        switch self {
+        case .signedOut, .noUsableEntry: true
+        case .configUnreadable, .noTokenCache, .keychainUnavailable, .decryptFailed, .malformedCache: false
+        }
+    }
+}
+
 /// Resolves a `DesktopToken` for a binding. Behind a protocol so the resolver and tests can
 /// swap the real safeStorage-backed provider for a stub.
 public protocol TokenProvider: Sendable {

@@ -38,11 +38,15 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.configUnreadable)
         }
 
-        let cacheString = (root[CoreConstants.desktopTokenCacheKeyV2] as? String)
-            ?? (root[CoreConstants.desktopTokenCacheKeyV1] as? String)
+        let v2 = root[CoreConstants.desktopTokenCacheKeyV2] as? String
+        let v1 = root[CoreConstants.desktopTokenCacheKeyV1] as? String
+        let cacheString = v2 ?? v1
         guard let cacheString, let blob = Data(base64Encoded: cacheString) else {
             return .failure(.noTokenCache)
         }
+        // Whether a second, *different* cache sits beside the one elected above. Only the
+        // empty-cache verdict cares — see there.
+        let hasUnreadSibling = [v2, v1].compactMap(\.self).contains { $0 != cacheString }
 
         // Resolve the safeStorage key by which keychain account's password actually decrypts this
         // blob — the account name under the service varies by Claude Desktop version (`Claude` vs
@@ -108,7 +112,12 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // Told apart from `.noUsableEntry` below, which keeps its meaning of "entries exist, none
         // of them ours": a UI that offers "sign in" for a cache full of another client's tokens
         // sends the user to do the one thing that cannot help.
-        guard !cache.isEmpty else { return .failure(.signedOut) }
+        //
+        // Claimed only when nothing else on this profile could hold a live token. The election
+        // above takes v2 over v1 by presence, not by content, so an empty v2 beside a populated v1
+        // would otherwise report a *signed-in* profile as signed out and send the user to sign in
+        // again to no effect. We haven't read that sibling, so we say the weaker, true thing.
+        guard !cache.isEmpty else { return .failure(hasUnreadSibling ? .noUsableEntry : .signedOut) }
 
         guard let (compositeKey, value) = pickEntry(from: cache) else {
             return .failure(.noUsableEntry)

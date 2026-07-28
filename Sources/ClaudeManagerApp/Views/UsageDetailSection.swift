@@ -120,7 +120,16 @@ struct UsageDetailSection: View {
         case .loginNeeded: return ("sign in to refresh", true)
         // `.noSource` collapses every token-read failure, so the remedy comes from the cause it
         // carries — a signed-out account must not be told to authorize the keychain.
-        case let .noSource(reason): return Self.headerNote(reason)
+        //
+        // Dated, always. These bars are a carried-forward reading whose account we can no longer
+        // reach, and every other cue that they have stopped moving is gone here: `.fresh`'s
+        // "updated N min ago" doesn't render, the countdown is dropped once the window elapses, and
+        // a signed-out profile is deliberately not tinted. Without the age, a day-old 87% reads as
+        // the current quota.
+        case let .noSource(reason):
+            let note = Self.headerNote(reason)
+            guard let capturedAt = usage.snapshot?.capturedAt else { return note }
+            return ("\(note.text) · as of \(UsageFormat.age(capturedAt, now: now))", note.warn)
         }
     }
 
@@ -162,8 +171,13 @@ struct UsageDetailSection: View {
     }
 
     /// The full-sentence note for a token-read failure — the state named, and a remedy that can
-    /// actually fix it. One table for both paths (a kept-snapshot `.noSource` and a binding with no
-    /// entry at all): they used to be two near-identical switches free to drift on a word.
+    /// actually fix it.
+    ///
+    /// Reached in practice only through the no-entry path: `UsageService.merge` produces
+    /// `.noSource` solely for a binding that had a snapshot to carry, so the `.noSource` arm above
+    /// is the defensive half of the pair and does not render today. One table for both anyway —
+    /// they were two near-identical switches free to drift on a word, and the invariant that keeps
+    /// one of them quiet lives in another module.
     private static func emptySentence(_ failure: TokenProviderError) -> String {
         switch failure {
         case .signedOut: "Signed out — open Claude on this profile and sign in to see usage."
@@ -213,18 +227,28 @@ private struct LimitRow: View {
     /// Whether the percentage beside the countdown is still moving.
     let isLive: Bool
 
+    /// The reset phrase to print beside the percentage, or nil to print none.
+    ///
+    /// Printed while the window is still ahead, whatever the account's state: that timestamp is the
+    /// server's own and stays true through a stale or rate-limited pass, where on a near-full
+    /// weekly row it is the most useful figure there is.
+    ///
+    /// Dropped once the window has elapsed on figures that are no longer moving.
+    /// `UsageFormat.resets` says "resetting…" for an elapsed window — true of a fresh reading, and
+    /// a permanent, ticking lie for a carried-forward one whose window reset hours ago. The header
+    /// carries the state and the age instead.
+    private var resets: String? {
+        guard let resetsAt = limit.resetsAt, isLive || resetsAt > now else { return nil }
+        return UsageFormat.resets(resetsAt, now: now)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.callout)
             UsageBar(fraction: limit.utilization, level: limit.displaySeverity)
             HStack(spacing: 6) {
                 Text("\(UsageFormat.percent(limit.utilization)) used").font(.caption)
-                // The countdown is dropped once the figures stop moving — signed out, offline,
-                // rate-limited, stale. It is the one element on this row that keeps updating, so
-                // beside a frozen percentage it is what makes the whole row read as live; and for a
-                // carried-forward snapshot its window has often already elapsed, which the section's
-                // ticker renders as a permanent "resetting…". The header names the state instead.
-                if isLive, let resets = UsageFormat.resets(limit.resetsAt, now: now) {
+                if let resets {
                     Text("· \(resets)").font(.caption).foregroundStyle(.secondary)
                 }
             }

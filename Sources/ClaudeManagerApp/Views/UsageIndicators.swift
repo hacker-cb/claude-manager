@@ -74,10 +74,22 @@ struct UsageBar: View {
 /// the number is a percentage of.
 struct UsageAccessory: View {
     let usage: AccountUsage?
+    /// Why this binding's token couldn't be read, for the shape that has no `AccountUsage` to carry
+    /// the reason itself: a profile already signed out when the app launched has no stored snapshot
+    /// to carry forward, so no pass ever produces an account for it. Without this second source the
+    /// cell went blank on exactly the cold start it most needs to speak up on.
+    var failure: TokenProviderError?
 
     /// Wide enough for the longest thing the cell prints — a clamped window label plus a
     /// three-digit percentage (`7d·Fa… 100%`).
     static let width: CGFloat = 66
+
+    /// The word this cell prints instead of a percentage, and whether it reads as a warning — from
+    /// whichever of the two sources can answer.
+    private var attention: (word: String, warn: Bool)? {
+        if let usage { return usage.attention }
+        return failure.map { (AccountUsage.attentionWord(for: $0), !$0.meansNotSignedIn) }
+    }
 
     var body: some View {
         // The cell exists for an account that is being tracked, whether or not it has numbers yet:
@@ -91,8 +103,8 @@ struct UsageAccessory: View {
         // minute per row forever, in a menu-bar utility whose user had just asked it to stop
         // reading usage. A binding the first pass hasn't covered — a launcher added since the last
         // check — is the one case that still settles once, when its account appears.
-        if let usage {
-            content(usage)
+        if usage != nil || attention != nil {
+            content
                 .font(.caption2.monospacedDigit())
                 .lineLimit(1)
                 // Shrink rather than truncate: an ellipsis in a number is worse than a slightly
@@ -106,19 +118,25 @@ struct UsageAccessory: View {
                 .contentShape(Rectangle())
                 // Recomputed each minute *when* it has a countdown inside: a live tooltip built
                 // once at render would still read "resets in 29m" half an hour later.
-                .modifier(LiveHelp(tooltip: tooltip(usage: usage)))
+                .modifier(LiveHelp(tooltip: tooltip))
         }
     }
 
     @ViewBuilder
-    private func content(_ usage: AccountUsage) -> some View {
+    private var content: some View {
         // Attention replaces the figure rather than dimming it: a `loginNeeded` / `noSource`
         // account can still carry a stale snapshot (so `displayLimit` is non-nil), and a
         // plausible-looking percentage there hides the action the user has to take. The stale
         // numbers stay available in the detail pane.
-        if let word = usage.attentionWord {
-            Text(word).foregroundStyle(.orange)
-        } else if let limit = usage.displayLimit {
+        //
+        // Tinted by the same rule the detail pane's header uses, not orange-for-everything: a
+        // deliberate sign-out is an action to take, not a malfunction, and painting it as an alert
+        // here while the pane it links to calls it unremarkable is how a warning colour stops
+        // meaning anything.
+        if let attention {
+            Text(attention.word)
+                .foregroundStyle(attention.warn ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+        } else if let limit = usage?.displayLimit, let usage {
             Text("\(limit.compactLabel) \(UsageFormat.percent(limit.utilization))")
                 .foregroundStyle(tint(limit.displaySeverity))
                 // Spelled out, from the *unclamped* label, and qualified when the figure has
@@ -146,10 +164,18 @@ struct UsageAccessory: View {
     /// - one with a snapshot prints a reset countdown and an "as of" age, which do move;
     /// - one being tracked with neither yet — the first fetch hasn't landed, or it is offline with
     ///   no stored sample — has nothing to say, and the cell still claims its width in that state.
-    private func tooltip(usage: AccountUsage) -> Tooltip {
-        if usage.attentionWord != nil { return .fixed(usage.stateNote) }
-        guard let limit = usage.displayLimit else { return .silent }
+    private var tooltip: Tooltip {
+        if let note = attentionNote { return .fixed(note) }
+        guard let usage, let limit = usage.displayLimit else { return .silent }
         return .live { liveText(limit: limit, usage: usage, now: $0) }
+    }
+
+    /// The phrase behind an attention word. Constant by construction from either source, which is
+    /// what lets the dispatch above take `Tooltip.fixed` and skip the minute ticker.
+    private var attentionNote: String? {
+        guard attention != nil else { return nil }
+        if let usage { return usage.stateNote }
+        return failure.map(AccountUsage.note(for:))
     }
 
     /// Normal is *hierarchical*, not a literal colour, and that is the point: a selected sidebar
@@ -302,14 +328,8 @@ extension AccountUsage {
         state == .fresh
     }
 
-    /// Whether the account needs a user action (a re-login / authorization) — surfaced even
-    /// without a snapshot to show.
-    var needsAttention: Bool {
-        attentionWord != nil
-    }
-
-    /// The word a compact cell prints instead of a percentage when the account needs the user —
-    /// nil when it doesn't.
+    /// The word a compact cell prints instead of a percentage when the account needs the user, and
+    /// whether that reads as a warning — nil when it needs nothing.
     ///
     /// A remedy is named only where one exists, which is why this used to name none for
     /// `.noSource`: the case collapsed a locked keychain, a missing keychain item and an absent
@@ -317,12 +337,22 @@ extension AccountUsage {
     /// reason now, so the two causes a sign-in genuinely fixes say so, an access refusal points at
     /// the thing that grants it, and everything else — a missing item, an unreadable config, a
     /// cache holding no entry of ours — keeps the non-instructing word it deserves.
-    var attentionWord: String? {
+    ///
+    /// `warn` is false for a profile with no login: the user did that on purpose and nothing is
+    /// broken. A rejected token (`.loginNeeded`) and a keychain that malfunctioned are surprises,
+    /// and keep the colour.
+    var attention: (word: String, warn: Bool)? {
         switch state {
-        case .loginNeeded: "Sign in"
-        case let .noSource(reason): Self.noSourceWord(reason)
+        case .loginNeeded: ("Sign in", true)
+        case let .noSource(reason): (Self.attentionWord(for: reason), !reason.meansNotSignedIn)
         case .fresh, .stale, .rateLimited, .offline: nil
         }
+    }
+
+    /// Just the word. `UsageAccessory`'s tooltip dispatch keys on this being non-nil to prove the
+    /// phrase beside it cannot move, so it stays a plain derived property.
+    var attentionWord: String? {
+        attention?.word
     }
 
     /// Human phrase for a non-fresh state, for tooltips / placeholders.
@@ -337,31 +367,34 @@ extension AccountUsage {
         case let .stale(since): "as of \(UsageFormat.age(since))"
         case .loginNeeded: "login needed"
         case .rateLimited: "rate limited"
-        case let .noSource(reason): Self.noSourceNote(reason)
+        case let .noSource(reason): Self.note(for: reason)
         case .offline: "offline"
         }
     }
 
-    /// One word for a compact cell, keyed on why the token couldn't be read. `default` rather than
-    /// an exhaustive list on purpose: a reason this build doesn't recognize gets the word that
-    /// instructs nobody, which is the safe answer for a cause whose remedy we can't name.
-    private static func noSourceWord(_ reason: TokenProviderError) -> String {
-        switch reason {
-        case .signedOut, .noTokenCache: "Sign in"
-        case .keychainUnavailable(.interactionNotAllowed): "Authorize"
-        default: "Unavailable"
+    /// One word for a compact cell, taken from the failure's own `remedy` — the single
+    /// classification, in core and tested there. Painted from rather than re-derived, so this cell
+    /// and the detail pane cannot come to disagree about what fixes a given failure.
+    static func attentionWord(for reason: TokenProviderError) -> String {
+        switch reason.remedy {
+        case .signIn: "Sign in"
+        case .authorizeKeychain: "Authorize"
+        case .none: "Unavailable"
         }
     }
 
-    /// The same three-way split as a lowercase phrase, for a tooltip or a menu row. Signed-out and
-    /// never-signed-in differ only in tense, and the tense is the useful part: one says the login
-    /// went away, the other that it was never made.
-    private static func noSourceNote(_ reason: TokenProviderError) -> String {
+    /// The same classification as a lowercase phrase, for a tooltip or a menu row. Signed-out and
+    /// never-signed-in share a remedy but not a tense, and the tense is the useful part here: one
+    /// says the login went away, the other that it was never made.
+    static func note(for reason: TokenProviderError) -> String {
         switch reason {
         case .signedOut: "signed out"
         case .noTokenCache: "not signed in"
-        case .keychainUnavailable(.interactionNotAllowed): "authorize keychain access"
-        default: "not available"
+        default:
+            switch reason.remedy {
+            case .authorizeKeychain: "authorize keychain access"
+            case .signIn, .none: "not available"
+            }
         }
     }
 }
