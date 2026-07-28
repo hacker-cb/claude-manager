@@ -35,19 +35,4 @@ struct TokenProviderErrorTests {
         #expect(!TokenProviderError.noUsableEntry.meansNotSignedIn)
         #expect(!TokenProviderError.configUnreadable.meansNotSignedIn)
     }
-
-    @Test
-    func onlyAParsedCacheProvesTheKeyDecrypts() {
-        // Both of these got as far as valid JSON, so the key is right whatever came next.
-        #expect(TokenProviderError.signedOut.provesKeyDecrypts)
-        #expect(TokenProviderError.noUsableEntry.provesKeyDecrypts)
-        // `.malformedCache` is the opposite: plaintext that isn't a JSON object is a wrong-key
-        // symptom, so it must not veto the fleet's key recovery.
-        #expect(!TokenProviderError.malformedCache.provesKeyDecrypts)
-        #expect(!TokenProviderError.decryptFailed(.decryptFailed).provesKeyDecrypts)
-        // These never reached a decrypt at all.
-        #expect(!TokenProviderError.noTokenCache.provesKeyDecrypts)
-        #expect(!TokenProviderError.configUnreadable.provesKeyDecrypts)
-        #expect(!TokenProviderError.keychainUnavailable(.interactionNotAllowed).provesKeyDecrypts)
-    }
 }

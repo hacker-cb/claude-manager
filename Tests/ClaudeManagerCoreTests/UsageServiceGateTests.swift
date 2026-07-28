@@ -185,16 +185,14 @@ extension UsageServiceTests {
     }
 
     @Test
-    func aSuccessfulDecryptAnywhereInTheFleetVetoesSelfHeal() {
-        // `.signedOut` and `.noUsableEntry` both mean the blob decrypted to valid JSON, which is
-        // proof the key in hand is correct. Re-deriving it cannot help the sibling that failed on
-        // padding, and doing so every tick is the futile keychain-read + PBKDF2 loop the
-        // wrong-key rule already refuses for a blob-shape failure.
+    func aCleanlyDecryptedSiblingNeitherTriggersNorBlocksSelfHeal() {
+        // `.signedOut` decrypted to valid JSON, so on its own it is no evidence of a rotated key.
+        // But it must not *veto* recovery either, tempting as that is to spare a futile re-derive:
+        // a profile signed out long ago keeps a cache written under the key of its day, so after a
+        // rotation it still decrypts while every live profile's rewritten cache does not — and a
+        // veto there would strand the whole fleet with no usage until relaunch.
         let rotated = TokenProviderError.decryptFailed(.decryptFailed)
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .signedOut]))
-        #expect(!UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .signedOut]))
-        #expect(!UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .noUsableEntry]))
-        // …and a fleet with no such proof still recovers from a genuine rotation.
-        #expect(UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .noTokenCache]))
+        #expect(UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .signedOut]))
     }
 }

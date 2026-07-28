@@ -137,16 +137,6 @@ public extension TokenProviderError {
         case .configUnreadable, .keychainUnavailable, .decryptFailed, .malformedCache, .noUsableEntry: false
         }
     }
-
-    /// Whether the cache decrypted to valid JSON — proof the safeStorage key in hand is the right
-    /// one, whatever the binding then failed on. A fleet holding one of these cannot be suffering
-    /// a rotated key, so re-deriving it is futile work to repeat on every tick.
-    var provesKeyDecrypts: Bool {
-        switch self {
-        case .signedOut, .noUsableEntry: true
-        case .configUnreadable, .noTokenCache, .keychainUnavailable, .decryptFailed, .malformedCache: false
-        }
-    }
 }
 
 /// Resolves a `DesktopToken` for a binding. Behind a protocol so the resolver and tests can

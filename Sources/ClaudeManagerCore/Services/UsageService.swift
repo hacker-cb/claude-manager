@@ -296,15 +296,16 @@ public struct UsageService: Sendable {
     /// failure to be crypto-related meant the always-present default-account binding — permanently
     /// `.noTokenCache` for anyone who only uses launchers — silently disabled recovery for the
     /// whole fleet, leaving a rotated key stuck behind a process-lifetime cache until relaunch.
+    /// A binding that decrypted cleanly — `.signedOut`, `.noUsableEntry` — looks like proof the key
+    /// in hand is right, and it is tempting to let one **veto** recovery so a permanently corrupt
+    /// sibling cannot re-derive the key on every tick. It must not. The proof is only about *that*
+    /// binding: a profile signed out long ago keeps a cache written under the key of its day, so
+    /// after a rotation it still decrypts while every live profile's rewritten cache does not.
+    /// Vetoing there strands the whole fleet with no usage until the app is relaunched — a far
+    /// worse outcome than the wasted keychain read the veto was meant to save. So they abstain:
+    /// neither evidence of rotation nor a block on it.
     private static func shouldSelfHeal(_ resolved: ResolvedAccounts) -> Bool {
         guard resolved.accounts.isEmpty else { return false }
-        // A binding that decrypted its cache to valid JSON proves the key in hand is the right one,
-        // whatever it then failed on — signed out, or holding no entry of ours. Rotation is then
-        // ruled out, and invalidating anyway re-enumerates the keychain and re-derives PBKDF2 on
-        // every tick without ever succeeding: the same futile loop this function already refuses
-        // for a blob-*shape* failure, arrived at from the opposite direction. Checked before the
-        // evidence below, so one corrupt blob beside a signed-out sibling cannot start it.
-        guard !resolved.failures.values.contains(where: \.provesKeyDecrypts) else { return false }
         return resolved.failures.values.contains(where: isWrongKeyEvidence)
     }
 
