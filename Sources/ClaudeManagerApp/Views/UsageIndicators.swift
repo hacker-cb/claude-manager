@@ -311,29 +311,57 @@ extension AccountUsage {
     /// The word a compact cell prints instead of a percentage when the account needs the user —
     /// nil when it doesn't.
     ///
-    /// Only `.loginNeeded` names an action, because it is the only one we can name: the API
-    /// rejected the token, so signing in is genuinely the fix. `.noSource` collapses a locked
-    /// keychain, a missing keychain item and an absent token cache, whose remedies differ and
-    /// none of which is a sign-in — telling that user to sign in sends them to do the one thing
-    /// that cannot help. This cell has no `TokenProviderError` to tell them apart (the detail
-    /// pane does, and words each case), so it stays honest by not instructing at all.
+    /// A remedy is named only where one exists, which is why this used to name none for
+    /// `.noSource`: the case collapsed a locked keychain, a missing keychain item and an absent
+    /// token cache, and the cell had no `TokenProviderError` to tell them apart. It carries the
+    /// reason now, so the two causes a sign-in genuinely fixes say so, an access refusal points at
+    /// the thing that grants it, and everything else — a missing item, an unreadable config, a
+    /// cache holding no entry of ours — keeps the non-instructing word it deserves.
     var attentionWord: String? {
         switch state {
         case .loginNeeded: "Sign in"
-        case .noSource: "Unavailable"
+        case let .noSource(reason): Self.noSourceWord(reason)
         case .fresh, .stale, .rateLimited, .offline: nil
         }
     }
 
     /// Human phrase for a non-fresh state, for tooltips / placeholders.
+    ///
+    /// A *constant-valued* property, and it has to stay one: `UsageAccessory.tooltip(usage:)` hands
+    /// an attention state to `Tooltip.fixed` precisely because this phrase cannot change while it
+    /// is on screen. Made a function of `now`, every one of those rows would arm a minute ticker
+    /// again for a sentence that never moves.
     var stateNote: String {
         switch state {
         case .fresh: "up to date"
         case let .stale(since): "as of \(UsageFormat.age(since))"
         case .loginNeeded: "login needed"
         case .rateLimited: "rate limited"
-        case .noSource: "not available"
+        case let .noSource(reason): Self.noSourceNote(reason)
         case .offline: "offline"
+        }
+    }
+
+    /// One word for a compact cell, keyed on why the token couldn't be read. `default` rather than
+    /// an exhaustive list on purpose: a reason this build doesn't recognize gets the word that
+    /// instructs nobody, which is the safe answer for a cause whose remedy we can't name.
+    private static func noSourceWord(_ reason: TokenProviderError) -> String {
+        switch reason {
+        case .signedOut, .noTokenCache: "Sign in"
+        case .keychainUnavailable(.interactionNotAllowed): "Authorize"
+        default: "Unavailable"
+        }
+    }
+
+    /// The same three-way split as a lowercase phrase, for a tooltip or a menu row. Signed-out and
+    /// never-signed-in differ only in tense, and the tense is the useful part: one says the login
+    /// went away, the other that it was never made.
+    private static func noSourceNote(_ reason: TokenProviderError) -> String {
+        switch reason {
+        case .signedOut: "signed out"
+        case .noTokenCache: "not signed in"
+        case .keychainUnavailable(.interactionNotAllowed): "authorize keychain access"
+        default: "not available"
         }
     }
 }

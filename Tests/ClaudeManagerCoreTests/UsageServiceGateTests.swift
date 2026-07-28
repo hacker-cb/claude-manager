@@ -182,5 +182,9 @@ extension UsageServiceTests {
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .decryptFailed(.notV10)]))
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .decryptFailed(.notBlockAligned)]))
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .noTokenCache]))
+        // A signed-out profile decrypted fine, so it is positive evidence the key is *right* — it
+        // must neither trigger recovery on its own nor block a sibling's genuine rotation evidence.
+        #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .signedOut]))
+        #expect(UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .signedOut]))
     }
 }

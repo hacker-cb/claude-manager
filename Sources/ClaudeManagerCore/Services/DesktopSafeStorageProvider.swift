@@ -103,6 +103,13 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.malformedCache)
         }
 
+        // Signing out leaves the key in place holding an encrypted `{}` rather than removing it, so
+        // an empty map here is a *signed-out* profile — the one failure whose remedy is a sign-in.
+        // Told apart from `.noUsableEntry` below, which keeps its meaning of "entries exist, none
+        // of them ours": a UI that offers "sign in" for a cache full of another client's tokens
+        // sends the user to do the one thing that cannot help.
+        guard !cache.isEmpty else { return .failure(.signedOut) }
+
         guard let (compositeKey, value) = pickEntry(from: cache) else {
             return .failure(.noUsableEntry)
         }

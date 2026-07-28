@@ -3,101 +3,12 @@ import Testing
 @testable import ClaudeManagerCore
 
 struct DesktopSafeStorageProviderTests {
-    // MARK: - Harness
-
-    /// Stub keychain: one account under the service, returning a fixed secret or a chosen
-    /// `KeychainError`. Enumeration always finds the account (the item exists); the read is what
-    /// succeeds or fails — mirroring a present item whose data ACL blocks a background read.
-    private struct StubKeychain: KeychainReading {
-        let result: Result<Data, KeychainError>
-        func accounts(service _: String) throws -> [String] {
-            ["Claude"]
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            try result.get()
-        }
-    }
-
-    /// Stub keychain with a per-account result. `accounts` reports exactly the keys present (an
-    /// empty map → no item under the service), and a read of an absent account throws `.notFound`
-    /// — so a test can model a machine that stores the password under any one account name, both,
-    /// or a name no static list would contain.
-    private struct PerAccountKeychain: KeychainReading {
-        let byAccount: [String: Result<Data, KeychainError>]
-        func accounts(service _: String) throws -> [String] {
-            Array(byAccount.keys)
-        }
-
-        func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
-            try (byAccount[account] ?? .failure(.notFound)).get()
-        }
-    }
-
-    /// Answers differently by the `interactive` flag and records which accounts were read
-    /// interactively — modelling an item locked to a background read but readable once authorized,
-    /// so a test can assert how many Always-Allow dialogs a resolution would raise.
-    private final class InteractiveRecordingKeychain: KeychainReading, @unchecked Sendable {
-        typealias Answer = (background: Result<Data, KeychainError>, interactive: Result<Data, KeychainError>)
-        private let table: [String: Answer]
-        private let lock = NSLock()
-        private var interactiveReadsStore: [String] = []
-        init(_ table: [String: Answer]) {
-            self.table = table
-        }
-
-        var interactiveReads: [String] {
-            lock.withLock { interactiveReadsStore }
-        }
-
-        func accounts(service _: String) throws -> [String] {
-            Array(table.keys)
-        }
-
-        func secret(service _: String, account: String, interactive: Bool) throws -> Data {
-            if interactive { lock.withLock { interactiveReadsStore.append(account) } }
-            guard let entry = table[account] else { throw KeychainError.notFound }
-            return try (interactive ? entry.interactive : entry.background).get()
-        }
-    }
-
-    private let clientID = CoreConstants.oauthClientID
-    private let org = "11111111-2222-3333-4444-555555555555"
-    private let password = Data("kc-password".utf8)
-
-    private func inferenceCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:inference user:file_upload user:profile"
-    }
-
-    private func profileCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:profile"
-    }
-
-    /// Write a `config.json` whose `oauth:tokenCacheV2` is the given map, encrypted under the
-    /// key derived from `password` (the same the stub keychain returns) — a faithful blob
-    /// with no real token.
-    private func writeConfig(
-        cache: [String: Any],
-        into dir: URL
-    ) throws -> URL {
-        let key = SafeStorageDecryptor.deriveKey(password: password)!
-        let cacheData = try JSONSerialization.data(withJSONObject: cache)
-        let blob = SafeStorageDecryptorTests.makeV10Blob(cacheData, key: key)
-        let root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString()]
-        let url = dir.appendingPathComponent("config.json")
-        try JSONSerialization.data(withJSONObject: root).write(to: url)
-        return url
-    }
-
-    private func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
-        DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
-    }
-
-    private func withTempDir(_ body: (URL) async throws -> Void) async throws {
-        let dir = try Fixture.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try await body(dir)
-    }
+    // Stored properties only — an extension cannot hold them, and the rest of the scaffolding
+    // (stub keychains, the config writer, the temp-dir wrapper) lives in
+    // `DesktopSafeStorageProviderTestHarness.swift` so this file stays about the behaviour.
+    let clientID = CoreConstants.oauthClientID
+    let org = "11111111-2222-3333-4444-555555555555"
+    let password = Data("kc-password".utf8)
 
     // MARK: - Success
 
@@ -438,6 +349,70 @@ extension DesktopSafeStorageProviderTests {
             let result = await provider(keychain: StubKeychain(result: .success(password)))
                 .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
             #expect(result == .failure(.noUsableEntry))
+        }
+    }
+
+    // MARK: - Signed out
+
+    @Test
+    func anEmptyDecryptedCacheIsSignedOut() async throws {
+        try await withTempDir { dir in
+            // The on-disk shape Claude Desktop's logout actually writes: the key stays, holding an
+            // encrypted `{}` — one 16-byte block. Not `.noTokenCache` (the key is there), not
+            // `.noUsableEntry` (there is nothing to match against).
+            let url = try writeConfig(cache: [:], into: dir)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func anEmptyV1CacheIsAlsoSignedOut() async throws {
+        try await withTempDir { dir in
+            // Logout empties the legacy key too, and a profile old enough to carry only that one
+            // must reach the same answer through the v1 fallback.
+            let url = try writeConfig(cache: [:], into: dir, key: CoreConstants.desktopTokenCacheKeyV1)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func theCachedKeyPathAlsoReportsSignedOut() async throws {
+        try await withTempDir { dir in
+            // Second call onward the key is cached, so the `accepts` probe never runs and the blob
+            // is decrypted on the other branch — the one a reading of the probe alone misses.
+            let live = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let empty = try writeConfig(cache: [:], into: dir, name: "signed-out.json")
+            let subject = provider(keychain: StubKeychain(result: .success(password)))
+
+            _ = try await subject.token(for: TokenBinding(id: "live", configURL: live), interactive: false)
+                .get()
+            let result = await subject.token(
+                for: TokenBinding(id: "out", configURL: empty),
+                interactive: false
+            )
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func anEmptyCacheStillResolvesTheKeyForItsSiblings() async throws {
+        try await withTempDir { dir in
+            // `{}` is a valid JSON object, so it satisfies the probe's acceptance test — and it has
+            // to keep doing so. A signed-out profile probed first in a fleet must resolve the shared
+            // key, not reject it and leave every sibling unable to read its own token.
+            let empty = try writeConfig(cache: [:], into: dir, name: "signed-out.json")
+            let live = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
+            let subject = provider(keychain: StubKeychain(result: .success(password)))
+
+            let out = await subject.token(for: TokenBinding(id: "out", configURL: empty), interactive: false)
+            #expect(out == .failure(.signedOut))
+            let token = try await subject
+                .token(for: TokenBinding(id: "live", configURL: live), interactive: false).get()
+            #expect(token.token == "T")
         }
     }
 

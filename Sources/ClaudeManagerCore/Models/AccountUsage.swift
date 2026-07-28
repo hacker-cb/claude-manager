@@ -17,8 +17,14 @@ public enum UsageState: Sendable, Equatable {
     /// when to retry lives in `ThrottleState.backoffUntil` (its single source of truth), and the UI
     /// deliberately doesn't surface the backoff timing — it's an internal poll concern.
     case rateLimited
-    /// No usable token source (keychain locked / not authorized, or no token cache).
-    case noSource
+    /// No usable token source for the binding these figures were carried onto — signed out, a
+    /// keychain we couldn't read, an unreadable config.
+    ///
+    /// The reason travels with the case because it is the only way it reaches every surface. The
+    /// binding's `TokenProviderError` is published separately, but only the detail panes are wired
+    /// to it: the sidebar cell and the menu-bar row read `UsageState` alone, so a bare case left
+    /// them unable to name a remedy for any of the causes it collapses.
+    case noSource(TokenProviderError)
     /// A transport failure (offline); the snapshot, if any, is the last stored one.
     case offline
 }

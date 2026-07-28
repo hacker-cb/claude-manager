@@ -85,6 +85,15 @@ public enum TokenProviderError: Error, Equatable, Sendable {
     case decryptFailed(SafeStorageError)
     /// Decrypted, but not the expected token-cache JSON shape.
     case malformedCache
+    /// Decrypted to an **empty** cache — the account signed out on this profile.
+    ///
+    /// Claude Desktop's logout does not remove `oauth:tokenCache*`; it re-encrypts the key with an
+    /// empty object (`{}`, one 16-byte block), so the key is present, the blob decrypts, and the
+    /// map is simply empty. Reported apart from `.noTokenCache` (the key was never written — a
+    /// profile nobody has signed into, and the permanent state of the default binding for anyone
+    /// who only uses launchers) because the two differ in tense, and apart from `.noUsableEntry`
+    /// (entries exist, none of them ours) because only this one is fixed by signing in.
+    case signedOut
     /// No entry with the Claude Code client + inference/profile scope.
     case noUsableEntry
 }

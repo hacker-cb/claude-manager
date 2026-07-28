@@ -63,13 +63,18 @@ struct UsageDetailSection: View {
         }
     }
 
+    /// Whether these figures are still moving. Drives the reset countdown — see `LimitRow`.
+    private var isLive: Bool {
+        usage?.isQuotableNow == true
+    }
+
     private func bars(for snapshot: UsageSnapshot, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let session = snapshot.session {
-                LimitRow(title: "Current session (5h)", limit: session, now: now)
+                LimitRow(title: "Current session (5h)", limit: session, now: now, isLive: isLive)
             }
             if let weekly = snapshot.weeklyAll {
-                LimitRow(title: "Current week (all models)", limit: weekly, now: now)
+                LimitRow(title: "Current week (all models)", limit: weekly, now: now, isLive: isLive)
             }
             // Keyed by position, not `dedupKey`: two scoped windows whose model name is missing
             // (or two unknown kinds sharing a rawKind) collapse to the same dedupKey, and a
@@ -82,14 +87,15 @@ struct UsageDetailSection: View {
                 LimitRow(
                     title: "Current week (\(scoped.scopeModelName ?? "scoped"))",
                     limit: scoped,
-                    now: now
+                    now: now,
+                    isLive: isLive
                 )
             }
             // Forward-compat: a window this build doesn't recognize is kept visible (the parser's
             // "other" bucket) rather than silently dropped — so the detail can't disagree with the
             // sidebar, which may already be surfacing it as the binding limit.
             ForEach(Array(snapshot.otherLimits.enumerated()), id: \.offset) { _, other in
-                LimitRow(title: other.shortLabel, limit: other, now: now)
+                LimitRow(title: other.shortLabel, limit: other, now: now, isLive: isLive)
             }
             if let extra = snapshot.extra {
                 ExtraUsageRow(extra: extra)
@@ -101,7 +107,10 @@ struct UsageDetailSection: View {
     /// reason it's stale. Warning states (`warn`) are tinted so a still-rendered snapshot from a
     /// `loginNeeded` / `noSource` account can't read as up to date.
     private func stateNote(now: Date) -> (text: String, warn: Bool)? {
-        guard let usage else { return nil }
+        // A binding that failed with no snapshot to keep carries no `AccountUsage` at all — and
+        // used to get no note either, so the pane fell silent in the very state it had most to say
+        // about. Its failure is the whole story there.
+        guard let usage else { return failure.map(Self.headerNote) }
         switch usage.state {
         case .fresh:
             return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
@@ -109,23 +118,29 @@ struct UsageDetailSection: View {
         case .rateLimited: return ("rate limited", true)
         case .offline: return ("offline", false)
         case .loginNeeded: return ("sign in to refresh", true)
-        // `.noSource` collapses every token-read failure, so the remedy comes from the actual
-        // cause — a signed-out account must not be told to authorize the keychain.
-        case .noSource: return (noSourceHeaderNote, true)
+        // `.noSource` collapses every token-read failure, so the remedy comes from the cause it
+        // carries — a signed-out account must not be told to authorize the keychain.
+        case let .noSource(reason): return Self.headerNote(reason)
         }
     }
 
-    /// A short header note for `.noSource`, keyed on why the token couldn't be read.
-    private var noSourceHeaderNote: String {
+    /// A short header note for a token-read failure, and whether it reads as a warning.
+    ///
+    /// Signing out is deliberately **not** one. `warn` exists to stop still-rendered figures from
+    /// passing as current, and nothing here is broken — the user did this on purpose. Spending the
+    /// warning colour on a non-warning is how a warning colour stops meaning anything; the keychain
+    /// arms, which are genuine malfunctions, keep it.
+    private static func headerNote(_ failure: TokenProviderError) -> (text: String, warn: Bool) {
         switch failure {
-        case .noTokenCache: "not signed in"
+        case .signedOut: ("signed out", false)
+        case .noTokenCache: ("not signed in", false)
         case let .keychainUnavailable(error):
             switch keychainNoteKind(error) {
-            case .authorize: "authorize keychain access"
-            case .missing: "keychain item missing"
-            case .error: "keychain error"
+            case .authorize: ("authorize keychain access", true)
+            case .missing: ("keychain item missing", true)
+            case .error: ("keychain error", true)
             }
-        default: "source unavailable"
+        default: ("source unavailable", true)
         }
     }
 
@@ -134,7 +149,7 @@ struct UsageDetailSection: View {
         if let usage {
             switch usage.state {
             case .loginNeeded: return "Sign in to this account in Claude to see usage."
-            case .noSource: return noSourceEmptyNote
+            case let .noSource(reason): return Self.emptySentence(reason)
             case .offline: return "Offline — no usage yet."
             // Without this the header says "rate limited" while the body falls through to "Not
             // checked yet — use Refresh", which contradicts it and points at a Refresh that is
@@ -143,23 +158,15 @@ struct UsageDetailSection: View {
             default: return nil
             }
         }
-        switch failure {
-        case .noTokenCache: return "This account isn't signed in on this profile."
-        case let .keychainUnavailable(error):
-            switch keychainNoteKind(error) {
-            case .authorize: return "Refresh to authorize keychain access."
-            case .missing: return keychainNotFoundNote
-            case .error: return "Usage source unavailable — a keychain error blocked the token."
-            }
-        case .some: return "Usage unavailable for this account."
-        case nil: return nil
-        }
+        return failure.map(Self.emptySentence)
     }
 
-    /// The full-sentence `.noSource` note, keyed on the token-read failure — a signed-out account
-    /// reads "not signed in", not the keychain prompt that can't fix it.
-    private var noSourceEmptyNote: String {
+    /// The full-sentence note for a token-read failure — the state named, and a remedy that can
+    /// actually fix it. One table for both paths (a kept-snapshot `.noSource` and a binding with no
+    /// entry at all): they used to be two near-identical switches free to drift on a word.
+    private static func emptySentence(_ failure: TokenProviderError) -> String {
         switch failure {
+        case .signedOut: "Signed out — open Claude on this profile and sign in to see usage."
         case .noTokenCache: "This account isn't signed in on this profile."
         case let .keychainUnavailable(error):
             switch keychainNoteKind(error) {
@@ -168,19 +175,18 @@ struct UsageDetailSection: View {
             case .missing: keychainNotFoundNote
             case .error: "Usage source unavailable — a keychain error blocked the token."
             }
-        default: "Usage source unavailable for this account."
+        default: "Usage unavailable for this account."
         }
     }
 
     /// A missing keychain item can't be authorized — Refresh won't prompt — so point at the real
     /// cause: Claude Desktop's safeStorage item isn't present for this profile.
-    private var keychainNotFoundNote: String {
+    private static let keychainNotFoundNote =
         "Claude's keychain item wasn't found — open Claude and sign in on this profile, then Refresh."
-    }
 
-    /// The user-facing category of a keychain failure, classified in one place so the three notes
-    /// above can't drift on which `KeychainError` means what — only the copy differs by context.
-    private func keychainNoteKind(_ error: KeychainError) -> KeychainNoteKind {
+    /// The user-facing category of a keychain failure, classified in one place so the notes above
+    /// can't drift on which `KeychainError` means what — only the copy differs by context.
+    private static func keychainNoteKind(_ error: KeychainError) -> KeychainNoteKind {
         switch error {
         case .interactionNotAllowed: .authorize
         case .notFound: .missing
@@ -204,6 +210,8 @@ private struct LimitRow: View {
     /// Passed in rather than read from `Date()` so the whole section shares one ticking clock —
     /// see the `TimelineView` in `UsageDetailSection.body`.
     let now: Date
+    /// Whether the percentage beside the countdown is still moving.
+    let isLive: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -211,7 +219,12 @@ private struct LimitRow: View {
             UsageBar(fraction: limit.utilization, level: limit.displaySeverity)
             HStack(spacing: 6) {
                 Text("\(UsageFormat.percent(limit.utilization)) used").font(.caption)
-                if let resets = UsageFormat.resets(limit.resetsAt, now: now) {
+                // The countdown is dropped once the figures stop moving — signed out, offline,
+                // rate-limited, stale. It is the one element on this row that keeps updating, so
+                // beside a frozen percentage it is what makes the whole row read as live; and for a
+                // carried-forward snapshot its window has often already elapsed, which the section's
+                // ticker renders as a permanent "resetting…". The header names the state instead.
+                if isLive, let resets = UsageFormat.resets(limit.resetsAt, now: now) {
                     Text("· \(resets)").font(.caption).foregroundStyle(.secondary)
                 }
             }

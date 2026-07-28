@@ -182,25 +182,15 @@ extension AppModel {
         // The master switch can flip off during the await; honor it so we neither repopulate the
         // state `applyUsageTrackingChange` just cleared nor fire notifications after "off".
         if usageTrackingEnabled {
-            var byBinding: [String: AccountUsage] = [:]
-            for account in result.accounts {
-                for bindingID in account.bindingIDs {
-                    byBinding[bindingID] = account
-                }
-            }
-            // A binding whose token couldn't be read this pass (a keychain that locked mid-session,
-            // say) is absent from `result.accounts`. Replacing wholesale would blank its numbers,
-            // which is the opposite of the serve-stale promise — so keep the last snapshot, but
-            // restate it as `.noSource`: the figures stay, and both the detail pane and the
-            // sidebar say an action is needed rather than passing them off as current.
-            for id in result.bindingFailures.keys {
-                guard byBinding[id] == nil, var kept = usageByBinding[id],
-                      kept.snapshot != nil else { continue }
-                kept.state = .noSource
-                byBinding[id] = kept
-            }
-            usageByBinding = byBinding
+            // The fold itself lives in core (`UsageService.merge`) — it decides what every surface
+            // renders, which makes it a state machine rather than painting. Called here, after both
+            // guards above, because it must not observe a map a superseded pass would overwrite.
+            usageByBinding = UsageService.merge(previous: usageByBinding, result: result)
+            // Still published alongside: a binding that failed with *no* prior snapshot has no
+            // entry in the map at all, and its failure is the only thing that can explain it.
             usageBindingFailures = result.bindingFailures
+            // The accounts this pass actually fetched — never anything derived from the map, whose
+            // carried-forward entries are by definition not new readings.
             await notifyLimits(for: result.accounts)
         }
 
