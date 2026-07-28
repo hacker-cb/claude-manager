@@ -106,7 +106,7 @@ struct UsageAccessory: View {
                 .contentShape(Rectangle())
                 // Recomputed each minute so the countdown inside is live: a tooltip built once at
                 // render would still read "resets in 29m" half an hour later.
-                .modifier(LiveHelp { helpText(usage: usage, now: $0) })
+                .modifier(LiveHelp(text: helpText(usage: usage)))
         }
     }
 
@@ -138,12 +138,17 @@ struct UsageAccessory: View {
         return usage.isQuotableNow ? figure : "\(figure), \(usage.stateNote)"
     }
 
-    /// The cell's tooltip, or nil when there is nothing to say — an empty `.help` would arm a
-    /// hover target that pops a blank box.
-    private func helpText(usage: AccountUsage, now: Date) -> String? {
-        if usage.attentionWord != nil { return usage.stateNote }
+    /// The cell's tooltip as a function of the tick, or nil when there is nothing to say — an
+    /// empty `.help` would arm a hover target that pops a blank box.
+    ///
+    /// *Whether* there is a tooltip is decided by the state alone; only what a non-nil one says
+    /// moves with time (the reset countdown, the "as of" age). Returning the whole closure rather
+    /// than a per-tick optional keeps that split in the type, which is what lets `LiveHelp` skip
+    /// its ticker outright for a tracked account whose first snapshot hasn't landed.
+    private func helpText(usage: AccountUsage) -> ((Date) -> String)? {
+        if usage.attentionWord != nil { return { _ in usage.stateNote } }
         guard let limit = usage.displayLimit else { return nil }
-        return tooltip(limit: limit, usage: usage, now: now)
+        return { tooltip(limit: limit, usage: usage, now: $0) }
     }
 
     /// Normal is *hierarchical*, not a literal colour, and that is the point: a selected sidebar
@@ -186,15 +191,19 @@ struct UsageAccessory: View {
 struct LiveHelp: ViewModifier {
     /// nil for "no tooltip here" — a surface that reserves its space whether or not it has
     /// anything to say must not arm a hover target that pops an empty box.
-    let text: (Date) -> String?
+    ///
+    /// The optionality sits on the *closure*, not on its result, and that is what keeps the
+    /// ticker off a silent surface: a per-tick `String?` would build the `TimelineView` anyway,
+    /// waking every such row once a minute only to conclude, again, that it has nothing to say.
+    let text: ((Date) -> String)?
 
     func body(content: Content) -> some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            if let text = text(context.date) {
-                content.help(text)
-            } else {
-                content
+        if let text {
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                content.help(text(context.date))
             }
+        } else {
+            content
         }
     }
 }
