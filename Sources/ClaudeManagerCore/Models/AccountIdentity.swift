@@ -18,6 +18,15 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
     /// e.g. `max`, `pro`, `team`, `enterprise` — gates surfaces like the Sonnet/scoped bar.
     public var subscriptionType: String?
     public var rateLimitTier: String?
+    /// Whether `uuid` is still the electing token's fingerprint rather than an account uuid.
+    ///
+    /// The fact was always there but only ever expressed as `identity.uuid == fingerprint`, which
+    /// means only a caller *already holding the fingerprint* could ask. Everything that reasons
+    /// about a binding with no readable token is exactly the caller that cannot, so the comparison
+    /// had to become a property. Defaults to `false`: only `AccountResolver` mints a provisional
+    /// identity, and anything sourced from `/oauth/profile` — live or stored — is by definition not
+    /// one.
+    public var isProvisional: Bool
 
     public init(
         uuid: String,
@@ -25,7 +34,8 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         displayName: String? = nil,
         organizationUuid: String? = nil,
         subscriptionType: String? = nil,
-        rateLimitTier: String? = nil
+        rateLimitTier: String? = nil,
+        isProvisional: Bool = false
     ) {
         self.uuid = uuid
         self.email = email
@@ -33,6 +43,7 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         self.organizationUuid = organizationUuid
         self.subscriptionType = subscriptionType
         self.rateLimitTier = rateLimitTier
+        self.isProvisional = isProvisional
     }
 
     public var id: String {

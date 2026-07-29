@@ -3,14 +3,17 @@ import Testing
 @testable import ClaudeManagerCore
 
 struct AccountResolverTests {
-    /// Stub provider: canned result per binding id.
+    /// Stub provider: canned reading per binding id, with an optional config hint.
     private struct StubProvider: TokenProvider {
         let results: [String: Result<DesktopToken, TokenProviderError>]
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
-            results[binding.id] ?? .failure(.configUnreadable)
+        var hints: [String: String] = [:]
+
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            BindingReading(
+                bindingID: binding.id,
+                token: results[binding.id] ?? .failure(.configUnreadable),
+                hintedAccountUUID: hints[binding.id]
+            )
         }
     }
 
@@ -38,9 +41,10 @@ struct AccountResolverTests {
 
     private func resolve(
         _ results: [String: Result<DesktopToken, TokenProviderError>],
+        hints: [String: String] = [:],
         now: Date = Date()
     ) async -> ResolvedAccounts {
-        await AccountResolver(provider: StubProvider(results: results))
+        await AccountResolver(provider: StubProvider(results: results, hints: hints))
             .resolve(bindings: results.keys.sorted().map(binding), now: now)
     }
 
@@ -104,6 +108,9 @@ struct AccountResolverTests {
         #expect(result.accounts.first?.identity.uuid == tok.fingerprint)
         #expect(result.accounts.first?.identity.organizationUuid == "org-A")
         #expect(result.accounts.first?.identity.subscriptionType == "max")
+        // Said outright rather than left to `uuid == fingerprint`: everything that reasons about a
+        // binding with no readable token is a caller that has no fingerprint to compare against.
+        #expect(result.accounts.first?.identity.isProvisional == true)
     }
 
     // MARK: - Account fold + election (regroup): by the authoritative /profile uuid
@@ -189,5 +196,54 @@ struct AccountResolverTests {
         #expect(result.accounts.first?.bindingIDs == ["ok"])
         #expect(result.failures["locked"] == .keychainUnavailable(.interactionNotAllowed))
         #expect(result.failures["noLogin"] == .noTokenCache)
+    }
+
+    // MARK: - The config hint travels, and changes nothing here
+
+    @Test
+    func aHintNeverMergesTwoDistinctTokens() async {
+        // The rule the hint is *not* allowed to touch, now that it is in reach. Two profiles whose
+        // configs name the same account still resolve as two accounts: only `/oauth/profile` may
+        // fold distinct tokens, because a hint that lags a re-login would otherwise file one
+        // account's usage under another.
+        let shared = "80d91625-5c43-48ab-9892-3d6496250958"
+        let result = await resolve(
+            [
+                "p1": .success(token(binding: "p1", value: "TK-A")),
+                "p2": .success(token(binding: "p2", value: "TK-B"))
+            ],
+            hints: ["p1": shared, "p2": shared]
+        )
+        #expect(result.accounts.count == 2)
+    }
+
+    @Test
+    func aHealthyFleetCarriesNoHintsAtAll() async {
+        // The hint exists to explain a binding that cannot speak for itself. A profile whose token
+        // came out fine has nothing to explain — and reading a file for it on every poll, forever,
+        // would be a cost with no reader.
+        let result = await resolve(
+            ["p": .success(token(binding: "p"))],
+            hints: ["p": "80d91625-5c43-48ab-9892-3d6496250958"]
+        )
+        #expect(result.hints.isEmpty)
+    }
+
+    @Test
+    func aBindingThatCannotSpendItsTokenCarriesItsHint() async {
+        // Both ways a binding ends up with an account it cannot prove: no token at all, and a token
+        // too old to spend. The second is the less obvious one — it *resolved*, so it never appears
+        // in `failures`, and without the hint it stands alone as a fingerprint-keyed phantom.
+        let expired = token(binding: "stale", expiresAt: Date(timeIntervalSince1970: 1))
+        let result = await resolve(
+            [
+                "locked": .failure(.keychainUnavailable(.interactionNotAllowed)),
+                "stale": .success(expired),
+                "live": .success(token(binding: "live"))
+            ],
+            hints: ["locked": "a-uuid", "stale": "b-uuid", "live": "c-uuid"],
+            now: Date(timeIntervalSince1970: 1_000_000_000)
+        )
+        #expect(result.hints == ["locked": "a-uuid", "stale": "b-uuid"])
     }
 }

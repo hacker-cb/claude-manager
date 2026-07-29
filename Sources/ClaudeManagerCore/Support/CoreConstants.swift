@@ -171,12 +171,23 @@ public enum CoreConstants {
     public static let safeStorageBlobPrefix = "v10"
 
     /// `config.json` keys inside a Desktop account's user-data dir. `tokenCacheV2` is the
-    /// current encrypted token cache; `tokenCache` is the legacy fallback. The account UUID is
-    /// deliberately *not* read from `config.json` — its `lastKnownAccountUuid` can lag the actual
-    /// token, so identity comes only from the token (its fingerprint locally, `/profile`
-    /// authoritatively), never a config hint that could file usage under the wrong account.
+    /// current encrypted token cache; `tokenCache` is the legacy fallback.
     public static let desktopTokenCacheKeyV2 = "oauth:tokenCacheV2"
     public static let desktopTokenCacheKeyV1 = "oauth:tokenCache"
+
+    /// The account UUID Desktop records for the profile, in **plaintext**, beside the encrypted
+    /// caches above — rewritten on every login and left in place on logout.
+    ///
+    /// Read for **display only**, and the boundary is absolute: where usage is *filed* still comes
+    /// from the token alone — its fingerprint locally, `/oauth/profile` authoritatively. This hint
+    /// is consulted only for a binding that produced no usable token, which is the branch that
+    /// writes no sample, no throttle row and no ledger entry, so a hint lagging a re-login can
+    /// misname a row for one poll and can never misfile a byte.
+    ///
+    /// That boundary is what makes it safe, because the hint on its own is not: it lags exactly
+    /// when it matters least to us and most to a merge — which is why `AccountResolver` still
+    /// refuses to group on it, and why nothing here may ever become a storage key.
+    public static let desktopAccountHintKey = "lastKnownAccountUuid"
 
     /// The decrypted `tokenCacheV2` is a JSON **map** keyed
     /// `"<clientId>:<orgUuid>:<audience>:<space-separated scopes>"`. The audience

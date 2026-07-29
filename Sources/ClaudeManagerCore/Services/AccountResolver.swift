@@ -27,10 +27,27 @@ public struct ResolvedAccount: Sendable, Equatable {
 public struct ResolvedAccounts: Sendable, Equatable {
     public var accounts: [ResolvedAccount]
     public var failures: [String: TokenProviderError]
+    /// `config.json`'s `lastKnownAccountUuid`, for the bindings that could not spend a token this
+    /// pass — either because none was readable, or because the one that was has expired.
+    ///
+    /// A **display** channel, kept deliberately apart from `accounts`. Letting a hint mint a
+    /// `ResolvedAccount` would be the natural shortcut and would break two things at once: it
+    /// would put a fallible value on the storage key every sample, throttle window and ledger row
+    /// is filed under, and it would make `resolved.accounts` non-empty on a machine whose
+    /// safeStorage key has rotated — silently disabling the fleet-wide key recovery that guards on
+    /// exactly that emptiness. Nothing downstream of `refresh` reads this; only the fold does.
+    ///
+    /// Collected only where it can be used, so a healthy fleet pays nothing for it.
+    public var hints: [String: String]
 
-    public init(accounts: [ResolvedAccount], failures: [String: TokenProviderError]) {
+    public init(
+        accounts: [ResolvedAccount],
+        failures: [String: TokenProviderError],
+        hints: [String: String] = [:]
+    ) {
         self.accounts = accounts
         self.failures = failures
+        self.hints = hints
     }
 }
 
@@ -40,6 +57,10 @@ public struct ResolvedAccounts: Sendable, Equatable {
 /// Distinct tokens stay separate here and are unified later, in `regroup`, on the authoritative
 /// account uuid `/profile` returns — so N profiles on one login still yield one `/usage` call,
 /// sourced from the healthiest token, without ever merging on the fallible `lastKnownAccountUuid`.
+///
+/// That hint **is** read now, and this is exactly where it must not be used: it rides out in
+/// `ResolvedAccounts.hints`, untouched by grouping and election, for the fold to spend on display
+/// alone. Nothing here consults it.
 public struct AccountResolver: Sendable {
     private let provider: TokenProvider
 
@@ -54,17 +75,25 @@ public struct AccountResolver: Sendable {
     ) async -> ResolvedAccounts {
         var tokensByBinding: [(binding: TokenBinding, token: DesktopToken)] = []
         var failures: [String: TokenProviderError] = [:]
+        var hints: [String: String] = [:]
 
         for binding in bindings {
             // Stop reading keychain tokens the moment the master switch cancels the pass; the
             // caller checks cancellation again before fetching, so a partial resolve fetches
             // nothing.
             if Task.isCancelled { break }
-            switch await provider.token(for: binding, interactive: interactive) {
+            let reading = await provider.read(binding, interactive: interactive)
+            switch reading.token {
             case let .success(token):
                 tokensByBinding.append((binding, token))
+                // An expired token cannot be spent, so its binding is in the same position as one
+                // that failed to decrypt: it has an account, and no way of its own to say which.
+                // Its *own* fingerprint may still settle that later — the identity pass tries the
+                // stored mapping first — so the hint is a fallback, not a replacement.
+                if token.isExpired(now: now) { hints[binding.id] = reading.hintedAccountUUID }
             case let .failure(error):
                 failures[binding.id] = error
+                hints[binding.id] = reading.hintedAccountUUID
             }
         }
 
@@ -75,7 +104,10 @@ public struct AccountResolver: Sendable {
             .map { _, members in resolvedAccount(from: members, now: now) }
             .sorted { $0.identity.uuid < $1.identity.uuid }
 
-        return ResolvedAccounts(accounts: accounts, failures: failures)
+        // A binding whose file carried no hint leaves no entry at all — assigning nil through a
+        // dictionary subscript removes the key — so "has a hint" stays a membership test rather
+        // than a two-level unwrap downstream.
+        return ResolvedAccounts(accounts: accounts, failures: failures, hints: hints)
     }
 
     /// Fold accounts that `/profile` has proven belong together (same authoritative uuid) into one:
@@ -111,6 +143,8 @@ public struct AccountResolver: Sendable {
     /// on one login carry different tokens, and neither the shared `organizationUUID` (a Team org
     /// holds many accounts) nor the config's `lastKnownAccountUuid` hint (it can lag the actual
     /// token) proves same-account — merging on either would file one account's usage under another.
+    /// The hint being available here changes nothing about that: it is read for the fold, and this
+    /// function is the one place it is deliberately out of reach.
     /// Distinct-token siblings are unified instead in `regroup`, on the authoritative uuid
     /// `/profile` returns, the only signal that proves two different tokens share one account.
     private func groupingKey(for token: DesktopToken) -> String {
@@ -130,7 +164,8 @@ public struct AccountResolver: Sendable {
             uuid: elected.fingerprint,
             organizationUuid: elected.organizationUUID,
             subscriptionType: elected.subscriptionType,
-            rateLimitTier: elected.rateLimitTier
+            rateLimitTier: elected.rateLimitTier,
+            isProvisional: true
         )
         return ResolvedAccount(identity: identity, token: elected, bindingIDs: bindingIDs)
     }

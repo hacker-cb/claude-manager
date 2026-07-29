@@ -7,13 +7,19 @@ import Testing
 extension UsageServiceTests {
     // MARK: - Harness
 
+    /// Canned readings by binding id. `configURL` is ignored entirely — deliberately, since the
+    /// real provider derives both the token and the hint from that file, and a test that needs the
+    /// two to come from one config must build `DesktopSafeStorageProvider` instead.
     struct StubProvider: TokenProvider {
         let results: [String: Result<DesktopToken, TokenProviderError>]
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
-            results[binding.id] ?? .failure(.configUnreadable)
+        var hints: [String: String] = [:]
+
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            BindingReading(
+                bindingID: binding.id,
+                token: results[binding.id] ?? .failure(.configUnreadable),
+                hintedAccountUUID: hints[binding.id]
+            )
         }
     }
 
@@ -88,12 +94,12 @@ extension UsageServiceTests {
         let cancelOn: String
         let results: [String: Result<DesktopToken, TokenProviderError>]
 
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             if binding.id == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
-            return results[binding.id] ?? .failure(.configUnreadable)
+            return BindingReading(
+                bindingID: binding.id,
+                token: results[binding.id] ?? .failure(.configUnreadable)
+            )
         }
     }
 
@@ -113,12 +119,12 @@ extension UsageServiceTests {
             lock.withLock { counts }
         }
 
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             lock.withLock { counts[binding.id, default: 0] += 1 }
-            return results[binding.id] ?? .failure(.configUnreadable)
+            return BindingReading(
+                bindingID: binding.id,
+                token: results[binding.id] ?? .failure(.configUnreadable)
+            )
         }
     }
 

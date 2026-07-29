@@ -359,6 +359,7 @@ extension ResolvedAccount {
         // sample and notification is filed under the real account — and two tokens that turn out to
         // be different accounts keep their distinct uuids, never folding in `regroup`.
         updated.identity.uuid = profile.uuid
+        updated.identity.isProvisional = false
         return updated
     }
 }

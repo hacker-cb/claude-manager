@@ -43,16 +43,42 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         }
     }
 
-    public func token(
-        for binding: TokenBinding,
-        interactive: Bool
-    ) async -> Result<DesktopToken, TokenProviderError> {
+    public func read(_ binding: TokenBinding, interactive: Bool) async -> BindingReading {
         guard let configData = try? Data(contentsOf: binding.configURL),
               let root = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
         else {
-            return .failure(.configUnreadable)
+            // The one failure that costs us the hint too, and correctly so: there is no file to
+            // have hinted anything.
+            return BindingReading(bindingID: binding.id, token: .failure(.configUnreadable))
         }
+        // Lifted **before** the token work, so it survives every early return below it. That is the
+        // whole point of reading the file into a reading rather than a result: five of the six ways
+        // this can fail leave the account perfectly nameable, and used to discard the name anyway.
+        return await BindingReading(
+            bindingID: binding.id,
+            token: tokenResult(root: root, binding: binding, interactive: interactive),
+            hintedAccountUUID: accountHint(in: root)
+        )
+    }
 
+    /// `lastKnownAccountUuid`, if the file carries one shaped like a UUID.
+    ///
+    /// Shape-checked rather than trusted: this value reaches a dictionary key and an identity
+    /// lookup, and a `config.json` written by some future Desktop — or half-written by a crash —
+    /// must not be able to put an arbitrary string there. Same 36-character test
+    /// `organizationUUID(fromComposite:)` applies to the composite key's org segment.
+    private func accountHint(in root: [String: Any]) -> String? {
+        guard let hint = root[CoreConstants.desktopAccountHintKey] as? String,
+              hint.count == 36
+        else { return nil }
+        return hint
+    }
+
+    private func tokenResult(
+        root: [String: Any],
+        binding: TokenBinding,
+        interactive: Bool
+    ) async -> Result<DesktopToken, TokenProviderError> {
         // Both cache keys, v2 first — and **every** decodable one is kept, not just the first.
         // Neither presence nor decodability can tell which of them holds the live token: an
         // upgraded profile can carry a corrupt v2 beside a live v1, or an emptied v2 beside a v1

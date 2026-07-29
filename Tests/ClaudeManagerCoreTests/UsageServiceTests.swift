@@ -219,12 +219,12 @@ struct UsageServiceTests {
             self.healed = healed
         }
 
-        func token(
-            for _: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             let n = lock.withLock { calls += 1; return calls }
-            return n <= firstPassCount ? .failure(.decryptFailed(.decryptFailed)) : .success(healed)
+            let token: Result<DesktopToken, TokenProviderError> = n <= firstPassCount
+                ? .failure(.decryptFailed(.decryptFailed))
+                : .success(healed)
+            return BindingReading(bindingID: binding.id, token: token)
         }
     }
 

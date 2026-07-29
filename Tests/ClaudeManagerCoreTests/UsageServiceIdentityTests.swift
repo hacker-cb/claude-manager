@@ -22,6 +22,7 @@ extension UsageServiceTests {
         let result = await service.refresh(bindings: [binding("p")], now: now)
         #expect(result.accounts.first?.identity.uuid == "acct-real")
         #expect(result.accounts.first?.identity.email == "user@example.com")
+        #expect(result.accounts.first?.identity.isProvisional == false)
         #expect(result.accounts.first?.state == .fresh)
         #expect(http.profileCallCount == 1)
         #expect(http.usageCallCount == 1)

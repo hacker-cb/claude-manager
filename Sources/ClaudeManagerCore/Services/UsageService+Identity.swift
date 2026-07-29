@@ -56,7 +56,7 @@ extension UsageService {
         _ account: ResolvedAccount,
         fingerprint: String
     ) async -> ResolvedAccount {
-        guard account.identity.uuid == fingerprint,
+        guard account.identity.isProvisional,
               let stale = await history.profile(tokenFingerprint: fingerprint, fetchedAfter: .distantPast)
         else { return account }
         return account.named(by: stale)
