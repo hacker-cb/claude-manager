@@ -25,9 +25,11 @@ extension UsageServiceTests {
         #expect(result.accounts.first?.state == .fresh)
         #expect(http.profileCallCount == 1)
         #expect(http.usageCallCount == 1)
-        // Persisted under the authoritative uuid — not the binding id it started with.
+        // Persisted under the authoritative uuid — not the provisional key it started with. That
+        // key is the token's **fingerprint**; asserting on the binding id ("p") tested nothing,
+        // since no code path has ever stored a sample under one.
         #expect(await history.sampleCount(accountUUID: "acct-real") == 1)
-        #expect(await history.sampleCount(accountUUID: "p") == 0)
+        #expect(await history.sampleCount(accountUUID: token("p").fingerprint) == 0)
     }
 
     @Test

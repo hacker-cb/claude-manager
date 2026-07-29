@@ -78,6 +78,50 @@ extension UsageServiceTests {
         }
     }
 
+    /// Cancels the task it runs on the moment a named binding is read, then answers normally.
+    ///
+    /// The deterministic way to test the master switch: `refresh` is structured, so the provider
+    /// runs on the very task the caller awaits, and `withUnsafeCurrentTask` from in here cancels
+    /// exactly that task at exactly the phase this stub sits in. A timer or a sleep would be
+    /// racing the same code it is trying to observe.
+    struct CancellingProvider: TokenProvider {
+        let cancelOn: String
+        let results: [String: Result<DesktopToken, TokenProviderError>]
+
+        func token(
+            for binding: TokenBinding,
+            interactive _: Bool
+        ) async -> Result<DesktopToken, TokenProviderError> {
+            if binding.id == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
+            return results[binding.id] ?? .failure(.configUnreadable)
+        }
+    }
+
+    /// Counts how many times each binding was read — the only way to observe a fleet-wide key
+    /// self-heal from outside, since recovery is "invalidate the key and resolve everything a
+    /// second time" and leaves no other trace when the retry fails too.
+    final class CountingProvider: TokenProvider, @unchecked Sendable {
+        private let results: [String: Result<DesktopToken, TokenProviderError>]
+        private let lock = NSLock()
+        private var counts: [String: Int] = [:]
+
+        init(results: [String: Result<DesktopToken, TokenProviderError>]) {
+            self.results = results
+        }
+
+        var reads: [String: Int] {
+            lock.withLock { counts }
+        }
+
+        func token(
+            for binding: TokenBinding,
+            interactive _: Bool
+        ) async -> Result<DesktopToken, TokenProviderError> {
+            lock.withLock { counts[binding.id, default: 0] += 1 }
+            return results[binding.id] ?? .failure(.configUnreadable)
+        }
+    }
+
     final class SequenceKeychain: KeychainReading, @unchecked Sendable {
         private let secrets: [Data]
         private let lock = NSLock()

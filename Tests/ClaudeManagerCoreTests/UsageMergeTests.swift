@@ -6,29 +6,9 @@ import Testing
 /// renders. It lived inline in the app layer, where nothing could reach it; these are the first
 /// assertions the rule has ever had.
 struct UsageMergeTests {
-    private let capturedAt = Date(timeIntervalSince1970: 1_785_000_000)
-
-    private func snapshot(_ utilization: Double) -> UsageSnapshot {
-        UsageSnapshot(
-            limits: [UsageLimit(rawKind: UsageLimit.kindSession, utilization: utilization, isActive: true)],
-            capturedAt: capturedAt
-        )
-    }
-
-    private func account(
-        uuid: String,
-        email: String? = nil,
-        snapshot: UsageSnapshot?,
-        state: UsageState = .fresh,
-        bindingIDs: [String]
-    ) -> AccountUsage {
-        AccountUsage(
-            identity: AccountIdentity(uuid: uuid, email: email),
-            snapshot: snapshot,
-            state: state,
-            bindingIDs: bindingIDs
-        )
-    }
+    /// Not private: the builders that read it live in `UsageMergeTestHarness`, and a stored
+    /// property cannot move into an extension with them.
+    let capturedAt = Date(timeIntervalSince1970: 1_785_000_000)
 
     // MARK: - The resolved half
 
@@ -121,6 +101,7 @@ struct UsageMergeTests {
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
+        #expect(merged["p"]?.snapshot == snapshot(0.4))
     }
 
     @Test
@@ -147,6 +128,7 @@ struct UsageMergeTests {
         )
         #expect(merged["out"]?.bindingIDs == ["out"])
         #expect(merged["live"]?.bindingIDs == ["live"])
+        #expect(merged["out"]?.snapshot == snapshot(0.3))
     }
 
     @Test
@@ -166,6 +148,9 @@ struct UsageMergeTests {
         )
         #expect(merged["live"]?.bindingIDs == ["live", "unread"])
         #expect(merged["unread"]?.bindingIDs == ["live", "unread"])
+        // Its own carried-forward figures, not the sibling's fresher ones: nothing in this result
+        // says the two are the same login beyond a fan-out the failed side is remembering.
+        #expect(merged["unread"]?.snapshot == snapshot(0.3))
     }
 
     @Test
@@ -183,6 +168,7 @@ struct UsageMergeTests {
             )
         )
         #expect(merged["out"]?.bindingIDs == ["out"])
+        #expect(merged["out"]?.snapshot == snapshot(0.3))
     }
 
     @Test
@@ -201,6 +187,7 @@ struct UsageMergeTests {
         )
         #expect(merged["live"]?.bindingIDs == ["live", "unread"])
         #expect(merged["unread"]?.bindingIDs == ["live", "unread"])
+        #expect(merged["unread"]?.snapshot == snapshot(0.3))
     }
 
     @Test
@@ -217,6 +204,8 @@ struct UsageMergeTests {
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": refused])
         )
         #expect(merged["p"]?.state == .noSource(refused))
+        // A login we merely could not read keeps its figures — the serve-stale half of the rule.
+        #expect(merged["p"]?.snapshot == snapshot(0.4))
     }
 
     @Test
@@ -233,6 +222,7 @@ struct UsageMergeTests {
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
         #expect(merged["p"]?.bindingIDs == ["p"])
+        #expect(merged["p"]?.snapshot == snapshot(0.4))
     }
 
     @Test
@@ -250,6 +240,7 @@ struct UsageMergeTests {
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
+        #expect(merged["p"]?.snapshot == snapshot(0.4))
     }
 
     @Test
