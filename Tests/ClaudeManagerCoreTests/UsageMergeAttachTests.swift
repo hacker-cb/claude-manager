@@ -177,6 +177,46 @@ extension UsageMergeTests {
             == "Signed out · was a@example.com")
     }
 
+    @Test
+    func aHintThatSwitchesAccountsDoesNotCarryTheOldOnesFigures() {
+        // The row resolved account A last pass, the user signed in as B, and this pass the keychain
+        // refused us before B had ever been resolved for it. Renaming the entry while keeping A's
+        // snapshot would print A's quota bars under B's name — worse than printing none, because
+        // the row then looks entirely current and is about the wrong login.
+        let onA = account(uuid: "A", email: "a@example.com", snapshot: snapshot(0.3), bindingIDs: ["p"])
+        let toB = AccountIdentity(uuid: "B", email: "b@example.com")
+        let merged = UsageService.merge(
+            previous: ["p": onA],
+            result: UsageRefreshResult(
+                accounts: [],
+                bindingFailures: ["p": .keychainUnavailable(.interactionNotAllowed)],
+                hintedAccounts: ["p": toB]
+            )
+        )
+        #expect(merged["p"]?.identity.email == "b@example.com")
+        #expect(merged["p"]?.snapshot == nil)
+    }
+
+    @Test
+    func anExpiredPhantomDropsFiguresItFetchedUnderItsFingerprint() {
+        // A phantom is usually figureless — but a token whose `/profile` lookup keeps failing still
+        // fetches usage and stores it under the *fingerprint*, so once that token expires the
+        // phantom is served those samples. They belong to whatever login the token held, which the
+        // hint is only guessing at, and an expired-token row shows no figures either way.
+        var withFigures = phantom("stale")
+        withFigures.snapshot = snapshot(0.9)
+        let merged = UsageService.merge(
+            previous: [:],
+            result: UsageRefreshResult(
+                accounts: [withFigures],
+                bindingFailures: [:],
+                hintedAccounts: ["stale": acct]
+            )
+        )
+        #expect(merged["stale"]?.identity.email == "a@example.com")
+        #expect(merged["stale"]?.snapshot == nil)
+    }
+
     // MARK: - What a hint may never do
 
     @Test

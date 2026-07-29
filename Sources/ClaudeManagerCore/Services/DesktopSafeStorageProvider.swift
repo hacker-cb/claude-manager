@@ -63,10 +63,14 @@ public struct DesktopSafeStorageProvider: TokenProvider {
 
     /// `lastKnownAccountUuid`, if the file carries one shaped like a UUID.
     ///
-    /// Shape-checked rather than trusted: this value reaches a dictionary key and an identity
-    /// lookup, and a `config.json` written by some future Desktop — or half-written by a crash —
-    /// must not be able to put an arbitrary string there. Same 36-character test
-    /// `organizationUUID(fromComposite:)` applies to the composite key's org segment.
+    /// The length test is a cheap filter, not a sanitizer, and it is worth being exact about which:
+    /// `String.count` counts graphemes, so 36 arbitrary characters pass it. What actually bounds
+    /// this value is downstream — `UsageService.hintedAccounts` uses it only as a **lookup key**
+    /// into answers this machine already holds, so the raw string never becomes an account uuid,
+    /// never reaches a file path or a URL, and only ever meets SQLite through a bound parameter.
+    /// The filter is here to drop the obviously-not-a-uuid (a half-written file, a reshaped config)
+    /// before it costs a lookup. Same 36-character test `organizationUUID(fromComposite:)` applies
+    /// to the composite key's org segment.
     private func accountHint(in root: [String: Any]) -> String? {
         guard let hint = root[CoreConstants.desktopAccountHintKey] as? String,
               hint.count == 36

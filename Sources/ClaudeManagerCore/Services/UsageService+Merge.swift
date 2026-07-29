@@ -147,21 +147,51 @@ public extension UsageService {
                     state: .noSource(failure),
                     bindingIDs: [id]
                 )
+            // Whether the figures already on this row are *this* account's, decided before the
+            // name is overwritten — after that the entry can no longer say who they belonged to.
+            let carriedAreThisAccounts = entry.identity.uuid == identity.uuid
             entry.identity = identity
-            // The account's figures, not this binding's older carried ones — they are the same
-            // login's, and the fresher reading is the true one.
-            if let donor = donors[identity.uuid], donor.snapshot != nil { entry.snapshot = donor.snapshot }
+            entry.snapshot = figures(
+                for: entry,
+                donor: donors[identity.uuid],
+                keepCarried: carriedAreThisAccounts
+            )
             byBinding[id] = entry
         }
     }
 
-    /// The expired-token case: adopt the account's name, keep everything else.
+    /// The figures an attached row may show: a live sibling's, else its own carried ones, else
+    /// none.
+    ///
+    /// The last case is the one that matters. A binding can arrive here carrying a snapshot from an
+    /// account it is no longer attributed to — it resolved account A last pass, the user signed in
+    /// as B, and this pass the keychain refused us before B was ever resolved for it. Keeping those
+    /// figures would print A's quota bars under B's name, which is worse than printing none: the
+    /// row would look entirely current and be about the wrong login.
+    private static func figures(
+        for entry: AccountUsage,
+        donor: AccountUsage?,
+        keepCarried: Bool
+    ) -> UsageSnapshot? {
+        // A sibling that resolved this pass is the same login and a fresher reading than anything
+        // carried, so it wins outright.
+        if let fresher = donor?.snapshot { return fresher }
+        return keepCarried ? entry.snapshot : nil
+    }
+
+    /// The expired-token case: adopt the account's name, and nothing else.
     ///
     /// Guarded on the identity still being **provisional**, which is the whole safety of it. An
     /// account `/oauth/profile` has already named is authoritative about which login its token
     /// belongs to, and a hint disagreeing with it must lose — silently, since the hint is the
     /// fallible one. Only a fingerprint-keyed phantom, which by construction has no answer of its
     /// own, may take a name from the config.
+    ///
+    /// The figures go with it, and they have to. A phantom is usually figureless, but not always:
+    /// a token whose `/profile` lookup keeps failing still fetches usage and stores it under the
+    /// *fingerprint*, so once that token expires the phantom is served those samples. They belong
+    /// to whatever login that token held, which the hint is only guessing at — and an expired-token
+    /// row shows no figures either way, by the same rule that governs the surfaces above.
     private static func attachExpired(
         _ byBinding: inout [String: AccountUsage],
         id: String,
@@ -170,6 +200,7 @@ public extension UsageService {
         guard var phantom = byBinding[id], phantom.identity.isProvisional else { return }
         guard case .loginNeeded = phantom.state else { return }
         phantom.identity = identity
+        phantom.snapshot = nil
         byBinding[id] = phantom
     }
 
