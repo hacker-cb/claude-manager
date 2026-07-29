@@ -140,12 +140,19 @@ public struct UsageService: Sendable {
             if Task.isCancelled { break }
             await accounts.append(usage(for: account, now: now, interactive: interactive))
         }
+        // Last, and deliberately so: every call and every write is behind us, so nothing this
+        // resolves can reach a storage key. It reads `accounts` rather than `settled` because a
+        // late `/profile` inside the loop above can have moved an account onto its real uuid.
+        //
+        // Gated like every other phase: this one reads usage.db, and "off stops all storage"
+        // (README / SECURITY.md) covers reads as much as writes. Breaking out of the account loop
+        // above used to fall straight into it.
+        guard !Task.isCancelled else {
+            return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
+        }
         return await UsageRefreshResult(
             accounts: accounts,
             bindingFailures: resolved.failures,
-            // Last, and deliberately so: every call and every write is behind us, so nothing this
-            // resolves can reach a storage key. It reads `accounts` rather than `settled` because a
-            // late `/profile` inside the loop above can have moved an account onto its real uuid.
             hintedAccounts: hintedAccounts(resolved.hints, among: accounts)
         )
     }

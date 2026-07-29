@@ -153,7 +153,6 @@ public extension TokenProviderError {
 /// costs nothing and removes any chance of the two answers coming from different reads of a file
 /// that changed in between.
 public struct BindingReading: Sendable, Equatable {
-    public var bindingID: String
     /// The decrypted token, or why there isn't one.
     public var token: Result<DesktopToken, TokenProviderError>
     /// `lastKnownAccountUuid`, when the file carried a UUID-shaped one.
@@ -164,11 +163,9 @@ public struct BindingReading: Sendable, Equatable {
     public var hintedAccountUUID: String?
 
     public init(
-        bindingID: String,
         token: Result<DesktopToken, TokenProviderError>,
         hintedAccountUUID: String? = nil
     ) {
-        self.bindingID = bindingID
         self.token = token
         self.hintedAccountUUID = hintedAccountUUID
     }

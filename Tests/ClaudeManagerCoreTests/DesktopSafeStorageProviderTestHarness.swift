@@ -142,18 +142,6 @@ extension DesktopSafeStorageProviderTests {
     }
 }
 
-/// The token arm of a reading, for the suites that are about decryption and say nothing about the
-/// account hint. Test-only sugar — it keeps three dozen assertions about *what came out of the
-/// blob* from each restating the same `.token` unwrap.
-extension TokenProvider {
-    func token(
-        for binding: TokenBinding,
-        interactive: Bool
-    ) async -> Result<DesktopToken, TokenProviderError> {
-        await read(binding, interactive: interactive).token
-    }
-}
-
 extension DesktopSafeStorageProviderTests {
     func withTempDir(_ body: (URL) async throws -> Void) async throws {
         let dir = try Fixture.makeTempDir()

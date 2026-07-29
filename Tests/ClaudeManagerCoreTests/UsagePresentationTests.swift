@@ -148,6 +148,26 @@ struct UsagePresentationTests {
         #expect(UsagePresentation.accountName(shared, profileNames: ["b": "Claude B"]) == "Claude B")
     }
 
+    @Test
+    func anUnnamedSharedLoginStillPrefersTheDefaultProfile() {
+        // A cloned user-data dir puts the default binding and a launcher on one account, and
+        // `/oauth/profile` may not have answered yet — so there is no login to name it by. The
+        // fallback must not then take the sorted-first member: `bindingIDs` is sorted and a
+        // launcher's id is an `.app` path, which sorts *before* `__default__`, so the default
+        // profile would be named after whichever launcher happens to share its directory.
+        let cloned = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["/Applications/Claude B.app", TokenBinding.defaultID]
+        )
+        let names = [
+            "/Applications/Claude B.app": "Claude B",
+            TokenBinding.defaultID: "Default profile"
+        ]
+        #expect(UsagePresentation.accountName(cloned, profileNames: names) == "Default profile")
+    }
+
     // MARK: - The account line
 
     @Test

@@ -16,7 +16,6 @@ extension UsageServiceTests {
 
         func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             BindingReading(
-                bindingID: binding.id,
                 token: results[binding.id] ?? .failure(.configUnreadable),
                 hintedAccountUUID: hints[binding.id]
             )
@@ -97,7 +96,6 @@ extension UsageServiceTests {
         func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             if binding.id == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
             return BindingReading(
-                bindingID: binding.id,
                 token: results[binding.id] ?? .failure(.configUnreadable)
             )
         }
@@ -124,7 +122,6 @@ extension UsageServiceTests {
         func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             lock.withLock { counts[binding.id, default: 0] += 1 }
             return BindingReading(
-                bindingID: binding.id,
                 token: results[binding.id] ?? .failure(.configUnreadable),
                 hintedAccountUUID: hints[binding.id]
             )

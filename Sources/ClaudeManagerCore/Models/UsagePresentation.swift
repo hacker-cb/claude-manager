@@ -92,8 +92,24 @@ public enum UsagePresentation {
     ) -> String {
         let login = account.identity.accountLabel
         if account.bindingIDs.count > 1, let login { return login }
-        let profile = account.bindingIDs.compactMap { profileNames[$0] }.first
-        return profile ?? login ?? "Claude account"
+        return profileName(account, profileNames) ?? login ?? "Claude account"
+    }
+
+    /// The member profile to name a login after, when the login itself has no name yet.
+    ///
+    /// The default profile wins where it is a member, and that precedence is load-bearing rather
+    /// than decorative: a cloned user-data dir puts the default binding and a launcher on one
+    /// account, `bindingIDs` is sorted, and a launcher's id is an `.app` path — which sorts *before*
+    /// `__default__`. Take the first and the default profile is named after whichever launcher
+    /// happens to share its directory, which is precisely the arbitrary sorted-first pick this
+    /// function exists to stop.
+    private static func profileName(
+        _ account: AccountUsage,
+        _ profileNames: [String: String]
+    ) -> String? {
+        let hasDefault = account.bindingIDs.contains(TokenBinding.defaultID)
+        if hasDefault, let name = profileNames[TokenBinding.defaultID] { return name }
+        return account.bindingIDs.compactMap { profileNames[$0] }.first
     }
 
     // MARK: - The compact cell
@@ -145,20 +161,23 @@ public enum UsagePresentation {
         usage: AccountUsage?,
         now: Date
     ) -> (text: String, isWarning: Bool)? {
-        guard let usage, usage.snapshot != nil else { return nil }
+        // Bound once. The guard already settled that there are figures, and re-asking three more
+        // times below invited exactly the reading it is meant to prevent — that some arm here could
+        // still be answering for a pane with nothing in it.
+        guard let usage, let snapshot = usage.snapshot else { return nil }
         let dated = { (text: String, warn: Bool) -> (text: String, isWarning: Bool) in
-            guard let capturedAt = usage.snapshot?.capturedAt else { return (text, warn) }
+            guard let capturedAt = snapshot.capturedAt else { return (text, warn) }
             return ("\(text) · as of \(UsageFormat.age(capturedAt, now: now))", warn)
         }
         switch usage.state {
         case .fresh:
-            return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
+            return snapshot.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
         case let .stale(since): return ("stale · \(UsageFormat.age(since, now: now))", false)
         case .rateLimited: return dated("rate limited", true)
         case .offline: return dated("offline", false)
         case .loginNeeded: return dated("sign in to refresh", true)
         case let .noSource(reason):
-            return dated(phrase(for: reason, hasFigures: usage.snapshot != nil), isWarning(reason))
+            return dated(phrase(for: reason, hasFigures: true), isWarning(reason))
         }
     }
 

@@ -35,7 +35,7 @@ extension UsageMergeTests {
         // keychain we could not read, an expired token is a fact about this profile's own
         // credential, and this row is the only place that can say so.
         let live = account(uuid: "A", email: "a@example.com", snapshot: snapshot(0.6), bindingIDs: ["live"])
-        var byBinding = UsageService.merge(
+        let byBinding = UsageService.merge(
             previous: [:],
             result: UsageRefreshResult(
                 accounts: [live, phantom("stale")],
@@ -215,6 +215,34 @@ extension UsageMergeTests {
         )
         #expect(merged["stale"]?.identity.email == "a@example.com")
         #expect(merged["stale"]?.snapshot == nil)
+    }
+
+    @Test
+    func aSignedOutBindingDoesNotRejoinItsAccountOnAKeychainRefusal() {
+        // The inverse of `carriedReason`, and the hole a hint opens if attachment only looks at
+        // *this* pass's failure. The profile signed out; the next poll cannot read the keychain,
+        // which says nothing about whether it is signed in — so the hint would put it back on the
+        // login and hand it the live sibling's quota bars, on a row whose last positive knowledge
+        // was that it holds none. The refusal is still what the row *says* (it is current and
+        // actionable); it is the membership and the figures that must not come back.
+        let out = account(
+            uuid: "A", email: "a@example.com", snapshot: nil,
+            state: .noSource(.signedOut), bindingIDs: ["out"]
+        )
+        let live = account(uuid: "A", email: "a@example.com", snapshot: snapshot(0.6), bindingIDs: ["live"])
+        let refused = TokenProviderError.keychainUnavailable(.interactionNotAllowed)
+        let merged = UsageService.merge(
+            previous: ["out": out],
+            result: UsageRefreshResult(
+                accounts: [live],
+                bindingFailures: ["out": refused],
+                hintedAccounts: ["out": acct]
+            )
+        )
+        #expect(merged["out"]?.snapshot == nil)
+        #expect(merged["out"]?.bindingIDs == ["out"])
+        #expect(merged["live"]?.bindingIDs == ["live"])
+        #expect(merged["out"]?.state == .noSource(refused))
     }
 
     // MARK: - What a hint may never do

@@ -49,13 +49,12 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         else {
             // The one failure that costs us the hint too, and correctly so: there is no file to
             // have hinted anything.
-            return BindingReading(bindingID: binding.id, token: .failure(.configUnreadable))
+            return BindingReading(token: .failure(.configUnreadable))
         }
         // Lifted **before** the token work, so it survives every early return below it. That is the
         // whole point of reading the file into a reading rather than a result: five of the six ways
         // this can fail leave the account perfectly nameable, and used to discard the name anyway.
         return await BindingReading(
-            bindingID: binding.id,
             token: tokenResult(root: root, binding: binding, interactive: interactive),
             hintedAccountUUID: accountHint(in: root)
         )

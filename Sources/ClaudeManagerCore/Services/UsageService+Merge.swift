@@ -61,7 +61,7 @@ public extension UsageService {
         // Bindings whose own token said nothing this pass, attached to the account their config
         // names. Between the carry-forward and the fan-out on purpose: it needs the carried state
         // to have been decided, and the membership it creates has to be counted.
-        attach(&byBinding, detached: &detached, result: result)
+        attach(&byBinding, detached: &detached, previous: previous, result: result)
         // One definitive fan-out per account, computed after both halves because either can
         // contribute to it: the resolved account was built from resolved bindings alone, so a
         // sibling that merely couldn't be read is missing from it, while that sibling carried
@@ -107,6 +107,7 @@ public extension UsageService {
     private static func attach(
         _ byBinding: inout [String: AccountUsage],
         detached: inout Set<String>,
+        previous: [String: AccountUsage],
         result: UsageRefreshResult
     ) {
         guard !result.hintedAccounts.isEmpty else { return }
@@ -124,7 +125,14 @@ public extension UsageService {
                 attachExpired(&byBinding, id: id, identity: identity)
                 continue
             }
-            guard !failure.meansNotSignedIn else {
+            // Either this pass saw no login, or the last pass that could tell saw none. The second
+            // half matters as much as the first: a keychain refusal says *nothing* about whether a
+            // profile is signed in, so a binding that signed out and then hit one would otherwise
+            // rejoin its account on the hint alone — and be handed a live sibling's quota bars, on
+            // a row whose last positive knowledge was that it holds no login. `carriedReason`
+            // deliberately lets the refusal replace the sign-out as the *reason shown*, because it
+            // is current and actionable; that is about the copy, not about membership.
+            guard !failure.meansNotSignedIn, !hadLostItsLogin(previous[id]) else {
                 // The fold above published it if there was anything to keep; either way it may now
                 // name the login it lost.
                 var entry = byBinding[id]
@@ -158,6 +166,16 @@ public extension UsageService {
             )
             byBinding[id] = entry
         }
+    }
+
+    /// Whether the last pass that could tell found this binding holding no login.
+    ///
+    /// Read from `previous`, not from the entry the fold has already restated: the carry-forward
+    /// overwrites the state with *this* pass's reason, so by the time attachment runs the only
+    /// record of what we last actually knew is the map we were given.
+    private static func hadLostItsLogin(_ entry: AccountUsage?) -> Bool {
+        guard let state = entry?.state, case let .noSource(prior) = state else { return false }
+        return prior.meansNotSignedIn
     }
 
     /// The figures an attached row may show: a live sibling's, else its own carried ones, else

@@ -10,7 +10,6 @@ struct AccountResolverTests {
 
         func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
             BindingReading(
-                bindingID: binding.id,
                 token: results[binding.id] ?? .failure(.configUnreadable),
                 hintedAccountUUID: hints[binding.id]
             )
