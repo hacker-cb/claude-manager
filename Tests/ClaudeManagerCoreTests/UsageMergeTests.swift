@@ -169,6 +169,57 @@ struct UsageMergeTests {
     }
 
     @Test
+    func aDetachedBindingIsNotReInflatedByATransientSibling() {
+        // Three profiles on one login: one resolves, one signs out, one can't be read. Repairing
+        // the fan-out by account uuid alone put the transient sibling back into the signed-out
+        // binding's list, so a profile that shares nothing printed "shared with 2 profiles".
+        let shared = account(uuid: "A", snapshot: snapshot(0.3), bindingIDs: ["live", "out", "unread"])
+        let resolved = account(uuid: "A", snapshot: snapshot(0.6), bindingIDs: ["live"])
+        let merged = UsageService.merge(
+            previous: ["live": shared, "out": shared, "unread": shared],
+            result: UsageRefreshResult(
+                accounts: [resolved],
+                bindingFailures: ["out": .signedOut, "unread": .configUnreadable]
+            )
+        )
+        #expect(merged["out"]?.bindingIDs == ["out"])
+    }
+
+    @Test
+    func everyBindingOnOneAccountReportsTheSameFanOut() {
+        // The divergence the repair exists to remove: the resolved side was built from resolved
+        // bindings alone, and the carried side kept a list still naming a profile that has since
+        // signed out. Patching either alone left two panes printing different counts.
+        let shared = account(uuid: "A", snapshot: snapshot(0.3), bindingIDs: ["live", "out", "unread"])
+        let resolved = account(uuid: "A", snapshot: snapshot(0.6), bindingIDs: ["live"])
+        let merged = UsageService.merge(
+            previous: ["live": shared, "out": shared, "unread": shared],
+            result: UsageRefreshResult(
+                accounts: [resolved],
+                bindingFailures: ["out": .signedOut, "unread": .configUnreadable]
+            )
+        )
+        #expect(merged["live"]?.bindingIDs == ["live", "unread"])
+        #expect(merged["unread"]?.bindingIDs == ["live", "unread"])
+    }
+
+    @Test
+    func aCurrentBlockerIsShownEvenAfterASignOut() {
+        // The stickiness is narrow on purpose. A keychain that refuses us is as true after a
+        // sign-out as before it, and it is actionable — held behind a stale "signed out" it would
+        // never be shown, and a user who had signed back in would be told forever that they hadn't.
+        let signedOut = account(
+            uuid: "A", snapshot: snapshot(0.4), state: .noSource(.signedOut), bindingIDs: ["p"]
+        )
+        let refused = TokenProviderError.keychainUnavailable(.interactionNotAllowed)
+        let merged = UsageService.merge(
+            previous: ["p": signedOut],
+            result: UsageRefreshResult(accounts: [], bindingFailures: ["p": refused])
+        )
+        #expect(merged["p"]?.state == .noSource(refused))
+    }
+
+    @Test
     func aBindingThatLostItsLoginDoesNotRegainOneOnAnUnrelatedFailure() {
         // Only a successful resolve says the login is back. Without this the label flipped from
         // "Signed out" to the e-mail of a login the profile no longer holds on the first read

@@ -38,25 +38,23 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.configUnreadable)
         }
 
-        // v2 over v1, but elected by **decodability** rather than mere presence: a corrupted v2
-        // beside a live v1 otherwise reported a broken cache while a usable token sat two keys away
-        // in the same file, already read into a local.
-        let candidates = [
+        // Both cache keys, v2 first — and **every** decodable one is kept, not just the first.
+        // Neither presence nor decodability can tell which of them holds the live token: an
+        // upgraded profile can carry a corrupt v2 beside a live v1, or an emptied v2 beside a v1
+        // that still has the entries. Deciding on either alone buried a usable token in the same
+        // file we had already read.
+        let present = [
             root[CoreConstants.desktopTokenCacheKeyV2] as? String,
             root[CoreConstants.desktopTokenCacheKeyV1] as? String
         ].compactMap(\.self)
-        guard !candidates.isEmpty else { return .failure(.noTokenCache) }
-        // Present but undecodable everywhere is a *corrupt* cache, not an absent login. The two
+        guard !present.isEmpty else { return .failure(.noTokenCache) }
+        // Present but undecodable *everywhere* is a corrupt cache, not an absent login. The two
         // used to share `.noTokenCache` harmlessly, when it meant no more than "no token here";
         // it now carries a sign-in remedy and drops the binding out of its account's fan-out, so
         // coalescing them would tell a user with a damaged config to sign in — which cannot fix
         // it — and quietly rewrite what the other profiles on that login say about themselves.
-        guard let cacheString = candidates.first(where: { Data(base64Encoded: $0) != nil }),
-              let blob = Data(base64Encoded: cacheString)
-        else { return .failure(.malformedCache) }
-        // Whether a second, *different* cache sits beside the one elected above. Only the
-        // empty-cache verdict cares — see there.
-        let hasUnreadSibling = candidates.contains { $0 != cacheString }
+        let blobs = present.compactMap { Data(base64Encoded: $0) }
+        guard let blob = blobs.first else { return .failure(.malformedCache) }
 
         // Resolve the safeStorage key by which keychain account's password actually decrypts this
         // blob — the account name under the service varies by Claude Desktop version (`Claude` vs
@@ -113,21 +111,22 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             }
         }
 
-        guard let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {
+        guard let first = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {
             return .failure(.malformedCache)
         }
 
-        // Signing out leaves the key in place holding an encrypted `{}` rather than removing it, so
-        // an empty map here is a *signed-out* profile — the one failure whose remedy is a sign-in.
-        // Told apart from `.noUsableEntry` below, which keeps its meaning of "entries exist, none
-        // of them ours": a UI that offers "sign in" for a cache full of another client's tokens
-        // sends the user to do the one thing that cannot help.
-        //
-        // Claimed only when nothing else on this profile could hold a live token. The election
-        // above takes v2 over v1 by presence, not by content, so an empty v2 beside a populated v1
-        // would otherwise report a *signed-in* profile as signed out and send the user to sign in
-        // again to no effect. We haven't read that sibling, so we say the weaker, true thing.
-        guard !cache.isEmpty else { return .failure(hasUnreadSibling ? .noUsableEntry : .signedOut) }
+        // An empty map is what Desktop's logout leaves behind — it rewrites the key rather than
+        // removing it. But only the *elected* blob has been read so far, and an emptied v2 can sit
+        // beside a v1 that still holds the entries, so try the rest before concluding anything. The
+        // key is already resolved by here, so the extra decrypt costs nothing but the call.
+        let cache = first.isEmpty ? (firstNonEmptyCache(in: blobs.dropFirst(), key: key) ?? first) : first
+
+        // Every cache this profile has is empty, which is exactly and only what signing out
+        // produces — the one failure whose remedy is a sign-in. Told apart from `.noUsableEntry`
+        // below, which keeps its meaning of "entries exist, none of them ours": offering "sign in"
+        // for a cache full of another client's tokens sends the user to do the one thing that
+        // cannot help.
+        guard !cache.isEmpty else { return .failure(.signedOut) }
 
         guard let (compositeKey, value) = pickEntry(from: cache) else {
             return .failure(.noUsableEntry)
@@ -145,6 +144,22 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             rateLimitTier: value["rateLimitTier"] as? String,
             bindingID: binding.id
         ))
+    }
+
+    /// The first of these blobs that decrypts to a **non-empty** token-cache map, or nil.
+    ///
+    /// Only reached when the elected cache turned out empty. A blob that won't decrypt or isn't a
+    /// JSON object is skipped rather than reported: the elected one already decrypted cleanly, so
+    /// the key is right and a broken sibling says nothing about this profile's login.
+    private func firstNonEmptyCache(in blobs: ArraySlice<Data>, key: Data) -> [String: Any]? {
+        for blob in blobs {
+            guard case let .success(plaintext) = decryptor.decrypt(v10Blob: blob, key: key),
+                  let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any],
+                  !cache.isEmpty
+            else { continue }
+            return cache
+        }
+        return nil
     }
 
     // MARK: - tokenCacheV2 map interpretation

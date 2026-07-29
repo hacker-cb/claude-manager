@@ -92,17 +92,17 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func anEmptyV2BesideAPopulatedV1DoesNotClaimSignedOut() async throws {
+    func anEmptyV2BesideAPopulatedV1YieldsTheV1Token() async throws {
         try await withTempDir { dir in
-            // The election takes v2 over v1 by presence, not by content, so an empty v2 sitting
-            // beside a populated v1 must not be reported as a sign-out: that would tell a signed-in
-            // user to sign in again, to no effect. We haven't read the sibling, so we say the
-            // weaker, true thing — which is exactly what this config produced before `.signedOut`
-            // existed.
+            // v2 is read first but holds nothing, and the entries are in the legacy key. Neither
+            // presence nor decodability can tell which key is live, so an empty one is not the
+            // answer — it is a reason to read the other. Reporting a signed-in profile as signed
+            // out sends the user to sign in again to no effect; reporting it as unavailable buries
+            // a token that is right there and already decryptable with the key in hand.
             let url = try writeConfig(v2: [:], v1: [inferenceCompositeKey(): ["token": "T"]], into: dir)
-            let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
-            #expect(result == .failure(.noUsableEntry))
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
         }
     }
 
