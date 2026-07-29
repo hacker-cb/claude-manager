@@ -98,7 +98,10 @@ struct UsagePresentationTests {
 
     @Test
     func aSignedOutRowNamesTheStateAndKeepsTheFormerLoginAsPastTense() {
-        let usage = account(.noSource(.signedOut), snapshot: snapshot())
+        // No snapshot, deliberately: the fold strips a signed-out binding's figures, so this is the
+        // shape the line actually has to render. The e-mail is the whole of what survives, and it
+        // is the most useful thing on the row for telling two profiles apart.
+        let usage = account(.noSource(.signedOut))
         #expect(UsagePresentation.accountLine(usage: usage, failure: .signedOut)
             == "Signed out · was a@example.com")
     }
@@ -130,10 +133,32 @@ struct UsagePresentationTests {
     func everyStateThatRendersBarsIsDated() {
         // Without an age, a day-old 87% reads as the current quota — the countdown is gone once the
         // window elapses and the state word alone says nothing about *when*.
+        //
+        // `.noSource(.configUnreadable)` rather than `.signedOut`: a signed-out binding no longer
+        // carries figures at all, so that pairing is one the fold cannot produce and the fixture
+        // would have been describing a state that does not exist.
         let old = snapshot(capturedAgo: 7200)
-        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.signedOut)] {
+        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.configUnreadable)] {
             let note = UsagePresentation.headerNote(usage: account(state, snapshot: old), now: now)
             #expect(note?.text.hasSuffix("· as of 2 h ago") == true, "undated: \(state)")
+        }
+    }
+
+    @Test
+    func aPaneWithNoFiguresSaysItOnceInTheBodyAndNotTwice() {
+        // The header dates figures. With none to date it has nothing to add that the body's own
+        // sentence does not already say better, and printing a two-word version directly above the
+        // sentence reads as a stutter. True of a signed-out pane now that its figures are gone, and
+        // equally of a 429 on a first-ever fetch or an offline start.
+        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.signedOut)] {
+            #expect(
+                UsagePresentation.headerNote(usage: account(state), now: now) == nil,
+                "stuttered: \(state)"
+            )
+            #expect(
+                UsagePresentation.sentence(usage: account(state), failure: nil) != nil,
+                "silent: \(state)"
+            )
         }
     }
 
@@ -153,8 +178,13 @@ struct UsagePresentationTests {
         let withBars = account(.noSource(.configUnreadable), snapshot: snapshot())
         #expect(UsagePresentation.headerNote(usage: withBars, now: now)?.text
             .hasPrefix("config unreadable") == true)
+        // With no bars the header has nothing to date and stays quiet; the pane's body carries the
+        // never-opened reading instead. The distinction itself is pinned on `stateNote`, which is
+        // where it is still observable — see `theCompactPhraseSeesTheFiguresToo`.
         let withoutBars = account(.noSource(.configUnreadable))
-        #expect(UsagePresentation.headerNote(usage: withoutBars, now: now)?.text == "not set up yet")
+        #expect(UsagePresentation.headerNote(usage: withoutBars, now: now) == nil)
+        #expect(UsagePresentation.sentence(usage: withoutBars, failure: nil)
+            == "Not set up yet — open this profile once, then Refresh.")
     }
 
     @Test

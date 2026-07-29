@@ -101,19 +101,42 @@ struct UsageMergeTests {
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
-        #expect(merged["p"]?.snapshot == snapshot(0.4))
+        // No figures: a profile that holds no login is not showing stale numbers, it is showing an
+        // account's numbers on a row that has stopped drawing on that account.
+        #expect(merged["p"]?.snapshot == nil)
     }
 
     @Test
-    func aFailedBindingWithNoPreviousSnapshotProducesNoEntry() {
-        // Nothing to serve stale. The binding's failure is published separately and is what the
-        // detail pane's empty state reads.
+    func aFailedBindingWithNothingToSayProducesNoEntry() {
+        // Nothing to serve stale and no login to name. The binding's failure is published
+        // separately and is what the detail pane's empty state reads.
         let previous = ["p": account(uuid: "A", snapshot: nil, bindingIDs: ["p"])]
         let merged = UsageService.merge(
             previous: previous,
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
         )
         #expect(merged["p"] == nil)
+    }
+
+    @Test
+    func aSignedOutBindingSurvivesOnItsLoginAloneOnceTheFiguresAreGone() {
+        // The pass that strips the figures leaves an entry with nothing but an identity, and the
+        // next pass has to keep it — otherwise "Signed out · was a@example.com" appears for exactly
+        // one poll and then collapses to a bare "Signed out", which is the state this whole rule
+        // exists to stop being all the row can say.
+        let previous = [
+            "p": account(
+                uuid: "A", email: "a@example.com", snapshot: nil,
+                state: .noSource(.signedOut), bindingIDs: ["p"]
+            )
+        ]
+        let merged = UsageService.merge(
+            previous: previous,
+            result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
+        )
+        #expect(merged["p"]?.identity.email == "a@example.com")
+        #expect(merged["p"]?.snapshot == nil)
+        #expect(merged["p"]?.state == .noSource(.signedOut))
     }
 
     @Test
@@ -128,7 +151,7 @@ struct UsageMergeTests {
         )
         #expect(merged["out"]?.bindingIDs == ["out"])
         #expect(merged["live"]?.bindingIDs == ["live"])
-        #expect(merged["out"]?.snapshot == snapshot(0.3))
+        #expect(merged["out"]?.snapshot == nil)
     }
 
     @Test
@@ -168,7 +191,7 @@ struct UsageMergeTests {
             )
         )
         #expect(merged["out"]?.bindingIDs == ["out"])
-        #expect(merged["out"]?.snapshot == snapshot(0.3))
+        #expect(merged["out"]?.snapshot == nil)
     }
 
     @Test
@@ -222,7 +245,7 @@ struct UsageMergeTests {
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
         #expect(merged["p"]?.bindingIDs == ["p"])
-        #expect(merged["p"]?.snapshot == snapshot(0.4))
+        #expect(merged["p"]?.snapshot == nil)
     }
 
     @Test
@@ -240,7 +263,7 @@ struct UsageMergeTests {
             result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
         )
         #expect(merged["p"]?.state == .noSource(.signedOut))
-        #expect(merged["p"]?.snapshot == snapshot(0.4))
+        #expect(merged["p"]?.snapshot == nil)
     }
 
     @Test

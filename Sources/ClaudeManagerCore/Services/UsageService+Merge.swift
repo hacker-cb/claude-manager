@@ -40,10 +40,22 @@ public extension UsageService {
         for (id, failure) in result.bindingFailures {
             // A binding this pass *did* resolve was written above and wins: a re-login must not be
             // shadowed by the failure its own previous pass recorded.
-            guard byBinding[id] == nil, var kept = previous[id], kept.snapshot != nil else { continue }
+            guard byBinding[id] == nil, var kept = previous[id] else { continue }
+            // Something worth publishing: figures to serve, or a login worth naming in the past
+            // tense. The second half is new, and it is what keeps a signed-out entry alive after the
+            // rule below strips its figures — without it the entry would vanish on the very next
+            // pass, taking the "was ps@…" clause with it.
+            guard kept.snapshot != nil || kept.identity.accountLabel != nil else { continue }
             let reason = carriedReason(previous: kept.state, latest: failure)
             kept.state = .noSource(reason)
-            if reason.meansNotSignedIn { detached.insert(id) }
+            if reason.meansNotSignedIn {
+                detached.insert(id)
+                // A profile that holds no login is not showing *stale* figures — it is showing
+                // somebody else's, on a row whose own account is gone. The account owns the quota,
+                // and this profile has stopped drawing on it, so the numbers are no longer about it
+                // in any tense. The login it lost is still worth naming; the percentage is not.
+                kept.snapshot = nil
+            }
             byBinding[id] = kept
         }
         // One definitive fan-out per account, computed after both halves because either can

@@ -106,17 +106,20 @@ public enum UsagePresentation {
 
     /// The pane's short header note and whether it warns — nil when the header should stay quiet.
     ///
-    /// Quiet whenever there is no account: the pane's body already owns the full sentence for that
-    /// case, and saying it twice, once above the other, reads as a stutter rather than emphasis.
+    /// Quiet whenever the pane has **no figures**: with nothing to render, the body already owns
+    /// the full sentence for the state, and printing a two-word version of it directly above reads
+    /// as a stutter rather than emphasis. That was true of a no-account pane from the start and is
+    /// now true of every state that can arrive without a snapshot — a 429 on a first-ever fetch, an
+    /// offline start, and a signed-out profile, which no longer carries figures at all.
     ///
-    /// Every state that still renders bars is dated. The figures have stopped moving, the countdown
+    /// Every state that *does* render bars is dated. The figures have stopped moving, the countdown
     /// beside them goes once their window elapses, and a state word alone says nothing about *when*
     /// — so without an age a day-old 87% reads as the current quota.
     public static func headerNote(
         usage: AccountUsage?,
         now: Date
     ) -> (text: String, isWarning: Bool)? {
-        guard let usage else { return nil }
+        guard let usage, usage.snapshot != nil else { return nil }
         let dated = { (text: String, warn: Bool) -> (text: String, isWarning: Bool) in
             guard let capturedAt = usage.snapshot?.capturedAt else { return (text, warn) }
             return ("\(text) · as of \(UsageFormat.age(capturedAt, now: now))", warn)
