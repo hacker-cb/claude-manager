@@ -18,6 +18,15 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
     /// e.g. `max`, `pro`, `team`, `enterprise` — gates surfaces like the Sonnet/scoped bar.
     public var subscriptionType: String?
     public var rateLimitTier: String?
+    /// Whether `uuid` is still the electing token's fingerprint rather than an account uuid.
+    ///
+    /// The fact was always there but only ever expressed as `identity.uuid == fingerprint`, which
+    /// means only a caller *already holding the fingerprint* could ask. Everything that reasons
+    /// about a binding with no readable token is exactly the caller that cannot, so the comparison
+    /// had to become a property. Defaults to `false`: only `AccountResolver` mints a provisional
+    /// identity, and anything sourced from `/oauth/profile` — live or stored — is by definition not
+    /// one.
+    public var isProvisional: Bool
 
     public init(
         uuid: String,
@@ -25,7 +34,8 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         displayName: String? = nil,
         organizationUuid: String? = nil,
         subscriptionType: String? = nil,
-        rateLimitTier: String? = nil
+        rateLimitTier: String? = nil,
+        isProvisional: Bool = false
     ) {
         self.uuid = uuid
         self.email = email
@@ -33,6 +43,33 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         self.organizationUuid = organizationUuid
         self.subscriptionType = subscriptionType
         self.rateLimitTier = rateLimitTier
+        self.isProvisional = isProvisional
+    }
+
+    /// Decode leniently, as `BadgeStyle` does: a key this build knows and the payload does not
+    /// falls back to its default instead of failing the whole decode.
+    ///
+    /// The synthesized decoder will not do it. A default on the property declaration reaches only
+    /// the memberwise initializer — Swift still synthesizes a plain `decode(_:forKey:)` — so adding
+    /// `isProvisional` made every previously-written payload undecodable, and the next field added
+    /// would have done it again. Nothing in this app encodes an `AccountIdentity` today
+    /// (`account_profiles` stores flat columns), which is exactly why the hazard would have gone
+    /// unnoticed until something did.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            guard let decoded = try? container.decodeIfPresent(T.self, forKey: key) else { return fallback }
+            return decoded ?? fallback
+        }
+        try self.init(
+            uuid: container.decode(String.self, forKey: .uuid),
+            email: value(.email, nil),
+            displayName: value(.displayName, nil),
+            organizationUuid: value(.organizationUuid, nil),
+            subscriptionType: value(.subscriptionType, nil),
+            rateLimitTier: value(.rateLimitTier, nil),
+            isProvisional: value(.isProvisional, false)
+        )
     }
 
     public var id: String {

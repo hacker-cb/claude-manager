@@ -94,11 +94,88 @@ struct UsagePresentationTests {
         #expect(UsagePresentation.attentionNote(usage: nil, failure: .signedOut) == "signed out")
     }
 
+    // MARK: - Naming an account
+
+    @Test
+    func aSharedLoginIsNamedByTheLoginNotByAMemberProfile() {
+        // The old rule walked a sorted binding list and took the first match, so a notification
+        // about a quota two profiles share was titled after whichever launcher path sorted lowest.
+        // That name is arbitrary, may mean nothing to the reader, and changes on a rename.
+        let shared = AccountUsage(
+            identity: AccountIdentity(uuid: "A", email: "a@example.com"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["/Applications/Claude A.app", "/Applications/Claude B.app"]
+        )
+        let names = [
+            "/Applications/Claude A.app": "Claude A",
+            "/Applications/Claude B.app": "Claude B"
+        ]
+        #expect(UsagePresentation.accountName(shared, profileNames: names) == "a@example.com")
+    }
+
+    @Test
+    func aLoginWithOneProfileKeepsTheProfilesName() {
+        // No ambiguity to resolve, and the profile name is what the sidebar row already says.
+        let solo = AccountUsage(
+            identity: AccountIdentity(uuid: "A", email: "a@example.com"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: [TokenBinding.defaultID]
+        )
+        #expect(UsagePresentation.accountName(solo, profileNames: [TokenBinding.defaultID: "Default profile"])
+            == "Default profile")
+    }
+
+    @Test
+    func anAccountWithNoNameAnywhereStillHasSomethingToBeCalled() {
+        // `/oauth/profile` has not answered yet and the binding is one no launcher claims — a
+        // notification title still has to read as something.
+        let unnamed = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["gone"]
+        )
+        #expect(UsagePresentation.accountName(unnamed, profileNames: [:]) == "Claude account")
+        // A shared login with no e-mail yet falls back the same way, rather than to nothing.
+        let shared = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["a", "b"]
+        )
+        #expect(UsagePresentation.accountName(shared, profileNames: ["b": "Claude B"]) == "Claude B")
+    }
+
+    @Test
+    func anUnnamedSharedLoginStillPrefersTheDefaultProfile() {
+        // A cloned user-data dir puts the default binding and a launcher on one account, and
+        // `/oauth/profile` may not have answered yet — so there is no login to name it by. The
+        // fallback must not then take the sorted-first member: `bindingIDs` is sorted and a
+        // launcher's id is an `.app` path, which sorts *before* `__default__`, so the default
+        // profile would be named after whichever launcher happens to share its directory.
+        let cloned = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["/Applications/Claude B.app", TokenBinding.defaultID]
+        )
+        let names = [
+            "/Applications/Claude B.app": "Claude B",
+            TokenBinding.defaultID: "Default profile"
+        ]
+        #expect(UsagePresentation.accountName(cloned, profileNames: names) == "Default profile")
+    }
+
     // MARK: - The account line
 
     @Test
     func aSignedOutRowNamesTheStateAndKeepsTheFormerLoginAsPastTense() {
-        let usage = account(.noSource(.signedOut), snapshot: snapshot())
+        // No snapshot, deliberately: the fold strips a signed-out binding's figures, so this is the
+        // shape the line actually has to render. The e-mail is the whole of what survives, and it
+        // is the most useful thing on the row for telling two profiles apart.
+        let usage = account(.noSource(.signedOut))
         #expect(UsagePresentation.accountLine(usage: usage, failure: .signedOut)
             == "Signed out · was a@example.com")
     }
@@ -130,10 +207,45 @@ struct UsagePresentationTests {
     func everyStateThatRendersBarsIsDated() {
         // Without an age, a day-old 87% reads as the current quota — the countdown is gone once the
         // window elapses and the state word alone says nothing about *when*.
+        //
+        // `.noSource(.configUnreadable)` rather than `.signedOut`: a signed-out binding no longer
+        // carries figures at all, so that pairing is one the fold cannot produce and the fixture
+        // would have been describing a state that does not exist.
         let old = snapshot(capturedAgo: 7200)
-        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.signedOut)] {
+        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.configUnreadable)] {
             let note = UsagePresentation.headerNote(usage: account(state, snapshot: old), now: now)
             #expect(note?.text.hasSuffix("· as of 2 h ago") == true, "undated: \(state)")
+        }
+    }
+
+    @Test
+    func aPaneWithNoFiguresSaysItOnceInTheBodyAndNotTwice() {
+        // The header dates figures. With none to date it has nothing to add that the body's own
+        // sentence does not already say better, and printing a two-word version directly above the
+        // sentence reads as a stutter. True of a signed-out pane now that its figures are gone, and
+        // equally of a 429 on a first-ever fetch or an offline start.
+        // The sentence carries the tint the silenced header used to, or a keychain error and an
+        // ordinary sign-out would be drawn identically on a pane that has nothing else left to
+        // distinguish them.
+        #expect(UsagePresentation.sentence(
+            usage: account(.noSource(.decryptFailed(.decryptFailed))),
+            failure: nil
+        )?.isWarning == true)
+        #expect(UsagePresentation.sentence(
+            usage: account(.noSource(.signedOut)),
+            failure: nil
+        )?.isWarning == false)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .malformedCache)?.isWarning == true)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)?.isWarning == false)
+        for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.signedOut)] {
+            #expect(
+                UsagePresentation.headerNote(usage: account(state), now: now) == nil,
+                "stuttered: \(state)"
+            )
+            #expect(
+                UsagePresentation.sentence(usage: account(state), failure: nil) != nil,
+                "silent: \(state)"
+            )
         }
     }
 
@@ -142,7 +254,7 @@ struct UsagePresentationTests {
         // The pane printed the same explanation twice, once above the other, when the header
         // learned to speak from a bare failure.
         #expect(UsagePresentation.headerNote(usage: nil, now: now) == nil)
-        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)?.text
             == "Not set up yet — open this profile once, then Refresh.")
     }
 
@@ -153,8 +265,13 @@ struct UsagePresentationTests {
         let withBars = account(.noSource(.configUnreadable), snapshot: snapshot())
         #expect(UsagePresentation.headerNote(usage: withBars, now: now)?.text
             .hasPrefix("config unreadable") == true)
+        // With no bars the header has nothing to date and stays quiet; the pane's body carries the
+        // never-opened reading instead. The distinction itself is pinned on `stateNote`, which is
+        // where it is still observable — see `theCompactPhraseSeesTheFiguresToo`.
         let withoutBars = account(.noSource(.configUnreadable))
-        #expect(UsagePresentation.headerNote(usage: withoutBars, now: now)?.text == "not set up yet")
+        #expect(UsagePresentation.headerNote(usage: withoutBars, now: now) == nil)
+        #expect(UsagePresentation.sentence(usage: withoutBars, failure: nil)?.text
+            == "Not set up yet — open this profile once, then Refresh.")
     }
 
     @Test

@@ -14,7 +14,7 @@ extension DesktopSafeStorageProviderTests {
             // `.noUsableEntry` (there is nothing to match against).
             let url = try writeConfig(cache: [:], into: dir)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.signedOut))
         }
     }
@@ -26,7 +26,7 @@ extension DesktopSafeStorageProviderTests {
             // must reach the same answer through the v1 fallback.
             let url = try writeConfig(cache: [:], into: dir, key: CoreConstants.desktopTokenCacheKeyV1)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.signedOut))
         }
     }
@@ -40,12 +40,12 @@ extension DesktopSafeStorageProviderTests {
             let empty = try writeConfig(cache: [:], into: dir, name: "signed-out.json")
             let subject = provider(keychain: StubKeychain(result: .success(password)))
 
-            _ = try await subject.token(for: TokenBinding(id: "live", configURL: live), interactive: false)
+            _ = try await subject.read(TokenBinding(id: "live", configURL: live), interactive: false).token
                 .get()
-            let result = await subject.token(
-                for: TokenBinding(id: "out", configURL: empty),
+            let result = await subject.read(
+                TokenBinding(id: "out", configURL: empty),
                 interactive: false
-            )
+            ).token
             #expect(result == .failure(.signedOut))
         }
     }
@@ -69,12 +69,12 @@ extension DesktopSafeStorageProviderTests {
             ]))
             let subject = DesktopSafeStorageProvider(keyStore: store)
 
-            let out = await subject.token(for: TokenBinding(id: "out", configURL: empty), interactive: false)
+            let out = await subject.read(TokenBinding(id: "out", configURL: empty), interactive: false).token
             #expect(out == .failure(.signedOut))
             #expect(await store.isUnlocked)
             // And the key it cached is the live one, not the stale sibling's.
             let token = try await subject
-                .token(for: TokenBinding(id: "live", configURL: live), interactive: false).get()
+                .read(TokenBinding(id: "live", configURL: live), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -86,7 +86,7 @@ extension DesktopSafeStorageProviderTests {
             // sibling that could hold a live token and the sign-in remedy is safe to name.
             let url = try writeConfig(v2: [:], v1: [:], into: dir)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.signedOut))
         }
     }
@@ -103,7 +103,7 @@ extension DesktopSafeStorageProviderTests {
                 into: dir
             )
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -118,7 +118,7 @@ extension DesktopSafeStorageProviderTests {
             // a token that is right there and already decryptable with the key in hand.
             let url = try writeConfig(v2: [:], v1: [inferenceCompositeKey(): ["token": "T"]], into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -135,7 +135,7 @@ extension DesktopSafeStorageProviderTests {
                 into: dir
             )
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -149,7 +149,7 @@ extension DesktopSafeStorageProviderTests {
             let url = dir.appendingPathComponent("config.json")
             try Data(#"{"oauth:tokenCacheV2":"not-base64!!"}"#.utf8).write(to: url)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.malformedCache))
         }
     }

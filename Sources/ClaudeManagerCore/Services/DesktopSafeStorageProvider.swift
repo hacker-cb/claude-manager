@@ -43,16 +43,48 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         }
     }
 
-    public func token(
-        for binding: TokenBinding,
-        interactive: Bool
-    ) async -> Result<DesktopToken, TokenProviderError> {
+    public func read(_ binding: TokenBinding, interactive: Bool) async -> BindingReading {
         guard let configData = try? Data(contentsOf: binding.configURL),
               let root = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
         else {
-            return .failure(.configUnreadable)
+            // The one failure that costs us the hint too, and correctly so: there is no file to
+            // have hinted anything.
+            return BindingReading(token: .failure(.configUnreadable))
         }
+        // Lifted **before** the token work, so it survives every early return below it. That is the
+        // whole point of reading the file into a reading rather than a result: five of the six ways
+        // this can fail leave the account perfectly nameable, and used to discard the name anyway.
+        return await BindingReading(
+            token: tokenResult(root: root, binding: binding, interactive: interactive),
+            hintedAccountUUID: accountHint(in: root)
+        )
+    }
 
+    /// `lastKnownAccountUuid`, if the file carries a UUID.
+    ///
+    /// **Parsed**, not measured. A length test would let 36 arbitrary characters through — and
+    /// costs nothing less than this one — while `UUID(uuidString:)` says exactly what the name
+    /// claims. Rejecting a non-canonical spelling loses nothing either: this value's only use is to
+    /// match `account_profiles.account_uuid`, which comes from `/oauth/profile` in canonical form,
+    /// so anything that fails to parse could never have matched.
+    ///
+    /// It is still a filter rather than a sanitizer, and the distinction is worth keeping straight:
+    /// what actually bounds this value is downstream — `UsageService.hintedAccounts` uses it only
+    /// as a **lookup key** into answers this machine already holds, so the raw string never becomes
+    /// an account uuid, never reaches a file path or a URL, and only ever meets SQLite through a
+    /// bound parameter. Parsing here just drops the obviously-wrong before it costs a lookup.
+    private func accountHint(in root: [String: Any]) -> String? {
+        guard let hint = root[CoreConstants.desktopAccountHintKey] as? String,
+              UUID(uuidString: hint) != nil
+        else { return nil }
+        return hint
+    }
+
+    private func tokenResult(
+        root: [String: Any],
+        binding: TokenBinding,
+        interactive: Bool
+    ) async -> Result<DesktopToken, TokenProviderError> {
         // Both cache keys, v2 first — and **every** decodable one is kept, not just the first.
         // Neither presence nor decodability can tell which of them holds the live token: an
         // upgraded profile can carry a corrupt v2 beside a live v1, or an emptied v2 beside a v1

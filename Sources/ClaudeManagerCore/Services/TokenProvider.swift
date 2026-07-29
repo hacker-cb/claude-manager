@@ -139,10 +139,45 @@ public extension TokenProviderError {
     }
 }
 
-/// Resolves a `DesktopToken` for a binding. Behind a protocol so the resolver and tests can
-/// swap the real safeStorage-backed provider for a stub.
+/// Everything one pass can learn about a binding from its own `config.json`: the token when it
+/// came out, and the account the file names either way.
+///
+/// A bare `Result` was the wrong shape here, and the cost was structural rather than cosmetic. A
+/// binding whose blob would not decrypt fell out of its account entirely, because a *reason* is
+/// all the failure arm could carry — yet the file we had just opened and parsed names the account
+/// in plaintext, and a keychain that refuses us says nothing whatsoever about whether the profile
+/// is still signed in. Returning both from one read is what lets a profile be "signed in,
+/// momentarily unreadable" instead of "gone".
+///
+/// One read, not two: the hint sits in the same parsed root as the caches, so lifting it out here
+/// costs nothing and removes any chance of the two answers coming from different reads of a file
+/// that changed in between.
+public struct BindingReading: Sendable, Equatable {
+    /// The decrypted token, or why there isn't one.
+    public var token: Result<DesktopToken, TokenProviderError>
+    /// `lastKnownAccountUuid`, when the file carried a UUID-shaped one.
+    ///
+    /// Never authoritative — see `CoreConstants.desktopAccountHintKey` for the display/filing
+    /// boundary this is allowed to live on, and `AccountResolver` for why it is still not a
+    /// grouping key.
+    public var hintedAccountUUID: String?
+
+    public init(
+        token: Result<DesktopToken, TokenProviderError>,
+        hintedAccountUUID: String? = nil
+    ) {
+        self.token = token
+        self.hintedAccountUUID = hintedAccountUUID
+    }
+}
+
+/// Reads a binding's `config.json`. Behind a protocol so the resolver and tests can swap the real
+/// safeStorage-backed provider for a stub.
 public protocol TokenProvider: Sendable {
     /// `interactive: false` on the background poll path (fail fast on a locked/unauthorized
     /// keychain); `true` from an explicit user gesture (allow the one-time prompt).
-    func token(for binding: TokenBinding, interactive: Bool) async -> Result<DesktopToken, TokenProviderError>
+    ///
+    /// Never fails as a whole: an unreadable binding is a reading whose `token` is a failure, not
+    /// the absence of a reading.
+    func read(_ binding: TokenBinding, interactive: Bool) async -> BindingReading
 }

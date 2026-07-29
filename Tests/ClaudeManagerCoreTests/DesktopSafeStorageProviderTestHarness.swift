@@ -82,12 +82,14 @@ extension DesktopSafeStorageProviderTests {
         cache: [String: Any],
         into dir: URL,
         key cacheKey: String = CoreConstants.desktopTokenCacheKeyV2,
-        name: String = "config.json"
+        name: String = "config.json",
+        hint: String? = nil
     ) throws -> URL {
         let key = SafeStorageDecryptor.deriveKey(password: password)!
         let cacheData = try JSONSerialization.data(withJSONObject: cache)
         let blob = SafeStorageDecryptorTests.makeV10Blob(cacheData, key: key)
-        let root: [String: Any] = [cacheKey: blob.base64EncodedString()]
+        var root: [String: Any] = [cacheKey: blob.base64EncodedString()]
+        root[CoreConstants.desktopAccountHintKey] = hint
         let url = dir.appendingPathComponent(name)
         try JSONSerialization.data(withJSONObject: root).write(to: url)
         return url
@@ -100,17 +102,19 @@ extension DesktopSafeStorageProviderTests {
         v2: [String: Any],
         v1: [String: Any],
         into dir: URL,
-        name: String = "config.json"
+        name: String = "config.json",
+        hint: String? = nil
     ) throws -> URL {
         let key = SafeStorageDecryptor.deriveKey(password: password)!
         let v2Blob = try SafeStorageDecryptorTests
             .makeV10Blob(JSONSerialization.data(withJSONObject: v2), key: key)
         let v1Blob = try SafeStorageDecryptorTests
             .makeV10Blob(JSONSerialization.data(withJSONObject: v1), key: key)
-        let root: [String: Any] = [
+        var root: [String: Any] = [
             CoreConstants.desktopTokenCacheKeyV2: v2Blob.base64EncodedString(),
             CoreConstants.desktopTokenCacheKeyV1: v1Blob.base64EncodedString()
         ]
+        root[CoreConstants.desktopAccountHintKey] = hint
         let url = dir.appendingPathComponent(name)
         try JSONSerialization.data(withJSONObject: root).write(to: url)
         return url
@@ -119,14 +123,15 @@ extension DesktopSafeStorageProviderTests {
     /// Write a `config.json` whose v2 key holds an arbitrary raw string — typically one that is not
     /// base64 at all — beside a properly encrypted v1. The shape that decides whether election
     /// falls through to a decodable sibling.
-    func writeConfig(rawV2: String, v1: [String: Any], into dir: URL) throws -> URL {
+    func writeConfig(rawV2: String, v1: [String: Any], into dir: URL, hint: String? = nil) throws -> URL {
         let key = SafeStorageDecryptor.deriveKey(password: password)!
         let blob = try SafeStorageDecryptorTests
             .makeV10Blob(JSONSerialization.data(withJSONObject: v1), key: key)
-        let root: [String: Any] = [
+        var root: [String: Any] = [
             CoreConstants.desktopTokenCacheKeyV2: rawV2,
             CoreConstants.desktopTokenCacheKeyV1: blob.base64EncodedString()
         ]
+        root[CoreConstants.desktopAccountHintKey] = hint
         let url = dir.appendingPathComponent("config.json")
         try JSONSerialization.data(withJSONObject: root).write(to: url)
         return url
@@ -135,7 +140,9 @@ extension DesktopSafeStorageProviderTests {
     func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
         DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
     }
+}
 
+extension DesktopSafeStorageProviderTests {
     func withTempDir(_ body: (URL) async throws -> Void) async throws {
         let dir = try Fixture.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
