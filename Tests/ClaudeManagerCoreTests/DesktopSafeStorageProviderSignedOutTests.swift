@@ -235,6 +235,22 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
+    func aTruncatedLiveCacheIsNotReportedAsARotatedKey() async throws {
+        try await withTempDir { dir in
+            // A value that is not base64 at all never reaches the decrypt loop, so nothing records a
+            // reason for it — and with an empty v1 beside it the verdict rests on `outcome` anyway.
+            // Left unrecorded, `lastFailure` substitutes its **default**, `.decryptFailed`, which is
+            // the one symptom meaning "the key itself is wrong" and the only one
+            // `UsageService.shouldSelfHeal` acts on: a half-written `config.json` would announce a
+            // rotated safeStorage key and make the fleet drop and re-read its cached key.
+            let url = try writeConfig(rawV2: "not-base64!!", v1: [:], into: dir)
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            #expect(result == .failure(.malformedCache))
+        }
+    }
+
+    @Test
     func nothingUsableInAnyCacheIsStillNoUsableEntry() async throws {
         try await withTempDir { dir in
             // The verdict keeps its meaning — "entries exist, none of them ours" — it just now says

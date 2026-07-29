@@ -168,6 +168,14 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
         // luckier sibling — see `ProbeResult.record`.
         let outcome = ProbeResult()
+        // A value that was not base64 at all never reaches the loop below, but it is still a cache
+        // that defeated us — and once the sign-out guard can rest on `outcome`, leaving it
+        // unrecorded is not merely imprecise. `lastFailure` substitutes `.decryptFailed` for
+        // silence, so a half-written `config.json` beside an empty sibling would announce a
+        // **rotated safeStorage key**: the one symptom `UsageService.shouldSelfHeal` acts on, making
+        // the whole fleet drop and re-read its cached key over one truncated file. Recorded first so
+        // a genuine wrong-key symptom from a sibling still outranks it.
+        if blobs.count < present.count { outcome.record(.malformedCache) }
         for blob in blobs {
             switch decryptor.decrypt(v10Blob: blob.data, key: key) {
             case let .success(plaintext):
