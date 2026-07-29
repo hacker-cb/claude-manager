@@ -23,7 +23,24 @@ public struct DesktopSafeStorageProvider: TokenProvider {
     /// wrong-key `decryptFailed`. `@unchecked Sendable` because the probe closure is `@Sendable`,
     /// but it runs synchronously inside the actor before `key` returns — no concurrent access.
     private final class ProbeResult: @unchecked Sendable {
-        var lastFailure: TokenProviderError = .decryptFailed(.decryptFailed)
+        private var failure: TokenProviderError?
+
+        /// What to report, defaulting to wrong-key when nothing was recorded.
+        var lastFailure: TokenProviderError {
+            failure ?? .decryptFailed(.decryptFailed)
+        }
+
+        /// Record a rejection, **keeping wrong-key evidence once seen**.
+        ///
+        /// `.decryptFailed(.decryptFailed)` is the only symptom that means the key itself is wrong,
+        /// and `UsageService.shouldSelfHeal` keys off exactly it. Now that several blobs are tried
+        /// per candidate, a later one that unpads by luck (~1/256) and isn't JSON would otherwise
+        /// overwrite that evidence with `.malformedCache` — and silently suppress the fleet's
+        /// recovery from a rotated key, which is the one thing this reason is load-bearing for.
+        func record(_ next: TokenProviderError) {
+            if case .decryptFailed(.decryptFailed)? = failure { return }
+            failure = next
+        }
     }
 
     public func token(
@@ -77,12 +94,12 @@ public struct DesktopSafeStorageProvider: TokenProvider {
                         // account. Requiring valid JSON makes a false accept astronomically unlikely.
                         guard (try? JSONSerialization.jsonObject(with: plaintext)) is [String: Any]
                         else {
-                            probe.lastFailure = .malformedCache
+                            probe.record(.malformedCache)
                             continue
                         }
                         return true
                     case let .failure(error):
-                        probe.lastFailure = .decryptFailed(error)
+                        probe.record(.decryptFailed(error))
                         continue
                     }
                 }
@@ -106,20 +123,22 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // when *every* binding fails), where the whole-fleet view can tell rotation from a single
         // corrupt blob.
         var caches: [[String: Any]] = []
-        var lastFailure = probe.lastFailure
+        // Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
+        // luckier sibling — see `ProbeResult.record`.
+        let outcome = ProbeResult()
         for blob in blobs {
             switch decryptor.decrypt(v10Blob: blob, key: key) {
             case let .success(plaintext):
                 if let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
                     caches.append(cache)
                 } else {
-                    lastFailure = .malformedCache
+                    outcome.record(.malformedCache)
                 }
             case let .failure(error):
-                lastFailure = .decryptFailed(error)
+                outcome.record(.decryptFailed(error))
             }
         }
-        guard !caches.isEmpty else { return .failure(lastFailure) }
+        guard !caches.isEmpty else { return .failure(outcome.lastFailure) }
 
         // An empty map is what Desktop's logout leaves behind — it rewrites the key rather than
         // removing it. An emptied v2 can still sit beside a v1 holding the entries, so the first
