@@ -92,6 +92,23 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
+    func anUndecryptableV2BesideALiveV1YieldsTheV1Token() async throws {
+        try await withTempDir { dir in
+            // Decodable base64, but not a v10 blob — the shape a partial write or a sync conflict
+            // leaves. Judging the key by the first blob alone meant this rejected every keychain
+            // account and condemned the binding, with a perfectly good v1 unread in the same file.
+            let url = try writeConfig(
+                rawV2: Data("not-a-v10-blob!!".utf8).base64EncodedString(),
+                v1: [inferenceCompositeKey(): ["token": "T"]],
+                into: dir
+            )
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+            #expect(token.token == "T")
+        }
+    }
+
+    @Test
     func anEmptyV2BesideAPopulatedV1YieldsTheV1Token() async throws {
         try await withTempDir { dir in
             // v2 is read first but holds nothing, and the entries are in the legacy key. Neither
