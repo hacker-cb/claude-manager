@@ -81,6 +81,33 @@ public extension UsageService {
         return byBinding
     }
 
+    /// The per-binding failure map to publish, given this pass's failures and the map currently
+    /// published. The twin of `merge`, for the channel that speaks when there is no `AccountUsage`
+    /// at all.
+    ///
+    /// That channel is not a debug detail: a binding this app has never managed to resolve — signed
+    /// out before launch, on a machine whose `account_profiles` has no row to name its login — has
+    /// no entry in the map above, and its failure is the *only* thing the sidebar row, its cell and
+    /// its menu line have to speak from. So it needs the same stickiness `merge` applies, and for
+    /// the same reason: one poll that read `config.json` while Desktop was rewriting it replaced
+    /// `.signedOut` with `.configUnreadable`, and since only a sign-out may speak without an
+    /// account (`UsagePresentation.speaksWithoutAccount`), the row went **completely silent** —
+    /// no account line, no cell, no menu suffix — until a later pass read the file again.
+    ///
+    /// Built from this pass's failures, never from the previous map: a binding that resolved a token
+    /// this time is absent from both and must stay absent, rather than being kept alive by the
+    /// reason it failed with last time.
+    static func mergeFailures(
+        previous: [String: TokenProviderError],
+        result: UsageRefreshResult
+    ) -> [String: TokenProviderError] {
+        var merged = result.bindingFailures
+        for (id, latest) in result.bindingFailures {
+            merged[id] = carried(prior: previous[id], latest: latest)
+        }
+        return merged
+    }
+
     /// Put every binding that could not speak for itself back into the account its `config.json`
     /// names — for **display**: a name, a membership, and (only where the profile is still signed
     /// in) the account's own figures.
@@ -222,7 +249,18 @@ public extension UsageService {
         byBinding[id] = phantom
     }
 
-    /// The reason to carry forward.
+    /// The reason to carry forward, read off the previous **state**.
+    private static func carriedReason(
+        previous: UsageState,
+        latest: TokenProviderError
+    ) -> TokenProviderError {
+        guard case let .noSource(prior) = previous else { return latest }
+        return carried(prior: prior, latest: latest)
+    }
+
+    /// The stickiness rule itself, in one place because it has two callers that must not diverge —
+    /// the fold's carry-forward and `mergeFailures`. Living in one of them and being paraphrased in
+    /// the other is exactly how the two halves of a binding's published state came to disagree.
     ///
     /// A binding that had already lost its login does not regain one because the next pass could
     /// not *read the file that would say so*. Without this the label flips from "Signed out" back
@@ -233,13 +271,17 @@ public extension UsageService {
     /// true after a sign-out as before it, and it is actionable — held behind a stale "signed out"
     /// it would never be shown, so a user who had signed back in would be told forever that they
     /// hadn't, while Doctor named the keychain.
-    private static func carriedReason(
-        previous: UsageState,
+    ///
+    /// `.noTokenCache` is deliberately **not** admitted alongside `.configUnreadable`, though it is
+    /// the other way a rewrite in progress can be observed. A config that parses and simply has no
+    /// cache key is also what a freshly recreated profile directory looks like, where "not signed
+    /// in" is the truer of the two statements — and unlike a truncated file, this shape can persist,
+    /// so a wrong carry here would be permanent rather than one pass long.
+    private static func carried(
+        prior: TokenProviderError?,
         latest: TokenProviderError
     ) -> TokenProviderError {
-        guard case let .noSource(prior) = previous, prior.meansNotSignedIn,
-              case .configUnreadable = latest
-        else { return latest }
+        guard let prior, prior.meansNotSignedIn, case .configUnreadable = latest else { return latest }
         return prior
     }
 }
