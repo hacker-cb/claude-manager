@@ -38,19 +38,25 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.configUnreadable)
         }
 
-        let v2 = root[CoreConstants.desktopTokenCacheKeyV2] as? String
-        let v1 = root[CoreConstants.desktopTokenCacheKeyV1] as? String
-        let cacheString = v2 ?? v1
-        guard let cacheString else { return .failure(.noTokenCache) }
-        // A key that is present but undecodable is a *corrupt* cache, not an absent login. The two
+        // v2 over v1, but elected by **decodability** rather than mere presence: a corrupted v2
+        // beside a live v1 otherwise reported a broken cache while a usable token sat two keys away
+        // in the same file, already read into a local.
+        let candidates = [
+            root[CoreConstants.desktopTokenCacheKeyV2] as? String,
+            root[CoreConstants.desktopTokenCacheKeyV1] as? String
+        ].compactMap(\.self)
+        guard !candidates.isEmpty else { return .failure(.noTokenCache) }
+        // Present but undecodable everywhere is a *corrupt* cache, not an absent login. The two
         // used to share `.noTokenCache` harmlessly, when it meant no more than "no token here";
         // it now carries a sign-in remedy and drops the binding out of its account's fan-out, so
         // coalescing them would tell a user with a damaged config to sign in — which cannot fix
         // it — and quietly rewrite what the other profiles on that login say about themselves.
-        guard let blob = Data(base64Encoded: cacheString) else { return .failure(.malformedCache) }
+        guard let cacheString = candidates.first(where: { Data(base64Encoded: $0) != nil }),
+              let blob = Data(base64Encoded: cacheString)
+        else { return .failure(.malformedCache) }
         // Whether a second, *different* cache sits beside the one elected above. Only the
         // empty-cache verdict cares — see there.
-        let hasUnreadSibling = [v2, v1].compactMap(\.self).contains { $0 != cacheString }
+        let hasUnreadSibling = candidates.contains { $0 != cacheString }
 
         // Resolve the safeStorage key by which keychain account's password actually decrypts this
         // blob — the account name under the service varies by Claude Desktop version (`Claude` vs

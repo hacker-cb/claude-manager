@@ -63,7 +63,7 @@ struct ProfileDetailView: View {
                 // The Anthropic login this launcher holds — or that it holds none. Identity, not
                 // statistics, so it sits with the name rather than inside the Usage section, where
                 // it read as a detail of the numbers and was easy to miss.
-                if let account = AccountUsage.accountLine(
+                if let account = UsagePresentation.accountLine(
                     usage: model.usage(forBinding: profile.id),
                     failure: model.usageFailure(forBinding: profile.id)
                 ) {

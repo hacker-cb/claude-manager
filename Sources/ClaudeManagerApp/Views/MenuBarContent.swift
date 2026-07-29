@@ -155,16 +155,22 @@ struct MenuBarContent: View {
         // states (see `UsageAccessory.attention`), and this row stays silent for them as it always
         // did.
         guard let usage = model.usage(forBinding: bindingID) else {
-            guard model.usageFailure(forBinding: bindingID) == .signedOut else { return "" }
-            return "  ·  \(AccountUsage.note(for: .signedOut))"
+            let failure = model.usageFailure(forBinding: bindingID)
+            return UsagePresentation.attentionNote(usage: nil, failure: failure)
+                .map { "  ·  \($0)" } ?? ""
         }
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
         // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
         // countdown, with no room to qualify it — would read as current, so say the state instead.
-        guard usage.isQuotableNow else { return "  ·  \(usage.stateNote)" }
+        guard usage.isQuotableNow else { return "  ·  \(UsagePresentation.stateNote(usage.state))" }
         guard let limit = usage.displayLimit else { return "" }
         var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
-        if let resets = UsageFormat.resets(limit.resetsAt) { suffix += " · \(resets)" }
+        // Same gate as the pane and the sidebar tooltip: an elapsed window would print a permanent
+        // "resetting…" here too.
+        let resets = UsagePresentation.showsReset(limit.resetsAt, now: Date())
+            ? UsageFormat.resets(limit.resetsAt)
+            : nil
+        if let resets { suffix += " · \(resets)" }
         return suffix
     }
 }

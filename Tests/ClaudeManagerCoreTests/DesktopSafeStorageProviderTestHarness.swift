@@ -116,6 +116,22 @@ extension DesktopSafeStorageProviderTests {
         return url
     }
 
+    /// Write a `config.json` whose v2 key holds an arbitrary raw string — typically one that is not
+    /// base64 at all — beside a properly encrypted v1. The shape that decides whether election
+    /// falls through to a decodable sibling.
+    func writeConfig(rawV2: String, v1: [String: Any], into dir: URL) throws -> URL {
+        let key = SafeStorageDecryptor.deriveKey(password: password)!
+        let blob = try SafeStorageDecryptorTests
+            .makeV10Blob(JSONSerialization.data(withJSONObject: v1), key: key)
+        let root: [String: Any] = [
+            CoreConstants.desktopTokenCacheKeyV2: rawV2,
+            CoreConstants.desktopTokenCacheKeyV1: blob.base64EncodedString()
+        ]
+        let url = dir.appendingPathComponent("config.json")
+        try JSONSerialization.data(withJSONObject: root).write(to: url)
+        return url
+    }
+
     func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
         DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
     }

@@ -150,6 +150,58 @@ struct UsageMergeTests {
     }
 
     @Test
+    func aTransientlyFailedSiblingStaysInTheResolvedAccountsFanOut() {
+        // The resolved account is built from resolved bindings alone, so a sibling that merely
+        // couldn't be read is missing from its fan-out while the failed side keeps the old one.
+        // Both panes then describe one login two ways: "shared with 2 profiles" on the side that
+        // couldn't be read, and nothing on the side that could.
+        let shared = account(uuid: "A", snapshot: snapshot(0.3), bindingIDs: ["live", "unread"])
+        let resolved = account(uuid: "A", snapshot: snapshot(0.6), bindingIDs: ["live"])
+        let merged = UsageService.merge(
+            previous: ["live": shared, "unread": shared],
+            result: UsageRefreshResult(
+                accounts: [resolved],
+                bindingFailures: ["unread": .configUnreadable]
+            )
+        )
+        #expect(merged["live"]?.bindingIDs == ["live", "unread"])
+        #expect(merged["unread"]?.bindingIDs == ["live", "unread"])
+    }
+
+    @Test
+    func aBindingThatLostItsLoginDoesNotRegainOneOnAnUnrelatedFailure() {
+        // Only a successful resolve says the login is back. Without this the label flipped from
+        // "Signed out" to the e-mail of a login the profile no longer holds on the first read
+        // failure after the sign-out.
+        let signedOut = account(
+            uuid: "A", snapshot: snapshot(0.4), state: .noSource(.signedOut), bindingIDs: ["p"]
+        )
+        let merged = UsageService.merge(
+            previous: ["p": signedOut],
+            result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .configUnreadable])
+        )
+        #expect(merged["p"]?.state == .noSource(.signedOut))
+        #expect(merged["p"]?.bindingIDs == ["p"])
+    }
+
+    @Test
+    func aStrongerFailureStillReplacesTheCarriedOne() {
+        // The stickiness is one-way: a binding that could not be read and then turns out to be
+        // signed out must take the newer, more specific verdict.
+        let unread = account(
+            uuid: "A",
+            snapshot: snapshot(0.4),
+            state: .noSource(.keychainUnavailable(.interactionNotAllowed)),
+            bindingIDs: ["p"]
+        )
+        let merged = UsageService.merge(
+            previous: ["p": unread],
+            result: UsageRefreshResult(accounts: [], bindingFailures: ["p": .signedOut])
+        )
+        #expect(merged["p"]?.state == .noSource(.signedOut))
+    }
+
+    @Test
     func aResolvedSiblingKeepsItsFreshFigures() {
         // The other half of the shared-login case: the profile that is still signed in must be
         // untouched by its former partner's failure.

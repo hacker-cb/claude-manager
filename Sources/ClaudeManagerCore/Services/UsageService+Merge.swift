@@ -34,14 +34,48 @@ public extension UsageService {
                 byBinding[bindingID] = account
             }
         }
+        // Bindings that are still on their account and merely couldn't be read this pass, grouped
+        // by it — see the fan-out repair below.
+        var stillSharing: [String: Set<String>] = [:]
         for (id, failure) in result.bindingFailures {
             // A binding this pass *did* resolve was written above and wins: a re-login must not be
             // shadowed by the failure its own previous pass recorded.
             guard byBinding[id] == nil, var kept = previous[id], kept.snapshot != nil else { continue }
-            kept.state = .noSource(failure)
-            if failure.meansNotSignedIn { kept.bindingIDs = [id] }
+            let reason = carriedReason(previous: kept.state, latest: failure)
+            kept.state = .noSource(reason)
+            if reason.meansNotSignedIn {
+                kept.bindingIDs = [id]
+            } else {
+                stillSharing[kept.identity.uuid, default: []].insert(id)
+            }
             byBinding[id] = kept
         }
+        // The account this pass *did* resolve was built from resolved bindings alone, so a sibling
+        // that failed transiently is missing from its fan-out — and the failed sibling kept the old
+        // one. Both panes then describe one login two ways: "shared with 2 profiles" on the side
+        // that couldn't be read, and nothing on the side that could. Union them back.
+        for (uuid, ids) in stillSharing {
+            for (bindingID, account) in byBinding where account.identity.uuid == uuid {
+                var updated = account
+                updated.bindingIDs = Set(account.bindingIDs).union(ids).sorted()
+                byBinding[bindingID] = updated
+            }
+        }
         return byBinding
+    }
+
+    /// The reason to carry forward.
+    ///
+    /// A binding that had already lost its login does not regain one because the next pass failed
+    /// to *read* its config or its keychain: only a successful resolve says the login is back, and
+    /// that path never reaches here. Without this the label flips from "Signed out" back to the
+    /// e-mail of a login the profile no longer holds, on the first unrelated failure after it.
+    private static func carriedReason(
+        previous: UsageState,
+        latest: TokenProviderError
+    ) -> TokenProviderError {
+        guard case let .noSource(prior) = previous, prior.meansNotSignedIn, !latest.meansNotSignedIn
+        else { return latest }
+        return prior
     }
 }

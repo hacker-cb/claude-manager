@@ -62,10 +62,10 @@ struct SidebarProfileRow<Leading: View>: View {
     let attentions: [LauncherAttention]
     @ViewBuilder let leading: Leading
 
-    /// The Anthropic login this row holds — or, where it holds none, that fact. Shared with both
-    /// detail-pane headers, which ask the same question of the same binding.
+    /// The Anthropic login this row holds — or, where it holds none, that fact. Decided in core and
+    /// shared with both detail-pane headers, which ask the same question of the same binding.
     private var subtitle: String? {
-        AccountUsage.accountLine(usage: usage, failure: failure)
+        UsagePresentation.accountLine(usage: usage, failure: failure)
     }
 
     var body: some View {
