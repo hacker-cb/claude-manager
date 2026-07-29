@@ -3,101 +3,12 @@ import Testing
 @testable import ClaudeManagerCore
 
 struct DesktopSafeStorageProviderTests {
-    // MARK: - Harness
-
-    /// Stub keychain: one account under the service, returning a fixed secret or a chosen
-    /// `KeychainError`. Enumeration always finds the account (the item exists); the read is what
-    /// succeeds or fails — mirroring a present item whose data ACL blocks a background read.
-    private struct StubKeychain: KeychainReading {
-        let result: Result<Data, KeychainError>
-        func accounts(service _: String) throws -> [String] {
-            ["Claude"]
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            try result.get()
-        }
-    }
-
-    /// Stub keychain with a per-account result. `accounts` reports exactly the keys present (an
-    /// empty map → no item under the service), and a read of an absent account throws `.notFound`
-    /// — so a test can model a machine that stores the password under any one account name, both,
-    /// or a name no static list would contain.
-    private struct PerAccountKeychain: KeychainReading {
-        let byAccount: [String: Result<Data, KeychainError>]
-        func accounts(service _: String) throws -> [String] {
-            Array(byAccount.keys)
-        }
-
-        func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
-            try (byAccount[account] ?? .failure(.notFound)).get()
-        }
-    }
-
-    /// Answers differently by the `interactive` flag and records which accounts were read
-    /// interactively — modelling an item locked to a background read but readable once authorized,
-    /// so a test can assert how many Always-Allow dialogs a resolution would raise.
-    private final class InteractiveRecordingKeychain: KeychainReading, @unchecked Sendable {
-        typealias Answer = (background: Result<Data, KeychainError>, interactive: Result<Data, KeychainError>)
-        private let table: [String: Answer]
-        private let lock = NSLock()
-        private var interactiveReadsStore: [String] = []
-        init(_ table: [String: Answer]) {
-            self.table = table
-        }
-
-        var interactiveReads: [String] {
-            lock.withLock { interactiveReadsStore }
-        }
-
-        func accounts(service _: String) throws -> [String] {
-            Array(table.keys)
-        }
-
-        func secret(service _: String, account: String, interactive: Bool) throws -> Data {
-            if interactive { lock.withLock { interactiveReadsStore.append(account) } }
-            guard let entry = table[account] else { throw KeychainError.notFound }
-            return try (interactive ? entry.interactive : entry.background).get()
-        }
-    }
-
-    private let clientID = CoreConstants.oauthClientID
-    private let org = "11111111-2222-3333-4444-555555555555"
-    private let password = Data("kc-password".utf8)
-
-    private func inferenceCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:inference user:file_upload user:profile"
-    }
-
-    private func profileCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:profile"
-    }
-
-    /// Write a `config.json` whose `oauth:tokenCacheV2` is the given map, encrypted under the
-    /// key derived from `password` (the same the stub keychain returns) — a faithful blob
-    /// with no real token.
-    private func writeConfig(
-        cache: [String: Any],
-        into dir: URL
-    ) throws -> URL {
-        let key = SafeStorageDecryptor.deriveKey(password: password)!
-        let cacheData = try JSONSerialization.data(withJSONObject: cache)
-        let blob = SafeStorageDecryptorTests.makeV10Blob(cacheData, key: key)
-        let root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString()]
-        let url = dir.appendingPathComponent("config.json")
-        try JSONSerialization.data(withJSONObject: root).write(to: url)
-        return url
-    }
-
-    private func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
-        DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
-    }
-
-    private func withTempDir(_ body: (URL) async throws -> Void) async throws {
-        let dir = try Fixture.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try await body(dir)
-    }
+    // Stored properties only — an extension cannot hold them, and the rest of the scaffolding
+    // (stub keychains, the config writer, the temp-dir wrapper) lives in
+    // `DesktopSafeStorageProviderTestHarness.swift` so this file stays about the behaviour.
+    let clientID = CoreConstants.oauthClientID
+    let org = "11111111-2222-3333-4444-555555555555"
+    let password = Data("kc-password".utf8)
 
     // MARK: - Success
 

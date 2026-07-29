@@ -296,6 +296,19 @@ public struct UsageService: Sendable {
     /// failure to be crypto-related meant the always-present default-account binding — permanently
     /// `.noTokenCache` for anyone who only uses launchers — silently disabled recovery for the
     /// whole fleet, leaving a rotated key stuck behind a process-lifetime cache until relaunch.
+    /// A binding that decrypted cleanly — `.signedOut`, `.noUsableEntry` — looks like proof the key
+    /// in hand is right, and it is tempting to let one **veto** recovery so a permanently corrupt
+    /// sibling cannot re-derive the key on every tick. It must not: the proof is only about *that*
+    /// binding, and a profile signed out long ago keeps a cache written under the key of its day,
+    /// so after a rotation it still decrypts while every live profile's rewritten cache does not.
+    /// They abstain — neither evidence of rotation nor a block on it.
+    ///
+    /// Abstaining is not the same as recovering, and this is worth stating plainly: on a machine
+    /// carrying a stale keychain account beside the live one, a signed-out binding's `{}` blob
+    /// decrypts under the *stale* password, so it elects and caches that key for the fleet, and the
+    /// re-resolve after `invalidate()` elects it again. Every live profile then fails and the loop
+    /// repeats each tick. Fixing that means electing the key from the strongest available evidence
+    /// rather than the first binding to answer — a rework of key election, not of this predicate.
     private static func shouldSelfHeal(_ resolved: ResolvedAccounts) -> Bool {
         guard resolved.accounts.isEmpty else { return false }
         return resolved.failures.values.contains(where: isWrongKeyEvidence)

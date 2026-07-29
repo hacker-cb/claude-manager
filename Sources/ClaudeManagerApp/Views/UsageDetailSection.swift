@@ -34,7 +34,7 @@ struct UsageDetailSection: View {
             Spacer()
             if let note = stateNote(now: now) {
                 Text(note.text).font(.caption)
-                    .foregroundStyle(note.warn ? Color.orange : Color.secondary)
+                    .foregroundStyle(note.isWarning ? Color.orange : Color.secondary)
             }
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
@@ -97,104 +97,15 @@ struct UsageDetailSection: View {
         }
     }
 
-    /// A short freshness/state note for the header: the data's age when current, otherwise the
-    /// reason it's stale. Warning states (`warn`) are tinted so a still-rendered snapshot from a
-    /// `loginNeeded` / `noSource` account can't read as up to date.
-    private func stateNote(now: Date) -> (text: String, warn: Bool)? {
-        guard let usage else { return nil }
-        switch usage.state {
-        case .fresh:
-            return usage.snapshot?.capturedAt.map { ("updated \(UsageFormat.age($0, now: now))", false) }
-        case let .stale(since): return ("stale · \(UsageFormat.age(since, now: now))", false)
-        case .rateLimited: return ("rate limited", true)
-        case .offline: return ("offline", false)
-        case .loginNeeded: return ("sign in to refresh", true)
-        // `.noSource` collapses every token-read failure, so the remedy comes from the actual
-        // cause — a signed-out account must not be told to authorize the keychain.
-        case .noSource: return (noSourceHeaderNote, true)
-        }
+    /// The pane's header note and whether it warns — decided in core, painted here.
+    private func stateNote(now: Date) -> (text: String, isWarning: Bool)? {
+        UsagePresentation.headerNote(usage: usage, now: now)
     }
 
-    /// A short header note for `.noSource`, keyed on why the token couldn't be read.
-    private var noSourceHeaderNote: String {
-        switch failure {
-        case .noTokenCache: "not signed in"
-        case let .keychainUnavailable(error):
-            switch keychainNoteKind(error) {
-            case .authorize: "authorize keychain access"
-            case .missing: "keychain item missing"
-            case .error: "keychain error"
-            }
-        default: "source unavailable"
-        }
-    }
-
-    /// When there's no snapshot to show, the reason (login-needed / no-source / a token failure).
+    /// When there's no snapshot to show, the sentence explaining why.
     private var emptyStateNote: String? {
-        if let usage {
-            switch usage.state {
-            case .loginNeeded: return "Sign in to this account in Claude to see usage."
-            case .noSource: return noSourceEmptyNote
-            case .offline: return "Offline — no usage yet."
-            // Without this the header says "rate limited" while the body falls through to "Not
-            // checked yet — use Refresh", which contradicts it and points at a Refresh that is
-            // itself inside the backoff.
-            case .rateLimited: return "Rate limited — usage will refresh once the window clears."
-            default: return nil
-            }
-        }
-        switch failure {
-        case .noTokenCache: return "This account isn't signed in on this profile."
-        case let .keychainUnavailable(error):
-            switch keychainNoteKind(error) {
-            case .authorize: return "Refresh to authorize keychain access."
-            case .missing: return keychainNotFoundNote
-            case .error: return "Usage source unavailable — a keychain error blocked the token."
-            }
-        case .some: return "Usage unavailable for this account."
-        case nil: return nil
-        }
+        UsagePresentation.sentence(usage: usage, failure: failure)
     }
-
-    /// The full-sentence `.noSource` note, keyed on the token-read failure — a signed-out account
-    /// reads "not signed in", not the keychain prompt that can't fix it.
-    private var noSourceEmptyNote: String {
-        switch failure {
-        case .noTokenCache: "This account isn't signed in on this profile."
-        case let .keychainUnavailable(error):
-            switch keychainNoteKind(error) {
-            case .authorize:
-                "Usage source unavailable — open Claude Manager and refresh to authorize keychain access."
-            case .missing: keychainNotFoundNote
-            case .error: "Usage source unavailable — a keychain error blocked the token."
-            }
-        default: "Usage source unavailable for this account."
-        }
-    }
-
-    /// A missing keychain item can't be authorized — Refresh won't prompt — so point at the real
-    /// cause: Claude Desktop's safeStorage item isn't present for this profile.
-    private var keychainNotFoundNote: String {
-        "Claude's keychain item wasn't found — open Claude and sign in on this profile, then Refresh."
-    }
-
-    /// The user-facing category of a keychain failure, classified in one place so the three notes
-    /// above can't drift on which `KeychainError` means what — only the copy differs by context.
-    private func keychainNoteKind(_ error: KeychainError) -> KeychainNoteKind {
-        switch error {
-        case .interactionNotAllowed: .authorize
-        case .notFound: .missing
-        case .unexpected: .error
-        }
-    }
-}
-
-/// How a keychain read failure reads to the user: a fixable access refusal (`authorize`), a missing
-/// item (`missing`), or a genuine malfunction (`error`). One classification, three context copies.
-private enum KeychainNoteKind {
-    case authorize
-    case missing
-    case error
 }
 
 /// One limit as a titled bar + `X% used · resets …`.
@@ -205,13 +116,22 @@ private struct LimitRow: View {
     /// see the `TimelineView` in `UsageDetailSection.body`.
     let now: Date
 
+    /// The reset phrase to print beside the percentage, or nil to print none. Whether it may be
+    /// printed at all is `UsagePresentation.showsReset` — the same rule the sidebar tooltip and the
+    /// menu row now ask, so an elapsed window cannot read as "resetting…" on one surface and be
+    /// silent on another.
+    private var resets: String? {
+        guard UsagePresentation.showsReset(limit.resetsAt, now: now) else { return nil }
+        return UsageFormat.resets(limit.resetsAt, now: now)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.callout)
             UsageBar(fraction: limit.utilization, level: limit.displaySeverity)
             HStack(spacing: 6) {
                 Text("\(UsageFormat.percent(limit.utilization)) used").font(.caption)
-                if let resets = UsageFormat.resets(limit.resetsAt, now: now) {
+                if let resets {
                     Text("· \(resets)").font(.caption).foregroundStyle(.secondary)
                 }
             }

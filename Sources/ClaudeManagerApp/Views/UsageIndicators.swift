@@ -74,10 +74,21 @@ struct UsageBar: View {
 /// the number is a percentage of.
 struct UsageAccessory: View {
     let usage: AccountUsage?
+    /// Why this binding's token couldn't be read, for the shape that has no `AccountUsage` to carry
+    /// the reason itself: a profile already signed out when the app launched has no stored snapshot
+    /// to carry forward, so no pass ever produces an account for it. Without this second source the
+    /// cell went blank on exactly the cold start it most needs to speak up on.
+    var failure: TokenProviderError?
 
     /// Wide enough for the longest thing the cell prints — a clamped window label plus a
     /// three-digit percentage (`7d·Fa… 100%`).
     static let width: CGFloat = 66
+
+    /// The word this cell prints instead of a percentage, and whether it reads as a warning. Both
+    /// decided in core — see `UsagePresentation`, which owns why the second source is narrow.
+    private var attention: (word: String, isWarning: Bool)? {
+        UsagePresentation.attention(usage: usage, failure: failure)
+    }
 
     var body: some View {
         // The cell exists for an account that is being tracked, whether or not it has numbers yet:
@@ -91,8 +102,8 @@ struct UsageAccessory: View {
         // minute per row forever, in a menu-bar utility whose user had just asked it to stop
         // reading usage. A binding the first pass hasn't covered — a launcher added since the last
         // check — is the one case that still settles once, when its account appears.
-        if let usage {
-            content(usage)
+        if usage != nil || attention != nil {
+            content
                 .font(.caption2.monospacedDigit())
                 .lineLimit(1)
                 // Shrink rather than truncate: an ellipsis in a number is worse than a slightly
@@ -106,19 +117,26 @@ struct UsageAccessory: View {
                 .contentShape(Rectangle())
                 // Recomputed each minute *when* it has a countdown inside: a live tooltip built
                 // once at render would still read "resets in 29m" half an hour later.
-                .modifier(LiveHelp(tooltip: tooltip(usage: usage)))
+                .modifier(LiveHelp(tooltip: tooltip))
         }
     }
 
     @ViewBuilder
-    private func content(_ usage: AccountUsage) -> some View {
+    private var content: some View {
         // Attention replaces the figure rather than dimming it: a `loginNeeded` / `noSource`
         // account can still carry a stale snapshot (so `displayLimit` is non-nil), and a
         // plausible-looking percentage there hides the action the user has to take. The stale
         // numbers stay available in the detail pane.
-        if let word = usage.attentionWord {
-            Text(word).foregroundStyle(.orange)
-        } else if let limit = usage.displayLimit {
+        //
+        // Tinted from `UsagePresentation.isWarning`, the same flag the detail pane's header uses —
+        // a deliberate sign-out is an action to take, not a malfunction, and painting it as an
+        // alert here while the pane it links to calls it unremarkable is how a warning colour stops
+        // meaning anything.
+        if let attention {
+            Text(attention.word)
+                .foregroundStyle(attention
+                    .isWarning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+        } else if let limit = usage?.displayLimit, let usage {
             Text("\(limit.compactLabel) \(UsageFormat.percent(limit.utilization))")
                 .foregroundStyle(tint(limit.displaySeverity))
                 // Spelled out, from the *unclamped* label, and qualified when the figure has
@@ -135,21 +153,27 @@ struct UsageAccessory: View {
 
     private func accessibilityLabel(limit: UsageLimit, usage: AccountUsage) -> String {
         let figure = "\(limit.shortLabel) window, \(UsageFormat.percent(limit.utilization)) used"
-        return usage.isQuotableNow ? figure : "\(figure), \(usage.stateNote)"
+        return usage.isQuotableNow ? figure : "\(figure), \(UsagePresentation.stateNote(usage))"
     }
 
     /// What this cell says on hover, in the shape that decides whether saying it costs a ticker.
     ///
     /// All three cases are reachable here, and only one of them moves with time:
-    /// - an account needing the user prints a fixed phrase — `attentionWord` is non-nil only for
-    ///   `.loginNeeded` / `.noSource`, whose `stateNote` is a constant;
+    /// - a binding needing the user prints a fixed phrase — `UsagePresentation.attentionNote` answers
+    ///   only where there is an attention word, and every phrase it returns is constant in time;
     /// - one with a snapshot prints a reset countdown and an "as of" age, which do move;
     /// - one being tracked with neither yet — the first fetch hasn't landed, or it is offline with
     ///   no stored sample — has nothing to say, and the cell still claims its width in that state.
-    private func tooltip(usage: AccountUsage) -> Tooltip {
-        if usage.attentionWord != nil { return .fixed(usage.stateNote) }
-        guard let limit = usage.displayLimit else { return .silent }
+    private var tooltip: Tooltip {
+        if let note = attentionNote { return .fixed(note) }
+        guard let usage, let limit = usage.displayLimit else { return .silent }
         return .live { liveText(limit: limit, usage: usage, now: $0) }
+    }
+
+    /// The phrase behind an attention word. Constant by construction from either source, which is
+    /// what lets the dispatch above take `Tooltip.fixed` and skip the minute ticker.
+    private var attentionNote: String? {
+        UsagePresentation.attentionNote(usage: usage, failure: failure)
     }
 
     /// Normal is *hierarchical*, not a literal colour, and that is the point: a selected sidebar
@@ -169,7 +193,12 @@ struct UsageAccessory: View {
         var parts: [String] = []
         if let account = usage.identity.accountLabel { parts.append(account) }
         parts.append("\(limit.shortLabel): \(UsageFormat.percent(limit.utilization)) used")
-        if let resets = UsageFormat.resets(limit.resetsAt, now: now) { parts.append(resets) }
+        // Gated by the same rule the pane's rows use: an elapsed window renders as "resetting…"
+        // forever, and this tooltip used to be the one call site the rule had not reached.
+        let resets = UsagePresentation.showsReset(limit.resetsAt, now: now)
+            ? UsageFormat.resets(limit.resetsAt, now: now)
+            : nil
+        if let resets { parts.append(resets) }
         // Qualify any not-current state, not just `.stale`: a rate-limited or offline account still
         // shows its last-known percentage, and an unqualified number there reads as live — the same
         // discipline `isQuotableNow` applies on the menu bar.
@@ -224,29 +253,23 @@ enum Tooltip {
 
 // MARK: - Formatting
 
-enum UsageFormat {
-    /// `42%` from a fraction.
-    static func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded()))%"
-    }
-
-    /// `7d 54%` — the one spelling of a limit's compact label, shared by the sidebar row, the
-    /// menu-bar status item, and each menu account row, so the three can't drift apart.
-    static func limitSummary(_ limit: UsageLimit) -> String {
-        "\(limit.shortLabel) \(percent(limit.utilization))"
-    }
-
-    /// Reused across renders — building a `DateFormatter` / `NumberFormatter` resolves the
-    /// locale each time, and these are called from view bodies and tooltips that re-render
-    /// often. `@MainActor` (not a bare `static let`) is what makes sharing mutable formatters
-    /// safe under strict concurrency; every caller is already main-actor UI code.
-    @MainActor private static let dateFormatter = DateFormatter()
-    @MainActor private static let currencyFormatter: NumberFormatter = {
+/// Reused across renders — building a `DateFormatter` / `NumberFormatter` resolves the locale each
+/// time, and these are called from view bodies and tooltips that re-render often. `@MainActor` (not
+/// a bare `static let`) is what makes sharing mutable formatters safe under strict concurrency;
+/// every caller is already main-actor UI code. In their own type because an extension cannot hold
+/// stored properties.
+private enum UsageFormatters {
+    @MainActor static let date = DateFormatter()
+    @MainActor static let currency: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         return formatter
     }()
+}
 
+/// The locale-aware half of the vocabulary. The pure half — `percent`, `limitSummary`, `age` — is
+/// the core type this extends, where it is reachable from `UsagePresentation` and from tests.
+extension UsageFormat {
     /// A short reset phrase: `resets in 3h 10m` under a day, else `resets Thu 10:59 AM` /
     /// `resets Jul 28`. nil when there's no reset time.
     @MainActor
@@ -262,7 +285,7 @@ enum UsageFormat {
             let minutes = (Int(seconds) % 3600) / 60
             return hours > 0 ? "resets in \(hours)h \(minutes)m" : "resets in \(minutes)m"
         }
-        let formatter = dateFormatter
+        let formatter = UsageFormatters.date
         formatter.locale = .autoupdatingCurrent
         formatter.setLocalizedDateFormatFromTemplate(seconds < 7 * 24 * 3600 ? "EEE h:mm a" : "MMM d")
         return "resets \(formatter.string(from: date))"
@@ -271,18 +294,9 @@ enum UsageFormat {
     /// `$1,000.00` from minor units (cents).
     @MainActor
     static func money(minorUnits: Int, currency: String = "USD") -> String {
-        let formatter = currencyFormatter
+        let formatter = UsageFormatters.currency
         formatter.currencyCode = currency
         return formatter.string(from: NSNumber(value: Double(minorUnits) / 100)) ?? "\(minorUnits)"
-    }
-
-    /// "3 min ago" / "just now" for a captured-at timestamp.
-    static func age(_ date: Date, now: Date = Date()) -> String {
-        let seconds = Int(now.timeIntervalSince(date))
-        if seconds < 60 { return "just now" }
-        if seconds < 3600 { return "\(seconds / 60) min ago" }
-        if seconds < 24 * 3600 { return "\(seconds / 3600) h ago" }
-        return "\(seconds / 86400) d ago"
     }
 }
 
@@ -300,40 +314,5 @@ extension AccountUsage {
     /// reads as live, and there is no room there to say otherwise.
     var isQuotableNow: Bool {
         state == .fresh
-    }
-
-    /// Whether the account needs a user action (a re-login / authorization) — surfaced even
-    /// without a snapshot to show.
-    var needsAttention: Bool {
-        attentionWord != nil
-    }
-
-    /// The word a compact cell prints instead of a percentage when the account needs the user —
-    /// nil when it doesn't.
-    ///
-    /// Only `.loginNeeded` names an action, because it is the only one we can name: the API
-    /// rejected the token, so signing in is genuinely the fix. `.noSource` collapses a locked
-    /// keychain, a missing keychain item and an absent token cache, whose remedies differ and
-    /// none of which is a sign-in — telling that user to sign in sends them to do the one thing
-    /// that cannot help. This cell has no `TokenProviderError` to tell them apart (the detail
-    /// pane does, and words each case), so it stays honest by not instructing at all.
-    var attentionWord: String? {
-        switch state {
-        case .loginNeeded: "Sign in"
-        case .noSource: "Unavailable"
-        case .fresh, .stale, .rateLimited, .offline: nil
-        }
-    }
-
-    /// Human phrase for a non-fresh state, for tooltips / placeholders.
-    var stateNote: String {
-        switch state {
-        case .fresh: "up to date"
-        case let .stale(since): "as of \(UsageFormat.age(since))"
-        case .loginNeeded: "login needed"
-        case .rateLimited: "rate limited"
-        case .noSource: "not available"
-        case .offline: "offline"
-        }
     }
 }
