@@ -141,17 +141,26 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func aHintThatIsNotUuidShapedIsDropped() async throws {
+    func aHintThatIsNotAUuidIsDropped() async throws {
         try await withTempDir { dir in
             // This value reaches a dictionary key and an identity lookup. A `config.json` written
             // by some future Desktop — or half-written by a crash — must not be able to put an
-            // arbitrary string there, so it is shape-checked rather than trusted.
-            for bad in ["", "nope", String(repeating: "x", count: 37)] {
+            // arbitrary string there, so it is parsed rather than trusted.
+            //
+            // The 36-character case is the one that matters: a length test would take it, and the
+            // name of this test would then be a lie.
+            let wrongLength = ["", "nope", String(repeating: "x", count: 37)]
+            let rightLengthWrongShape = [
+                String(repeating: "x", count: 36),
+                "80d91625X5c43-48ab-9892-3d6496250958",
+                "80d91625-5c43-48ab-9892-3d64962509\u{00E9}"
+            ]
+            for bad in wrongLength + rightLengthWrongShape {
                 let url = try writeConfig(cache: [:], into: dir, hint: bad)
                 #expect(
                     await read(url, keychain: StubKeychain(result: .success(password)))
                         .hintedAccountUUID == nil,
-                    "accepted \(bad.count) chars"
+                    "accepted \(bad.debugDescription)"
                 )
             }
             // Not a string at all — a JSON number where a uuid was expected.
