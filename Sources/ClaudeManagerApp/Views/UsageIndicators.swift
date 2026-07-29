@@ -153,7 +153,7 @@ struct UsageAccessory: View {
 
     private func accessibilityLabel(limit: UsageLimit, usage: AccountUsage) -> String {
         let figure = "\(limit.shortLabel) window, \(UsageFormat.percent(limit.utilization)) used"
-        return usage.isQuotableNow ? figure : "\(figure), \(UsagePresentation.stateNote(usage.state))"
+        return usage.isQuotableNow ? figure : "\(figure), \(UsagePresentation.stateNote(usage))"
     }
 
     /// What this cell says on hover, in the shape that decides whether saying it costs a ticker.

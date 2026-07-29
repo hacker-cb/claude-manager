@@ -162,7 +162,7 @@ struct MenuBarContent: View {
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
         // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
         // countdown, with no room to qualify it — would read as current, so say the state instead.
-        guard usage.isQuotableNow else { return "  ·  \(UsagePresentation.stateNote(usage.state))" }
+        guard usage.isQuotableNow else { return "  ·  \(UsagePresentation.stateNote(usage))" }
         guard let limit = usage.displayLimit else { return "" }
         var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
         // Same gate as the pane and the sidebar tooltip: an elapsed window would print a permanent

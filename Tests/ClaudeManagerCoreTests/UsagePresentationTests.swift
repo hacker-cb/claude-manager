@@ -157,6 +157,18 @@ struct UsagePresentationTests {
         #expect(UsagePresentation.headerNote(usage: withoutBars, now: now)?.text == "not set up yet")
     }
 
+    @Test
+    func theCompactPhraseSeesTheFiguresToo() {
+        // The tooltip and the menu row have to agree with the header. Constant means constant *in
+        // time* — whether a snapshot exists is a property of the reading, not of the clock, so
+        // consulting it costs the non-ticking tooltip nothing.
+        let withBars = account(.noSource(.configUnreadable), snapshot: snapshot())
+        #expect(UsagePresentation.stateNote(withBars) == "config unreadable")
+        #expect(UsagePresentation.stateNote(account(.noSource(.configUnreadable))) == "not set up yet")
+        #expect(UsagePresentation.attentionNote(usage: withBars, failure: .configUnreadable)
+            == "config unreadable")
+    }
+
     // MARK: - The remedy a surface names
 
     @Test

@@ -99,7 +99,7 @@ public enum UsagePresentation {
             return phrase(for: .signedOut, hasFigures: false)
         }
         guard attention(usage: usage, failure: failure) != nil else { return nil }
-        return stateNote(usage.state)
+        return stateNote(usage)
     }
 
     // MARK: - The detail pane
@@ -216,17 +216,21 @@ public enum UsagePresentation {
         }
     }
 
-    /// The constant phrase for a state, for a tooltip, a menu row, or the qualifier a screen reader
-    /// needs on a figure that has stopped moving.
-    public static func stateNote(_ state: UsageState) -> String {
-        switch state {
+    /// The phrase for a state, for a tooltip, a menu row, or the qualifier a screen reader needs on
+    /// a figure that has stopped moving.
+    ///
+    /// Constant **in time**, which is the invariant the sidebar's non-ticking tooltip relies on —
+    /// and `hasFigures` does not threaten it: whether a snapshot exists is a property of the
+    /// reading, not of the clock. Taking the whole `AccountUsage` rather than its state alone is
+    /// what lets this arm agree with the pane's header instead of calling an already-running
+    /// profile "not set up yet".
+    public static func stateNote(_ usage: AccountUsage) -> String {
+        switch usage.state {
         case .fresh: "up to date"
         case let .stale(since): "as of \(UsageFormat.age(since))"
         case .loginNeeded: "login needed"
         case .rateLimited: "rate limited"
-        // Constant, so `hasFigures` cannot be consulted here — the tooltip must not change while
-        // it is on screen, and this arm only ever renders beside an attention word anyway.
-        case let .noSource(reason): phrase(for: reason, hasFigures: false)
+        case let .noSource(reason): phrase(for: reason, hasFigures: usage.snapshot != nil)
         case .offline: "offline"
         }
     }
