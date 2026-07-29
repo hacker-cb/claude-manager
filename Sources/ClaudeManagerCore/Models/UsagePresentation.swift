@@ -95,6 +95,33 @@ public enum UsagePresentation {
         return profileName(account, profileNames) ?? login ?? "Claude account"
     }
 
+    /// One entry per login, each the member best placed to speak for it — for a surface that lists
+    /// **accounts** rather than profiles (today, the Doctor inspector's picker).
+    ///
+    /// Two things it settles, and the caller got both wrong by folding `Dictionary.values`:
+    ///
+    /// - **Stably.** `.values` has no defined order and Swift reseeds hashing per process, so which
+    ///   member named a shared login differed between launches — the same account labelled two ways
+    ///   on two runs of the same build.
+    /// - **Rightly, which is not the same thing.** A binding detached from its login — signed out,
+    ///   so `bindingIDs` holds only itself — shares its uuid with the members still on that login,
+    ///   and naming a live quota after the profile that *left* it is worse than naming it
+    ///   arbitrarily. The widest fan-out wins, so a detached row speaks only for a login that has
+    ///   nothing else left to speak for it.
+    ///
+    /// Ordered by uuid so the sequence is stable too; callers re-sort for display.
+    public static func onePerAccount(_ byBinding: [String: AccountUsage]) -> [AccountUsage] {
+        var best: [String: AccountUsage] = [:]
+        for id in byBinding.keys.sorted() {
+            guard let entry = byBinding[id] else { continue }
+            let uuid = entry.identity.uuid
+            // Ascending ids plus `>=` settle a tie on fan-out width toward the lowest binding id.
+            if let held = best[uuid], held.bindingIDs.count >= entry.bindingIDs.count { continue }
+            best[uuid] = entry
+        }
+        return best.keys.sorted().compactMap { best[$0] }
+    }
+
     /// The member profile to name a login after, when the login itself has no name yet.
     ///
     /// The default profile wins where it is a member, and that precedence is load-bearing rather

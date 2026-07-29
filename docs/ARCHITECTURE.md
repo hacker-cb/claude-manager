@@ -222,6 +222,18 @@ can say so); a profile **signed in but unreadable** takes the account's current 
 whichever sibling resolved, while still naming its own blocker; a **signed-out** one takes the name
 and nothing else — no figures, and no place in its former sibling's "shared with N profiles".
 
+A binding's published state has **two halves**, and both are folded, through one rule. Beside the
+per-binding account map the app publishes a per-binding *failure* map, which is the only voice a
+binding has when nothing could be resolved or carried for it — a profile signed out before launch
+on a machine whose `account_profiles` cannot name its login. Only a sign-out may speak without an
+account (`UsagePresentation.speaksWithoutAccount`), so a single poll that read `config.json` mid-
+rewrite used to replace `.signedOut` with `.configUnreadable` and take the row's account line, cell
+and menu suffix with it. `UsageService.mergeFailures` folds that map exactly as `merge` folds the
+other, sharing the stickiness rule rather than paraphrasing it: a binding that had already lost its
+login does not regain one because the next pass could not read the file that would say so. The rule
+stays narrow to `.configUnreadable` — every other failure names a real, current blocker, and a
+keychain refusal held behind a stale "signed out" would never be shown at all.
+
 Four bounds, each with a test. A hint may only point at an account something else already
 knows — this pass's results, else `account_profiles` via `UsageHistoryStore.profile(accountUUID:)`
 — so a stale hint can misattribute a row to a real login and can never invent one. A hint never
@@ -305,6 +317,21 @@ keychain access — and one "Always Allow" prompt. Background polls read with
 keychain fails fast (serve stale) instead of prompting mid-poll; the prompt is deferred to an
 interactive Refresh. No item at all under the service reads as `.notFound` (Claude never
 signed in here) — distinct from an access refusal, so the UI can point at the right fix.
+
+**Which cache may speak for the login.** An upgraded profile carries both `oauth:tokenCacheV2`
+and the legacy `oauth:tokenCache`, and neither presence nor decodability says which holds the
+live token — so both are read and **entries anywhere outrank emptiness**. What does *not*
+generalize is the sign-out: `.signedOut` is a positive claim (it costs the binding its figures,
+detaches it from its account's fan-out, and tells the user to sign in), so only the **live**
+cache — v2 wherever it exists — may make it. An empty legacy blob beside a v2 we could not
+decrypt reports the decrypt failure instead: the cache that would have said whether this profile
+is signed in is precisely the one that defeated us, and the honest reason is also what lets the
+fleet-wide self-heal see a rotated key. The mirror case is why this discriminates rather than
+letting any failure disqualify a sign-out — a live cache that decrypted and is empty *is* a
+logout, and an unreadable legacy leftover must not turn it into a fault. `.noUsableEntry` is
+likewise a verdict about the profile, not about one cache: every populated cache is offered to
+election before it is reported, so a foreign-only v2 cannot bury a usable token sitting decrypted
+in the v1 beside it.
 
 **Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
 self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,

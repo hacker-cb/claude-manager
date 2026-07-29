@@ -185,10 +185,14 @@ extension AppModel {
             // The fold itself lives in core (`UsageService.merge`) — it decides what every surface
             // renders, which makes it a state machine rather than painting. Called here, after both
             // guards above, because it must not observe a map a superseded pass would overwrite.
-            usageByBinding = UsageService.merge(previous: usageByBinding, result: result)
             // Still published alongside: a binding that failed with *no* prior snapshot has no
-            // entry in the map at all, and its failure is the only thing that can explain it.
-            usageBindingFailures = result.bindingFailures
+            // entry in the map at all, and its failure is the only thing that can explain it. Folded
+            // the same way and through the same rule, so the two halves of one binding's published
+            // state cannot disagree about whether it is signed out. Read before the line below
+            // replaces it — both folds take the currently published map as their `previous`.
+            let failures = UsageService.mergeFailures(previous: usageBindingFailures, result: result)
+            usageByBinding = UsageService.merge(previous: usageByBinding, result: result)
+            usageBindingFailures = failures
             // The accounts this pass actually fetched — never anything derived from the map, whose
             // carried-forward entries are by definition not new readings.
             await notifyLimits(for: result.accounts)

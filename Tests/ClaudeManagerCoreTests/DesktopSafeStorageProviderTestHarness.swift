@@ -120,6 +120,35 @@ extension DesktopSafeStorageProviderTests {
         return url
     }
 
+    /// Write a `config.json` whose two caches are encrypted under **different** passwords — the
+    /// shape a machine takes when one of them predates a safeStorage key rotation and has not been
+    /// rewritten since. With only the live password in the keychain, exactly one of the two is
+    /// readable, which is what decides whether an empty cache may claim a sign-out.
+    func writeConfig(
+        v2: [String: Any],
+        v2Password: Data,
+        v1: [String: Any],
+        v1Password: Data,
+        into dir: URL,
+        name: String = "config.json"
+    ) throws -> URL {
+        func blob(_ cache: [String: Any], _ secret: Data) throws -> String {
+            let key = SafeStorageDecryptor.deriveKey(password: secret)!
+            return try SafeStorageDecryptorTests
+                .makeV10Blob(JSONSerialization.data(withJSONObject: cache), key: key)
+                .base64EncodedString()
+        }
+        let v2Blob = try blob(v2, v2Password)
+        let v1Blob = try blob(v1, v1Password)
+        let root: [String: Any] = [
+            CoreConstants.desktopTokenCacheKeyV2: v2Blob,
+            CoreConstants.desktopTokenCacheKeyV1: v1Blob
+        ]
+        let url = dir.appendingPathComponent(name)
+        try JSONSerialization.data(withJSONObject: root).write(to: url)
+        return url
+    }
+
     /// Write a `config.json` whose v2 key holds an arbitrary raw string — typically one that is not
     /// base64 at all — beside a properly encrypted v1. The shape that decides whether election
     /// falls through to a decodable sibling.

@@ -74,16 +74,13 @@ extension AppModel {
         let rawJSON: String?
     }
 
-    /// The latest raw `/usage` JSON per unique account, for the Doctor inspector. Deduped by
-    /// account uuid (shared profiles collapse to one), named for display, sorted by name.
+    /// The latest raw `/usage` JSON per unique account, for the Doctor inspector. Which entry
+    /// represents a login is decided in core (`UsagePresentation.onePerAccount`) — it used to be
+    /// whichever one `Dictionary.values` happened to yield first, so a shared account could be
+    /// labelled differently from launch to launch. Sorted by name here, for display.
     func loadUsageInspectorEntries() async -> [UsageInspectorEntry] {
-        var seen = Set<String>()
-        var uniqueAccounts: [AccountUsage] = []
-        for account in usageByBinding.values where seen.insert(account.identity.uuid).inserted {
-            uniqueAccounts.append(account)
-        }
         var entries: [UsageInspectorEntry] = []
-        for account in uniqueAccounts {
+        for account in UsagePresentation.onePerAccount(usageByBinding) {
             let raw = await usageHistory.latestRawJSON(accountUUID: account.identity.uuid)
             entries.append(UsageInspectorEntry(
                 id: account.identity.uuid,

@@ -100,7 +100,14 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // it now carries a sign-in remedy and drops the binding out of its account's fan-out, so
         // coalescing them would tell a user with a damaged config to sign in — which cannot fix
         // it — and quietly rewrite what the other profiles on that login say about themselves.
-        let blobs = present.compactMap { Data(base64Encoded: $0) }
+        //
+        // Each blob keeps its **position**, not just its payload: `present[0]` is the live cache
+        // (v2 wherever it exists), and whether that particular one is among the caches we manage to
+        // read is what decides a sign-out below. Dropping the position — as a plain `compactMap`
+        // did — is what let a legacy sibling answer for a login it knows nothing about.
+        let blobs: [(isLive: Bool, data: Data)] = present.enumerated().compactMap { index, value in
+            Data(base64Encoded: value).map { (isLive: index == 0, data: $0) }
+        }
         guard !blobs.isEmpty else { return .failure(.malformedCache) }
 
         // Resolve the safeStorage key by which keychain account's password actually decrypts these
@@ -117,7 +124,7 @@ public struct DesktopSafeStorageProvider: TokenProvider {
                 // rejected and the failure reported, while a perfectly good v1 sat unread in the
                 // same file — the very thing reading both keys is supposed to prevent.
                 for blob in blobs {
-                    switch decryptor.decrypt(v10Blob: blob, key: candidate) {
+                    switch decryptor.decrypt(v10Blob: blob.data, key: candidate) {
                     case let .success(plaintext):
                         // Accept only if it decrypts to a JSON *object* — the token cache's shape —
                         // not merely on PKCS7 success. A wrong key (a stale account tried before the
@@ -155,14 +162,26 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // when *every* binding fails), where the whole-fleet view can tell rotation from a single
         // corrupt blob.
         var caches: [[String: Any]] = []
+        // Whether the **live** cache is one of the ones we read. Only it may claim a sign-out; the
+        // guard below is where that matters.
+        var readLiveCache = false
         // Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
         // luckier sibling — see `ProbeResult.record`.
         let outcome = ProbeResult()
+        // A value that was not base64 at all never reaches the loop below, but it is still a cache
+        // that defeated us — and once the sign-out guard can rest on `outcome`, leaving it
+        // unrecorded is not merely imprecise. `lastFailure` substitutes `.decryptFailed` for
+        // silence, so a half-written `config.json` beside an empty sibling would announce a
+        // **rotated safeStorage key**: the one symptom `UsageService.shouldSelfHeal` acts on, making
+        // the whole fleet drop and re-read its cached key over one truncated file. Recorded first so
+        // a genuine wrong-key symptom from a sibling still outranks it.
+        if blobs.count < present.count { outcome.record(.malformedCache) }
         for blob in blobs {
-            switch decryptor.decrypt(v10Blob: blob, key: key) {
+            switch decryptor.decrypt(v10Blob: blob.data, key: key) {
             case let .success(plaintext):
                 if let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
                     caches.append(cache)
+                    if blob.isLive { readLiveCache = true }
                 } else {
                     outcome.record(.malformedCache)
                 }
@@ -173,30 +192,65 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         guard !caches.isEmpty else { return .failure(outcome.lastFailure) }
 
         // An empty map is what Desktop's logout leaves behind — it rewrites the key rather than
-        // removing it. An emptied v2 can still sit beside a v1 holding the entries, so the first
-        // non-empty one wins and only an all-empty profile is a sign-out.
-        //
-        // That verdict is told apart from `.noUsableEntry` below, which keeps its meaning of
-        // "entries exist, none of them ours": offering "sign in" for a cache full of another
-        // client's tokens sends the user to do the one thing that cannot help.
-        guard let cache = caches.first(where: { !$0.isEmpty }) else { return .failure(.signedOut) }
-
-        guard let (compositeKey, value) = pickEntry(from: cache) else {
-            return .failure(.noUsableEntry)
+        // removing it. An emptied v2 can still sit beside a v1 holding the entries, so entries
+        // anywhere outrank emptiness and only a profile with none of them is a sign-out candidate.
+        let populated = caches.filter { !$0.isEmpty }
+        guard !populated.isEmpty else {
+            // `.signedOut` is a **positive claim about the login**, and only the live cache can make
+            // it: it costs the binding its figures, detaches it from its account's fan-out, and
+            // tells the user to sign in. An empty legacy blob sitting beside a v2 we could not
+            // decrypt supports none of that — the cache that would have said whether this profile
+            // is signed in is precisely the one that defeated us, and a profile that is signed in
+            // gets told to sign in again to no effect. Reporting the failure instead is also what
+            // keeps `UsageService.shouldSelfHeal` able to see a rotated key and recover the fleet.
+            //
+            // The mirror case is why this discriminates rather than treating any failure as
+            // disqualifying: a live cache that decrypted and is empty *is* a logout, and an
+            // unreadable legacy blob left behind by an old rotation must not turn it into a fault.
+            return .failure(readLiveCache ? .signedOut : outcome.lastFailure)
         }
-        guard let token = value["token"] as? String, !token.isEmpty else {
+
+        // Every populated cache gets a turn, not just the first. Election can decline one — a cache
+        // holding nothing but another client's entries, or an elected entry whose token is an empty
+        // string — and a decline used to end the read then and there, with a usable token sitting
+        // decrypted in the sibling this same loop had already read into memory. `.noUsableEntry`
+        // keeps its meaning of "entries exist, none of them ours", which is why it is not a sign-in
+        // prompt: it now says so about *all* of this profile's caches rather than one of them.
+        guard let entry = populated.compactMap({ usableEntry(in: $0) }).first else {
             return .failure(.noUsableEntry)
         }
 
         return .success(DesktopToken(
-            token: token,
-            expiresAt: expiry(from: value["expiresAt"]),
-            scopes: scopes(fromComposite: compositeKey),
-            organizationUUID: organizationUUID(fromComposite: compositeKey),
-            subscriptionType: value["subscriptionType"] as? String,
-            rateLimitTier: value["rateLimitTier"] as? String,
+            token: entry.token,
+            expiresAt: expiry(from: entry.value["expiresAt"]),
+            scopes: scopes(fromComposite: entry.composite),
+            organizationUUID: organizationUUID(fromComposite: entry.composite),
+            subscriptionType: entry.value["subscriptionType"] as? String,
+            rateLimitTier: entry.value["rateLimitTier"] as? String,
             bindingID: binding.id
         ))
+    }
+
+    /// An elected cache entry that has cleared both bars: something matched, and what matched holds
+    /// a token. A type rather than a tuple because the three parts travel together out of
+    /// `usableEntry(in:)` and each is read by name at the construction site below.
+    private struct ElectedEntry {
+        let composite: String
+        let value: [String: Any]
+        let token: String
+    }
+
+    /// The entry to use out of one decrypted cache — whatever `pickEntry` elects, and only when it
+    /// actually carries a token.
+    ///
+    /// Nil means "nothing usable in *this* cache", which is a reason to look at the next one rather
+    /// than a verdict about the profile. Folding the empty-token check in here is what makes that
+    /// true of both ways a cache can come up short.
+    private func usableEntry(in cache: [String: Any]) -> ElectedEntry? {
+        guard let (composite, value) = pickEntry(from: cache),
+              let token = value["token"] as? String, !token.isEmpty
+        else { return nil }
+        return ElectedEntry(composite: composite, value: value, token: token)
     }
 
     // MARK: - tokenCacheV2 map interpretation
