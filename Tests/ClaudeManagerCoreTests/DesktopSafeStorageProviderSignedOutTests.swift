@@ -140,6 +140,117 @@ extension DesktopSafeStorageProviderTests {
         }
     }
 
+    // MARK: - Which cache is allowed to speak
+
+    /// A password no keychain in these tests holds — so a cache encrypted under it is present,
+    /// well-formed, and unreadable, which is the only way to model a key rotation from outside.
+    private var rotatedAway: Data {
+        Data("pre-rotation-password".utf8)
+    }
+
+    @Test
+    func anEmptyLegacyCacheCannotSignOutAProfileWhoseLiveCacheWeCouldNotRead() async throws {
+        try await withTempDir { dir in
+            // v2 — the cache that would say whether this profile is signed in — is encrypted under
+            // a key we no longer have. The only thing readable is a legacy `{}` from some logout in
+            // the past, and it used to be allowed to answer for the login: `.signedOut`.
+            //
+            // That is a positive claim about a login we never managed to look at. It costs the row
+            // its figures, detaches it from its account, and tells a signed-in user to sign in —
+            // and it buries the `.decryptFailed` that `UsageService.shouldSelfHeal` needs in order
+            // to recover a whole fleet from a rotated key, which is the situation that produces
+            // this shape in the first place.
+            let url = try writeConfig(
+                v2: [inferenceCompositeKey(): ["token": "T"]], v2Password: rotatedAway,
+                v1: [:], v1Password: password,
+                into: dir
+            )
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            // Either decrypt-side verdict is legitimate for a key that is simply wrong — it unpads
+            // cleanly on garbage often enough that which one surfaces depends on the stub password,
+            // as `keychainReadFailureIsNotMisreadAsAnAuthorizationProblem` already records. The
+            // claim here is "the blob defeated us, and we said so".
+            switch result {
+            case .failure(.decryptFailed), .failure(.malformedCache): break
+            default: Issue.record("expected a decrypt-side failure, got \(result)")
+            }
+        }
+    }
+
+    @Test
+    func anEmptyLiveCacheIsStillASignOutBesideAnUnreadableLegacyOne() async throws {
+        try await withTempDir { dir in
+            // The mirror image, and the reason the rule discriminates by *which* cache spoke rather
+            // than treating any failure as disqualifying: here the live cache decrypted and is
+            // empty, so the sign-out is a fact. A legacy blob stranded by an old key rotation is
+            // history, and must not turn a real logout into "source unavailable" — which would put
+            // an unclearable orange fault on a row whose condition is normal.
+            let url = try writeConfig(
+                v2: [:], v2Password: password,
+                v1: [inferenceCompositeKey(): ["token": "T"]], v1Password: rotatedAway,
+                into: dir
+            )
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func aForeignEntryInTheLiveCacheDoesNotBuryAUsableLegacyToken() async throws {
+        try await withTempDir { dir in
+            // Both caches decrypt. v2 holds entries but none of them ours — another OAuth client's,
+            // or an organization the user has left — while v1 holds a usable token. Election used to
+            // run on the first populated cache alone and report `.noUsableEntry` on its refusal,
+            // with the token sitting decrypted in a local two keys away. Every populated cache now
+            // gets a turn, for exactly the reason both keys are read at all.
+            let url = try writeConfig(
+                v2: ["someone:elses:entry": ["token": "T"]],
+                v1: [inferenceCompositeKey(): ["token": "USABLE"]],
+                into: dir
+            )
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
+            #expect(token.token == "USABLE")
+        }
+    }
+
+    @Test
+    func anEmptyTokenInTheLiveCacheDoesNotBuryAUsableLegacyToken() async throws {
+        try await withTempDir { dir in
+            // The same defect one guard further down, which is why the two checks are now one step:
+            // v2's elected entry *is* ours and simply carries no token string. Election matched, so
+            // the cache was never "nothing of ours" — it is a usable-looking entry that turns out to
+            // be empty, and the sibling never got a turn.
+            let url = try writeConfig(
+                v2: [inferenceCompositeKey(): ["token": ""]],
+                v1: [inferenceCompositeKey(): ["token": "USABLE"]],
+                into: dir
+            )
+            let token = try await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
+            #expect(token.token == "USABLE")
+        }
+    }
+
+    @Test
+    func nothingUsableInAnyCacheIsStillNoUsableEntry() async throws {
+        try await withTempDir { dir in
+            // The verdict keeps its meaning — "entries exist, none of them ours" — it just now says
+            // it about the whole profile instead of one of its caches. It must survive, because it is
+            // the one no-token state that deliberately offers no sign-in remedy.
+            let url = try writeConfig(
+                v2: ["someone:elses:entry": ["token": "T"]],
+                v1: ["another:clients:entry": ["token": "T"]],
+                into: dir
+            )
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            #expect(result == .failure(.noUsableEntry))
+        }
+    }
+
     @Test
     func anUndecodableCacheValueIsCorruptNotAbsent() async throws {
         try await withTempDir { dir in
