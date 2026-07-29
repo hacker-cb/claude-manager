@@ -328,7 +328,40 @@ public actor UsageHistoryStore {
         }
     }
 
-    /// Run a prepared `account_profiles` SELECT (both lookups share the column list) and decode
+    /// The newest `/profile` answer stored for an **account**, whichever token carried it.
+    ///
+    /// The reverse of the lookup above, and the local account directory the config hint needs: a
+    /// hint names a uuid and nothing else, so without this it could only ever be matched against
+    /// accounts some *other* binding happened to resolve in the same pass. A user with one launcher
+    /// per login — the common shape — never has such a sibling, which is exactly the case where a
+    /// signed-out row has nothing to say about itself.
+    ///
+    /// **Newest wins, and that matters:** the table holds one row per token, so an account that has
+    /// rotated its token several times has several rows here, and taking an arbitrary one would
+    /// name a login from two rotations ago. Deliberately unbounded in age — unlike the fingerprint
+    /// lookup, which takes a freshness cutoff — because this answers "what is this account called",
+    /// not "is this reading current", and a name that is a month old still beats no name at all.
+    ///
+    /// No index for it: the table is bounded by the distinct tokens this machine has ever seen (a
+    /// handful even after months), so a scan is free and adding one would cost a schema bump that
+    /// drops every row — the opposite of what a directory is for.
+    public func profile(accountUUID: String) -> AccountIdentity? {
+        guard db != nil else {
+            return memoryProfiles.values
+                .filter { $0.identity.uuid == accountUUID }
+                .max { $0.fetchedAt < $1.fetchedAt }?
+                .identity
+        }
+        let sql = """
+        SELECT account_uuid, email, display_name, organization_uuid, subscription_type, rate_limit_tier
+        FROM account_profiles WHERE account_uuid=?1 ORDER BY fetched_at DESC LIMIT 1
+        """
+        return readProfile(sql) { stmt in
+            Self.bind(stmt, 1, text: accountUUID)
+        }
+    }
+
+    /// Run a prepared `account_profiles` SELECT (all lookups share the column list) and decode
     /// the row into an identity.
     private func readProfile(_ sql: String, bind: (OpaquePointer) -> Void) -> AccountIdentity? {
         guard let db, let stmt = Self.prepare(db, sql) else { return nil }

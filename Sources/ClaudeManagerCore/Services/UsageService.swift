@@ -5,10 +5,22 @@ import Foundation
 public struct UsageRefreshResult: Sendable, Equatable {
     public var accounts: [AccountUsage]
     public var bindingFailures: [String: TokenProviderError]
+    /// For each binding that could not spend a token this pass, the account its `config.json`
+    /// names — resolved to something nameable, or absent.
+    ///
+    /// Kept out of `accounts` on purpose: these are attributions, not readings. Nothing was
+    /// fetched for them, nothing was stored under them, and no token of theirs may ever be spent
+    /// on the named account's behalf. The fold is the only consumer.
+    public var hintedAccounts: [String: AccountIdentity]
 
-    public init(accounts: [AccountUsage], bindingFailures: [String: TokenProviderError]) {
+    public init(
+        accounts: [AccountUsage],
+        bindingFailures: [String: TokenProviderError],
+        hintedAccounts: [String: AccountIdentity] = [:]
+    ) {
         self.accounts = accounts
         self.bindingFailures = bindingFailures
+        self.hintedAccounts = hintedAccounts
     }
 }
 
@@ -128,7 +140,14 @@ public struct UsageService: Sendable {
             if Task.isCancelled { break }
             await accounts.append(usage(for: account, now: now, interactive: interactive))
         }
-        return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
+        return await UsageRefreshResult(
+            accounts: accounts,
+            bindingFailures: resolved.failures,
+            // Last, and deliberately so: every call and every write is behind us, so nothing this
+            // resolves can reach a storage key. It reads `accounts` rather than `settled` because a
+            // late `/profile` inside the loop above can have moved an account onto its real uuid.
+            hintedAccounts: hintedAccounts(resolved.hints, among: accounts)
+        )
     }
 
     // MARK: - Per account

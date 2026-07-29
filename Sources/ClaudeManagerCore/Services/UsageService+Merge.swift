@@ -58,6 +58,10 @@ public extension UsageService {
             }
             byBinding[id] = kept
         }
+        // Bindings whose own token said nothing this pass, attached to the account their config
+        // names. Between the carry-forward and the fan-out on purpose: it needs the carried state
+        // to have been decided, and the membership it creates has to be counted.
+        attach(&byBinding, detached: &detached, result: result)
         // One definitive fan-out per account, computed after both halves because either can
         // contribute to it: the resolved account was built from resolved bindings alone, so a
         // sibling that merely couldn't be read is missing from it, while that sibling carried
@@ -75,6 +79,98 @@ public extension UsageService {
             byBinding[id] = updated
         }
         return byBinding
+    }
+
+    /// Put every binding that could not speak for itself back into the account its `config.json`
+    /// names — for **display**: a name, a membership, and (only where the profile is still signed
+    /// in) the account's own figures.
+    ///
+    /// This is what stops a profile from leaving its login the moment we fail to read it. Three
+    /// shapes arrive here and they are told apart by one thing, the failure that brought them:
+    ///
+    /// - **No failure at all.** The binding resolved a token, but it has expired and its
+    ///   fingerprint has never been identified, so it stands alone as a phantom account keyed by
+    ///   that fingerprint — printing an orange "Sign in" with no name beside a sibling on the same
+    ///   login showing real figures. It gets the name and the membership. It keeps "Sign in":
+    ///   unlike a keychain we could not read, an expired token is a fact about *this* profile's own
+    ///   credential, and the row is the only place that can say so.
+    /// - **A failure that is not a sign-out.** The profile is still signed in; we simply could not
+    ///   read it. It gets the account's current figures, sourced from whichever sibling did resolve,
+    ///   and keeps its own reason so the remedy still reaches every surface.
+    /// - **A sign-out.** No figures, no membership — decided in the fold above and left alone here.
+    ///   Only the name, so the row can say which login it lost.
+    ///
+    /// Nothing here is a donor for anything: the entries are read from `result.accounts`, never
+    /// from the map being built, or attachments would chain — B borrowing from A, C from B's
+    /// borrowed copy — and on a pass where nothing resolved every entry would repaint every other
+    /// from stale figures.
+    private static func attach(
+        _ byBinding: inout [String: AccountUsage],
+        detached: inout Set<String>,
+        result: UsageRefreshResult
+    ) {
+        guard !result.hintedAccounts.isEmpty else { return }
+        var donors: [String: AccountUsage] = [:]
+        for account in result.accounts {
+            donors[account.identity.uuid] = account
+        }
+
+        for (id, identity) in result.hintedAccounts {
+            // The failure is the discriminator, and it is exact: a binding is in `bindingFailures`
+            // or in some account's fan-out, never both. So no guard against an entry donating to
+            // itself is needed — the branch below reaches only bindings that resolved, and the ones
+            // after it only bindings that did not, which by construction are in no donor.
+            guard let failure = result.bindingFailures[id] else {
+                attachExpired(&byBinding, id: id, identity: identity)
+                continue
+            }
+            guard !failure.meansNotSignedIn else {
+                // The fold above published it if there was anything to keep; either way it may now
+                // name the login it lost.
+                var entry = byBinding[id]
+                    ?? AccountUsage(
+                        identity: identity,
+                        snapshot: nil,
+                        state: .noSource(failure),
+                        bindingIDs: [id]
+                    )
+                entry.identity = identity
+                entry.snapshot = nil
+                byBinding[id] = entry
+                detached.insert(id)
+                continue
+            }
+            var entry = byBinding[id]
+                ?? AccountUsage(
+                    identity: identity,
+                    snapshot: nil,
+                    state: .noSource(failure),
+                    bindingIDs: [id]
+                )
+            entry.identity = identity
+            // The account's figures, not this binding's older carried ones — they are the same
+            // login's, and the fresher reading is the true one.
+            if let donor = donors[identity.uuid], donor.snapshot != nil { entry.snapshot = donor.snapshot }
+            byBinding[id] = entry
+        }
+    }
+
+    /// The expired-token case: adopt the account's name, keep everything else.
+    ///
+    /// Guarded on the identity still being **provisional**, which is the whole safety of it. An
+    /// account `/oauth/profile` has already named is authoritative about which login its token
+    /// belongs to, and a hint disagreeing with it must lose — silently, since the hint is the
+    /// fallible one. Only a fingerprint-keyed phantom, which by construction has no answer of its
+    /// own, may take a name from the config.
+    private static func attachExpired(
+        _ byBinding: inout [String: AccountUsage],
+        id: String,
+        identity: AccountIdentity
+    ) {
+        guard var phantom = byBinding[id], phantom.identity.isProvisional else { return }
+        guard case .loginNeeded = phantom.state else { return }
+        phantom.identity = identity
+        byBinding[id] = phantom
     }
 
     /// The reason to carry forward.

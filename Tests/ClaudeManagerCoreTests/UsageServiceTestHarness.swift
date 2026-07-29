@@ -108,11 +108,13 @@ extension UsageServiceTests {
     /// second time" and leaves no other trace when the retry fails too.
     final class CountingProvider: TokenProvider, @unchecked Sendable {
         private let results: [String: Result<DesktopToken, TokenProviderError>]
+        private let hints: [String: String]
         private let lock = NSLock()
         private var counts: [String: Int] = [:]
 
-        init(results: [String: Result<DesktopToken, TokenProviderError>]) {
+        init(results: [String: Result<DesktopToken, TokenProviderError>], hints: [String: String] = [:]) {
             self.results = results
+            self.hints = hints
         }
 
         var reads: [String: Int] {
@@ -123,7 +125,8 @@ extension UsageServiceTests {
             lock.withLock { counts[binding.id, default: 0] += 1 }
             return BindingReading(
                 bindingID: binding.id,
-                token: results[binding.id] ?? .failure(.configUnreadable)
+                token: results[binding.id] ?? .failure(.configUnreadable),
+                hintedAccountUUID: hints[binding.id]
             )
         }
     }

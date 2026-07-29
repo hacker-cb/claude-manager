@@ -417,4 +417,45 @@ struct UsageNotificationLedgerTests {
             ) == true)
         }
     }
+
+    // MARK: - The account directory
+
+    @Test
+    func lookingAnAccountUpByUuidTakesItsNewestRow() async {
+        await withStore { store in
+            // One row per *token*, so an account that has rotated its token has several — and an
+            // arbitrary one would name a login from two rotations ago, which is exactly what a row
+            // saying "was …" must not do.
+            let old = Date(timeIntervalSince1970: 1_700_000_000)
+            await store.setProfile(
+                AccountIdentity(uuid: "acct", email: "old@example.com"),
+                tokenFingerprint: "tok-1",
+                fetchedAt: old
+            )
+            await store.setProfile(
+                AccountIdentity(uuid: "acct", email: "new@example.com"),
+                tokenFingerprint: "tok-2",
+                fetchedAt: old.addingTimeInterval(86400)
+            )
+            #expect(await store.profile(accountUUID: "acct")?.email == "new@example.com")
+            #expect(await store.profile(accountUUID: "nobody") == nil)
+        }
+    }
+
+    @Test
+    func theAccountDirectoryIgnoresAgeUnlikeTheFingerprintLookup() async {
+        await withStore { store in
+            // Deliberately unbounded: this answers "what is this account called", not "is this
+            // reading current". A month-old name still beats no name at all, whereas the
+            // fingerprint lookup takes a cutoff because it gates a network call.
+            let ancient = Date(timeIntervalSince1970: 1_000_000_000)
+            await store.setProfile(
+                AccountIdentity(uuid: "acct", email: "was@example.com"),
+                tokenFingerprint: "tok",
+                fetchedAt: ancient
+            )
+            #expect(await store.profile(tokenFingerprint: "tok", fetchedAfter: Date()) == nil)
+            #expect(await store.profile(accountUUID: "acct")?.email == "was@example.com")
+        }
+    }
 }
