@@ -46,6 +46,32 @@ public struct AccountIdentity: Codable, Sendable, Equatable, Hashable, Identifia
         self.isProvisional = isProvisional
     }
 
+    /// Decode leniently, as `BadgeStyle` does: a key this build knows and the payload does not
+    /// falls back to its default instead of failing the whole decode.
+    ///
+    /// The synthesized decoder will not do it. A default on the property declaration reaches only
+    /// the memberwise initializer — Swift still synthesizes a plain `decode(_:forKey:)` — so adding
+    /// `isProvisional` made every previously-written payload undecodable, and the next field added
+    /// would have done it again. Nothing in this app encodes an `AccountIdentity` today
+    /// (`account_profiles` stores flat columns), which is exactly why the hazard would have gone
+    /// unnoticed until something did.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            guard let decoded = try? container.decodeIfPresent(T.self, forKey: key) else { return fallback }
+            return decoded ?? fallback
+        }
+        try self.init(
+            uuid: container.decode(String.self, forKey: .uuid),
+            email: value(.email, nil),
+            displayName: value(.displayName, nil),
+            organizationUuid: value(.organizationUuid, nil),
+            subscriptionType: value(.subscriptionType, nil),
+            rateLimitTier: value(.rateLimitTier, nil),
+            isProvisional: value(.isProvisional, false)
+        )
+    }
+
     public var id: String {
         uuid
     }
