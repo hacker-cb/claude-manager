@@ -181,22 +181,30 @@ public enum UsagePresentation {
         }
     }
 
-    /// The full sentence for a pane with no figures to show — the state named, and a remedy that
-    /// can actually be followed. Nil when there is nothing to explain.
-    public static func sentence(usage: AccountUsage?, failure: TokenProviderError?) -> String? {
-        if let usage {
-            switch usage.state {
-            case .loginNeeded: return "Sign in to this account in Claude to see usage."
-            case let .noSource(reason): return sentence(for: reason)
-            case .offline: return "Offline — no usage yet."
-            // Without this the header says "rate limited" while the body falls through to "Not
-            // checked yet — use Refresh", which contradicts it and points at a Refresh that is
-            // itself inside the backoff.
-            case .rateLimited: return "Rate limited — usage will refresh once the window clears."
-            case .fresh, .stale: return nil
-            }
+    /// The full sentence for a pane with no figures to show — the state named, a remedy that can
+    /// actually be followed, and whether it warns. Nil when there is nothing to explain.
+    ///
+    /// It carries the tint because it is the only thing left on such a pane to carry it. The header
+    /// used to, but a pane with no figures has nothing for the header to date, so it now stays
+    /// quiet — and that silence would otherwise have taken the pane's one warning signal with it,
+    /// leaving a keychain error and a normal sign-out drawn identically.
+    public static func sentence(
+        usage: AccountUsage?,
+        failure: TokenProviderError?
+    ) -> (text: String, isWarning: Bool)? {
+        guard let usage else {
+            return failure.map { (sentence(for: $0), isWarning($0)) }
         }
-        return failure.map(sentence(for:))
+        switch usage.state {
+        case .loginNeeded: return ("Sign in to this account in Claude to see usage.", true)
+        case let .noSource(reason): return (sentence(for: reason), isWarning(reason))
+        case .offline: return ("Offline — no usage yet.", false)
+        // Without this the header says "rate limited" while the body falls through to "Not
+        // checked yet — use Refresh", which contradicts it and points at a Refresh that is
+        // itself inside the backoff.
+        case .rateLimited: return ("Rate limited — usage will refresh once the window clears.", true)
+        case .fresh, .stale: return nil
+        }
     }
 
     /// Whether a limit row may print a reset phrase.

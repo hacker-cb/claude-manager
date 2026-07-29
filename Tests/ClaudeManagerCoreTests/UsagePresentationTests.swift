@@ -224,6 +224,19 @@ struct UsagePresentationTests {
         // sentence does not already say better, and printing a two-word version directly above the
         // sentence reads as a stutter. True of a signed-out pane now that its figures are gone, and
         // equally of a 429 on a first-ever fetch or an offline start.
+        // The sentence carries the tint the silenced header used to, or a keychain error and an
+        // ordinary sign-out would be drawn identically on a pane that has nothing else left to
+        // distinguish them.
+        #expect(UsagePresentation.sentence(
+            usage: account(.noSource(.decryptFailed(.decryptFailed))),
+            failure: nil
+        )?.isWarning == true)
+        #expect(UsagePresentation.sentence(
+            usage: account(.noSource(.signedOut)),
+            failure: nil
+        )?.isWarning == false)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .malformedCache)?.isWarning == true)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)?.isWarning == false)
         for state: UsageState in [.rateLimited, .offline, .loginNeeded, .noSource(.signedOut)] {
             #expect(
                 UsagePresentation.headerNote(usage: account(state), now: now) == nil,
@@ -241,7 +254,7 @@ struct UsagePresentationTests {
         // The pane printed the same explanation twice, once above the other, when the header
         // learned to speak from a bare failure.
         #expect(UsagePresentation.headerNote(usage: nil, now: now) == nil)
-        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)
+        #expect(UsagePresentation.sentence(usage: nil, failure: .configUnreadable)?.text
             == "Not set up yet — open this profile once, then Refresh.")
     }
 
@@ -257,7 +270,7 @@ struct UsagePresentationTests {
         // where it is still observable — see `theCompactPhraseSeesTheFiguresToo`.
         let withoutBars = account(.noSource(.configUnreadable))
         #expect(UsagePresentation.headerNote(usage: withoutBars, now: now) == nil)
-        #expect(UsagePresentation.sentence(usage: withoutBars, failure: nil)
+        #expect(UsagePresentation.sentence(usage: withoutBars, failure: nil)?.text
             == "Not set up yet — open this profile once, then Refresh.")
     }
 

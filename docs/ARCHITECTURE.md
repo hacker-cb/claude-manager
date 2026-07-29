@@ -239,8 +239,10 @@ Residual risks, accepted deliberately: a hint that lags a re-login can show the 
 figures on a row whose token happens to be unreadable at that moment (display only, self-corrects
 on the first readable pass); `account_profiles` is promoted from a cache to the local account
 directory and is not pruned, so a login the user has left keeps naming its former profile; and a
-`usageSchemaVersion` bump drops that directory, so the cold-start naming falls back to today's
-behaviour for exactly one pass. Two other plaintext signals were examined and rejected:
+`usageSchemaVersion` bump drops that directory, after which only a token that gets identified can
+put a row back. For a login with a readable profile that is the next pass — but for one whose only
+profile is signed out there is no token to identify, so **that account stays unnameable until the
+user signs in again**, not for a pass. Two other plaintext signals were examined and rejected:
 `dxt:allowlist*:<orgUuid>` keys **accumulate historically** (a profile carries one per org it has
 ever touched, so they name no current account), and `windowSizeWasSignedIn` could only ever
 *demote* a live profile out of its login on a stale `false`, which is strictly worse than the

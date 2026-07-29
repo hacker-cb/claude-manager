@@ -51,11 +51,18 @@ extension UsageServiceTests {
     }
 
     @Test
-    func aHintIsNamedFromThisPassWhenASiblingIsLive() async {
-        // The other source, and the authoritative one: an account this pass resolved. Preferred
-        // over the stored record because it is this minute's answer rather than a remembered one.
+    func aHintIsNamedFromThisPassInPreferenceToTheStoredRecord() async {
+        // The source order, pinned by making the two sources *disagree*: a stored row for the same
+        // account carries an old e-mail, and this pass's `/oauth/profile` answer carries the current
+        // one. Seeded the other way round the test could not fail, because both sources would hand
+        // back the same string and either order would satisfy it.
         let http = ScriptedHTTP(usage: usageBody, accountUUID: "acct")
         let history = UsageHistoryStore(path: ":memory:")
+        await history.setProfile(
+            AccountIdentity(uuid: "acct", email: "renamed-away@example.com"),
+            tokenFingerprint: "some-old-token",
+            fetchedAt: now.addingTimeInterval(-86400)
+        )
         let service = makeService(
             provider: StubProvider(
                 results: ["live": .success(token("live")), "out": .failure(.signedOut)],

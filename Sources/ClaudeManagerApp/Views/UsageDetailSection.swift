@@ -50,7 +50,10 @@ struct UsageDetailSection: View {
         if let snapshot = usage?.snapshot {
             bars(for: snapshot, now: now)
         } else if let note = emptyStateNote {
-            Text(note).font(.callout).foregroundStyle(.secondary)
+            // Tinted from the same flag the header used to carry: with no figures to date the
+            // header stays quiet, so this sentence is the pane's only warning signal left.
+            Text(note.text).font(.callout)
+                .foregroundStyle(note.isWarning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
         } else if isRefreshing {
             Text("Checking usage…").font(.callout).foregroundStyle(.secondary)
         } else {
@@ -102,8 +105,8 @@ struct UsageDetailSection: View {
         UsagePresentation.headerNote(usage: usage, now: now)
     }
 
-    /// When there's no snapshot to show, the sentence explaining why.
-    private var emptyStateNote: String? {
+    /// When there's no snapshot to show, the sentence explaining why and whether it warns.
+    private var emptyStateNote: (text: String, isWarning: Bool)? {
         UsagePresentation.sentence(usage: usage, failure: failure)
     }
 }

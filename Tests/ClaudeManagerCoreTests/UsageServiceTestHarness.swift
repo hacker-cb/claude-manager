@@ -89,11 +89,27 @@ extension UsageServiceTests {
     /// runs on the very task the caller awaits, and `withUnsafeCurrentTask` from in here cancels
     /// exactly that task at exactly the phase this stub sits in. A timer or a sleep would be
     /// racing the same code it is trying to observe.
-    struct CancellingProvider: TokenProvider {
-        let cancelOn: String
-        let results: [String: Result<DesktopToken, TokenProviderError>]
+    final class CancellingProvider: TokenProvider, @unchecked Sendable {
+        private let cancelOn: String
+        private let results: [String: Result<DesktopToken, TokenProviderError>]
+        private let lock = NSLock()
+        private var readsStore: [String] = []
+
+        init(cancelOn: String, results: [String: Result<DesktopToken, TokenProviderError>]) {
+            self.cancelOn = cancelOn
+            self.results = results
+        }
+
+        /// Which bindings were read, in order. The observable that actually depends on
+        /// `AccountResolver`'s in-loop guard: without it the loop keeps reading the rest of the
+        /// fleet's keychain entries, and every *other* signal a cancellation test could check is
+        /// produced identically by the next check downstream.
+        var reads: [String] {
+            lock.withLock { readsStore }
+        }
 
         func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            lock.withLock { readsStore.append(binding.id) }
             if binding.id == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
             return BindingReading(
                 token: results[binding.id] ?? .failure(.configUnreadable)

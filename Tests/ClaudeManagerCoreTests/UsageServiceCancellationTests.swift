@@ -20,19 +20,20 @@ extension UsageServiceTests {
         // "off stops all polling" true of the work that hadn't happened when the user said stop.
         let http = ScriptedHTTP(usage: usageBody)
         let history = UsageHistoryStore(path: ":memory:")
-        let service = makeService(
-            provider: CancellingProvider(cancelOn: "p1", results: [
-                "p1": .success(token("p1")),
-                "p2": .success(token("p2", value: "TK-2"))
-            ]),
-            http: http,
-            history: history
-        )
+        let provider = CancellingProvider(cancelOn: "p1", results: [
+            "p1": .success(token("p1")),
+            "p2": .success(token("p2", value: "TK-2"))
+        ])
+        let service = makeService(provider: provider, http: http, history: history)
 
         // A child task, so the cancellation lands on the pass rather than on the test's own task.
         let task = Task { await service.refresh(bindings: [binding("p1"), binding("p2")], now: now) }
         let result = await task.value
 
+        // The assertion that depends on *this* guard: the second binding's keychain entry is never
+        // read at all. The two below are produced identically by the next check downstream, so on
+        // their own they would pass with `AccountResolver`'s in-loop guard deleted.
+        #expect(provider.reads == ["p1"])
         #expect(http.callCount == 0) // neither /profile nor /usage
         #expect(result.accounts.isEmpty)
     }

@@ -32,7 +32,13 @@ extension AppModel {
         guard !already else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "\(accountDisplayName(for: account)) — \(warning.limitLabel) limit"
+        // Named from the **published** entry, not this pass's raw account. `result.accounts` carries
+        // only the bindings that resolved, so a login whose second profile merely could not be read
+        // looks like a one-profile account here — and the title reverts to that profile's name for a
+        // quota both of them draw on, while the panes beside it say "shared with 2 profiles". The
+        // fold is where membership is settled; this reads its answer.
+        let published = account.bindingIDs.compactMap { usageByBinding[$0] }.first ?? account
+        content.title = "\(accountDisplayName(for: published)) — \(warning.limitLabel) limit"
         var body = "You've used \(UsageFormat.percent(warning.utilization)) of your \(warning.limitLabel) limit"
         if let resets = UsageFormat.resets(warning.resetsAt, now: now) { body += " · \(resets)" }
         content.body = body
