@@ -149,6 +149,11 @@ struct MenuBarContent: View {
 
     private func usageSuffix(_ bindingID: String) -> String {
         guard model.usageTrackingEnabled else { return "" }
+        // One clock for the whole row. The menu is rebuilt each time it opens, so reading it here is
+        // as current as a ticker would be — but reading it *twice* is not: the gate below and the
+        // phrase it admits would then be answering slightly different questions, and across the
+        // window's boundary that reintroduces the permanent "resetting…" the gate exists to stop.
+        let now = Date()
         // No account for this binding at all: a profile already signed out when the app launched
         // has no snapshot to carry forward, so its bare failure is the only thing that can explain
         // the blank. Only a sign-out, though — the other ways to land here are permanent, normal
@@ -162,13 +167,13 @@ struct MenuBarContent: View {
         // A snapshot is kept for the detail pane even when it has stopped moving (signed out,
         // offline, rate-limited, or simply stale). Quoting that percentage here — beside a live
         // countdown, with no room to qualify it — would read as current, so say the state instead.
-        guard usage.isQuotableNow else { return "  ·  \(UsagePresentation.stateNote(usage))" }
+        guard usage.isQuotableNow else { return "  ·  \(UsagePresentation.stateNote(usage, now: now))" }
         guard let limit = usage.displayLimit else { return "" }
         var suffix = "  ·  \(UsageFormat.limitSummary(limit))"
         // Same gate as the pane and the sidebar tooltip: an elapsed window would print a permanent
         // "resetting…" here too.
-        let resets = UsagePresentation.showsReset(limit.resetsAt, now: Date())
-            ? UsageFormat.resets(limit.resetsAt)
+        let resets = UsagePresentation.showsReset(limit.resetsAt, now: now)
+            ? UsageFormat.resets(limit.resetsAt, now: now)
             : nil
         if let resets { suffix += " · \(resets)" }
         return suffix

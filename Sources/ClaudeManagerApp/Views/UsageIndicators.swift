@@ -159,8 +159,8 @@ struct UsageAccessory: View {
     /// What this cell says on hover, in the shape that decides whether saying it costs a ticker.
     ///
     /// All three cases are reachable here, and only one of them moves with time:
-    /// - an account needing the user prints a fixed phrase — `attentionWord` is non-nil only for
-    ///   `.loginNeeded` / `.noSource`, whose `stateNote` is a constant;
+    /// - a binding needing the user prints a fixed phrase — `UsagePresentation.attentionNote` answers
+    ///   only where there is an attention word, and every phrase it returns is constant in time;
     /// - one with a snapshot prints a reset countdown and an "as of" age, which do move;
     /// - one being tracked with neither yet — the first fetch hasn't landed, or it is offline with
     ///   no stored sample — has nothing to say, and the cell still claims its width in that state.

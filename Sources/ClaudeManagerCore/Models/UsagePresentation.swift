@@ -224,10 +224,10 @@ public enum UsagePresentation {
     /// reading, not of the clock. Taking the whole `AccountUsage` rather than its state alone is
     /// what lets this arm agree with the pane's header instead of calling an already-running
     /// profile "not set up yet".
-    public static func stateNote(_ usage: AccountUsage) -> String {
+    public static func stateNote(_ usage: AccountUsage, now: Date = Date()) -> String {
         switch usage.state {
         case .fresh: "up to date"
-        case let .stale(since): "as of \(UsageFormat.age(since))"
+        case let .stale(since): "as of \(UsageFormat.age(since, now: now))"
         case .loginNeeded: "login needed"
         case .rateLimited: "rate limited"
         case let .noSource(reason): phrase(for: reason, hasFigures: usage.snapshot != nil)
