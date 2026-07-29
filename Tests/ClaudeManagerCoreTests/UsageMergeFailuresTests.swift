@@ -90,26 +90,38 @@ struct UsageMergeFailuresTests {
     }
 
     @Test
-    func bothHalvesOfOneBindingAgreeOnWhetherItSignedOut() {
-        // The invariant the split cost us, asserted across the two folds rather than inside either.
-        // `merge` carried the sign-out and `mergeFailures` did not, so one binding's row could be
-        // told by the account map that it is signed out while the failure map called it unreadable —
-        // and whichever surface read the other one printed the other answer.
-        let previous = [
-            "p": AccountUsage(
-                identity: AccountIdentity(uuid: "A", email: "a@example.com"),
-                snapshot: nil,
-                state: .noSource(.signedOut),
-                bindingIDs: ["p"]
-            )
+    func bothHalvesOfOneBindingAgreeOnEveryPairOfReasons() {
+        // The invariant the split cost us, asserted across the two folds rather than inside either —
+        // and over the whole cross product, because the pair that diverged in production was not the
+        // one anybody would have picked for a single example. `merge` carried the sign-out and
+        // `mergeFailures` did not, so a row could be told by the account map that it is signed out
+        // while the failure map called it unreadable, and each surface printed whichever it read.
+        let every: [TokenProviderError] = [
+            .signedOut, .noTokenCache, .configUnreadable,
+            .keychainUnavailable(.interactionNotAllowed),
+            .keychainUnavailable(.notFound),
+            .keychainUnavailable(.unexpected(-25300)),
+            .decryptFailed(.decryptFailed), .malformedCache, .noUsableEntry
         ]
-        let pass = result(["p": .configUnreadable])
-        let accounts = UsageService.merge(previous: previous, result: pass)
-        let failures = UsageService.mergeFailures(previous: ["p": .signedOut], result: pass)
-        guard let state = accounts["p"]?.state, case let .noSource(reason) = state else {
-            Issue.record("expected a carried no-source state, got \(accounts["p"]?.state as Any)")
-            return
+        for prior in every {
+            for latest in every {
+                let previous = [
+                    "p": AccountUsage(
+                        identity: AccountIdentity(uuid: "A", email: "a@example.com"),
+                        snapshot: nil,
+                        state: .noSource(prior),
+                        bindingIDs: ["p"]
+                    )
+                ]
+                let pass = result(["p": latest])
+                let accounts = UsageService.merge(previous: previous, result: pass)
+                let failures = UsageService.mergeFailures(previous: ["p": prior], result: pass)
+                guard let state = accounts["p"]?.state, case let .noSource(reason) = state else {
+                    Issue.record("no carried state for \(prior) -> \(latest)")
+                    continue
+                }
+                #expect(reason == failures["p"], "halves disagree on \(prior) -> \(latest)")
+            }
         }
-        #expect(reason == failures["p"])
     }
 }
