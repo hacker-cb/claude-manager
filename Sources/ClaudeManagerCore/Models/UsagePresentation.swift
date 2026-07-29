@@ -70,6 +70,32 @@ public enum UsagePresentation {
         return "\(state) · was \(label)"
     }
 
+    // MARK: - Naming an account
+
+    /// What to call an account where a *login*, not a profile row, is the subject — a notification
+    /// title, the Doctor inspector's picker.
+    ///
+    /// A shared login is named by the **login**. Naming it after a member profile is arbitrary the
+    /// moment there is more than one: the previous rule walked a sorted binding list and took the
+    /// first match, so a notification about a quota two profiles share was titled after whichever
+    /// launcher path sorted lowest — a name the reader may not associate with that account at all,
+    /// and one that changes if they rename a launcher.
+    ///
+    /// A login with a single profile keeps the profile's name, which is the more useful of the two
+    /// there: it is what the sidebar row says, and there is no ambiguity to resolve.
+    ///
+    /// `profileNames` maps a binding id to what the UI calls it — supplied by the app, which is the
+    /// only layer that knows launcher display names.
+    public static func accountName(
+        _ account: AccountUsage,
+        profileNames: [String: String]
+    ) -> String {
+        let login = account.identity.accountLabel
+        if account.bindingIDs.count > 1, let login { return login }
+        let profile = account.bindingIDs.compactMap { profileNames[$0] }.first
+        return profile ?? login ?? "Claude account"
+    }
+
     // MARK: - The compact cell
 
     /// The word a compact cell prints instead of a percentage when the binding needs the user, and

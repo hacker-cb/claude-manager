@@ -94,6 +94,60 @@ struct UsagePresentationTests {
         #expect(UsagePresentation.attentionNote(usage: nil, failure: .signedOut) == "signed out")
     }
 
+    // MARK: - Naming an account
+
+    @Test
+    func aSharedLoginIsNamedByTheLoginNotByAMemberProfile() {
+        // The old rule walked a sorted binding list and took the first match, so a notification
+        // about a quota two profiles share was titled after whichever launcher path sorted lowest.
+        // That name is arbitrary, may mean nothing to the reader, and changes on a rename.
+        let shared = AccountUsage(
+            identity: AccountIdentity(uuid: "A", email: "a@example.com"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["/Applications/Claude A.app", "/Applications/Claude B.app"]
+        )
+        let names = [
+            "/Applications/Claude A.app": "Claude A",
+            "/Applications/Claude B.app": "Claude B"
+        ]
+        #expect(UsagePresentation.accountName(shared, profileNames: names) == "a@example.com")
+    }
+
+    @Test
+    func aLoginWithOneProfileKeepsTheProfilesName() {
+        // No ambiguity to resolve, and the profile name is what the sidebar row already says.
+        let solo = AccountUsage(
+            identity: AccountIdentity(uuid: "A", email: "a@example.com"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: [TokenBinding.defaultID]
+        )
+        #expect(UsagePresentation.accountName(solo, profileNames: [TokenBinding.defaultID: "Default profile"])
+            == "Default profile")
+    }
+
+    @Test
+    func anAccountWithNoNameAnywhereStillHasSomethingToBeCalled() {
+        // `/oauth/profile` has not answered yet and the binding is one no launcher claims — a
+        // notification title still has to read as something.
+        let unnamed = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["gone"]
+        )
+        #expect(UsagePresentation.accountName(unnamed, profileNames: [:]) == "Claude account")
+        // A shared login with no e-mail yet falls back the same way, rather than to nothing.
+        let shared = AccountUsage(
+            identity: AccountIdentity(uuid: "fingerprint"),
+            snapshot: nil,
+            state: .fresh,
+            bindingIDs: ["a", "b"]
+        )
+        #expect(UsagePresentation.accountName(shared, profileNames: ["b": "Claude B"]) == "Claude B")
+    }
+
     // MARK: - The account line
 
     @Test

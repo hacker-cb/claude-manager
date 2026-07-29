@@ -59,15 +59,19 @@ extension AppModel {
         )
     }
 
-    /// A human name for the row: the default profile, else a bound profile's display name, else
-    /// the Claude login's own label (email / display name), falling back to "Claude account".
+    /// What to call an account in a notification title or the Doctor inspector. The rule lives in
+    /// core (`UsagePresentation.accountName`) and is tested there; this supplies the one thing core
+    /// cannot know — what each binding is called on screen.
     func accountDisplayName(for account: AccountUsage) -> String {
-        if account.bindingIDs.contains(TokenBinding.defaultID) { return "Default profile" }
-        for id in account.bindingIDs {
-            if let managed = profiles.first(where: { $0.profile.id == id }) {
-                return managed.profile.displayName
-            }
+        UsagePresentation.accountName(account, profileNames: profileNames)
+    }
+
+    /// Binding id → the name the UI shows for it.
+    private var profileNames: [String: String] {
+        var names = [TokenBinding.defaultID: "Default profile"]
+        for managed in profiles {
+            names[managed.profile.id] = managed.profile.displayName
         }
-        return account.identity.accountLabel ?? "Claude account"
+        return names
     }
 }
