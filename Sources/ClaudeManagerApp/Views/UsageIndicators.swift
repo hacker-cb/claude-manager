@@ -95,13 +95,18 @@ struct UsageAccessory: View {
         // one that is offline with no stored sample, or whose first fetch hasn't landed, still
         // holds its width so the figures don't shove their neighbours around when they arrive.
         //
-        // No cell at all when there is no `AccountUsage` — tracking switched off (the store is
-        // cleared, so every row is nil) or no refresh pass has reached this binding. Reserving
-        // unconditionally cost a 240pt sidebar a quarter of its identity column in the one
-        // configuration where the column can never fill, and left a `TimelineView` ticking once a
-        // minute per row forever, in a menu-bar utility whose user had just asked it to stop
-        // reading usage. A binding the first pass hasn't covered — a launcher added since the last
-        // check — is the one case that still settles once, when its account appears.
+        // No cell at all when the row has *nothing to say*: no `AccountUsage` and no failure worth a
+        // word — tracking switched off (the store is cleared, so every row is nil) or no refresh pass
+        // has reached this binding. Reserving unconditionally cost a 240pt sidebar a quarter of its
+        // identity column in the one configuration where the column can never fill, and left a
+        // `TimelineView` ticking once a minute per row forever, in a menu-bar utility whose user had
+        // just asked it to stop reading usage. A binding the first pass hasn't covered — a launcher
+        // added since the last check — is the one case that still settles once, when its account
+        // appears.
+        //
+        // An absent account is therefore not on its own a reason to stay silent: a binding signed out
+        // before launch has no `AccountUsage` at all and speaks only through its failure, which is
+        // exactly the row that most needs to say "Sign in" (`UsagePresentation.speaksWithoutAccount`).
         if usage != nil || attention != nil {
             content
                 .font(.caption2.monospacedDigit())
