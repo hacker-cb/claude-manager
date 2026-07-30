@@ -109,17 +109,51 @@ extension DesktopSafeStorageProviderTests {
     }
 
     @Test
-    func anEmptyV2BesideAPopulatedV1YieldsTheV1Token() async throws {
+    func anEmptyLiveCacheIsASignOutEvenWhenTheLegacyCacheStillHasEntries() async throws {
         try await withTempDir { dir in
-            // v2 is read first but holds nothing, and the entries are in the legacy key. Neither
-            // presence nor decodability can tell which key is live, so an empty one is not the
-            // answer — it is a reason to read the other. Reporting a signed-in profile as signed
-            // out sends the user to sign in again to no effect; reporting it as unavailable buries
-            // a token that is right there and already decryptable with the key in hand.
+            // The live cache decrypted and holds nothing: Desktop's logout wrote that `{}`, so it is
+            // an answer about this profile's login and not a gap to be filled from somewhere else.
+            //
+            // This case used to yield the legacy token. The rule that did it — an empty live cache is
+            // "a reason to read the other" — rested on the idea that Desktop could empty v2 while
+            // leaving v1's entries in place. The shipping build says otherwise: the two caches have
+            // separate clear functions, and the whole-map clear for the live one has no call site at
+            // all there, while the legacy one is called from several. So the fall-through was
+            // protecting a shape that does not occur, at the cost of the one that does.
             let url = try writeConfig(v2: [:], v1: [inferenceCompositeKey(): ["token": "T"]], into: dir)
-            let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
-            #expect(token.token == "T")
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            #expect(result == .failure(.signedOut))
+        }
+    }
+
+    @Test
+    func aSignedOutProfileIsNotHandedALegacyTokenThatStillHasTimeLeft() async throws {
+        try await withTempDir { dir in
+            // Why the case above is worth a rule of its own rather than a tidier verdict. A legacy
+            // entry whose expiry is still ahead is a *working* credential: handed up, it produces a
+            // successful `/usage` call and real, current, entirely unmarked figures — for a login the
+            // user has signed out of. Nothing downstream can catch it either, because every rule that
+            // strips a signed-out row's figures keys on the sign-out verdict this shape never reached.
+            //
+            // The expired sibling of this test is the same defect wearing a disguise: it surfaces as
+            // `.loginNeeded`, which still serves the account's stored bars beside "sign in to
+            // refresh". Pinned on the expiry being in the *future* precisely because that is the
+            // variant no later guard would have softened.
+            let url = try writeConfig(
+                v2: [:],
+                v1: [inferenceCompositeKey(): [
+                    "token": "STALE-LEGACY-TOKEN",
+                    "expiresAt": Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
+                ]],
+                into: dir
+            )
+            let result = await provider(keychain: StubKeychain(result: .success(password)))
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
+            #expect(result == .failure(.signedOut))
+            if case let .success(token) = result {
+                Issue.record("served a signed-out profile a live token: \(token.token)")
+            }
         }
     }
 

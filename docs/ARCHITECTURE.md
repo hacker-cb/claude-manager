@@ -319,19 +319,36 @@ interactive Refresh. No item at all under the service reads as `.notFound` (Clau
 signed in here) — distinct from an access refusal, so the UI can point at the right fix.
 
 **Which cache may speak for the login.** An upgraded profile carries both `oauth:tokenCacheV2`
-and the legacy `oauth:tokenCache`, and neither presence nor decodability says which holds the
-live token — so both are read and **entries anywhere outrank emptiness**. What does *not*
-generalize is the sign-out: `.signedOut` is a positive claim (it costs the binding its figures,
-detaches it from its account's fan-out, and tells the user to sign in), so only the **live**
-cache — v2 wherever it exists — may make it. An empty legacy blob beside a v2 we could not
-decrypt reports the decrypt failure instead: the cache that would have said whether this profile
-is signed in is precisely the one that defeated us, and the honest reason is also what lets the
-fleet-wide self-heal see a rotated key. The mirror case is why this discriminates rather than
-letting any failure disqualify a sign-out — a live cache that decrypted and is empty *is* a
-logout, and an unreadable legacy leftover must not turn it into a fault. `.noUsableEntry` is
-likewise a verdict about the profile, not about one cache: every populated cache is offered to
-election before it is reported, so a foreign-only v2 cannot bury a usable token sitting decrypted
-in the v1 beside it.
+and the legacy `oauth:tokenCache`, and neither presence nor decodability says which of them holds
+a live token — so both are read, and the whole rule is **the live cache is asked first and its
+answer stands**; a sibling only ever fills a silence. "Live" means v2 wherever it exists, v1 when
+there is no v2.
+
+Two answers count as an answer, and the second was the expensive one to learn:
+
+- **Empty.** Desktop's logout rewrites the cache as an encrypted `{}` rather than removing the
+  key, so an empty live cache *is* the sign-out and the read stops there. Falling through to a
+  populated legacy sibling — which is what the code did until this was traced — handed a
+  signed-out profile a token anyway: still inside its validity it produced real, current,
+  unmarked figures for a login the user had left, and expired it produced "Sign in" with the
+  account's stored bars beside it. Neither could be caught downstream, because every rule that
+  strips a signed-out row's figures keys on a verdict that shape never reached. The
+  justification for that fall-through — "an emptied v2 can sit beside a v1 that still has the
+  entries" — was a conjecture, and reverse-engineering Desktop 1.24012.9 refuted it: the two
+  caches have **separate** clear functions, the legacy one called from several sites and the
+  live one's whole-map clear from none in that build. The shape it was protecting is the
+  opposite one, and that one still works (below).
+- **Entries.** Election runs over every populated cache, so a foreign-only v2 — another OAuth
+  client's entries, or an organization the user has left — cannot bury a usable token sitting
+  decrypted in the v1 beside it. `.noUsableEntry` is therefore a verdict about the *profile*,
+  not about one of its caches.
+
+Silence is the only case a sibling answers: an **absent or undecryptable** live cache said
+nothing, so a populated legacy one is all there is and it speaks. And when nothing readable held
+anything, the verdict is the failure, never a sign-out — `.signedOut` is a positive claim (it
+costs the binding its figures, detaches it from its account's fan-out, and tells the user to sign
+in), and the cache that would have supported it is precisely the one that defeated us. Reporting
+the honest reason is also what lets the fleet-wide self-heal recognise a rotated key.
 
 **Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
 self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,

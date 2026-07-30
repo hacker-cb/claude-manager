@@ -86,10 +86,12 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         interactive: Bool
     ) async -> Result<DesktopToken, TokenProviderError> {
         // Both cache keys, v2 first — and **every** decodable one is kept, not just the first.
-        // Neither presence nor decodability can tell which of them holds the live token: an
-        // upgraded profile can carry a corrupt v2 beside a live v1, or an emptied v2 beside a v1
-        // that still has the entries. Deciding on either alone buried a usable token in the same
-        // file we had already read.
+        // Presence and decodability cannot tell which of them holds the live token: an upgraded
+        // profile can carry a corrupt v2 beside a live v1, and deciding on the first alone buried a
+        // usable token in the same file we had already read.
+        //
+        // What a sibling may *not* do is answer a question the live cache already answered — see the
+        // empty-live-cache guard below.
         let present = [
             root[CoreConstants.desktopTokenCacheKeyV2] as? String,
             root[CoreConstants.desktopTokenCacheKeyV1] as? String
@@ -102,9 +104,10 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // it — and quietly rewrite what the other profiles on that login say about themselves.
         //
         // Each blob keeps its **position**, not just its payload: `present[0]` is the live cache
-        // (v2 wherever it exists), and whether that particular one is among the caches we manage to
-        // read is what decides a sign-out below. Dropping the position — as a plain `compactMap`
-        // did — is what let a legacy sibling answer for a login it knows nothing about.
+        // (v2 wherever it exists, v1 when there is no v2), and what *that* one turns out to hold is
+        // what settles the login below. Dropping the position — as a plain `compactMap` did — is what
+        // let a legacy sibling answer for a login it knows nothing about, in both directions: by
+        // claiming a sign-out the live cache never supported, and by overriding one it did.
         let blobs: [(isLive: Bool, data: Data)] = present.enumerated().compactMap { index, value in
             Data(base64Encoded: value).map { (isLive: index == 0, data: $0) }
         }
@@ -161,54 +164,37 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         // blob — rotated-key self-heal is handled fleet-wide by UsageService (invalidate once only
         // when *every* binding fails), where the whole-fleet view can tell rotation from a single
         // corrupt blob.
-        var caches: [[String: Any]] = []
-        // Whether the **live** cache is one of the ones we read. Only it may claim a sign-out; the
-        // guard below is where that matters.
-        var readLiveCache = false
-        // Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
-        // luckier sibling — see `ProbeResult.record`.
-        let outcome = ProbeResult()
-        // A value that was not base64 at all never reaches the loop below, but it is still a cache
-        // that defeated us — and once the sign-out guard can rest on `outcome`, leaving it
-        // unrecorded is not merely imprecise. `lastFailure` substitutes `.decryptFailed` for
-        // silence, so a half-written `config.json` beside an empty sibling would announce a
-        // **rotated safeStorage key**: the one symptom `UsageService.shouldSelfHeal` acts on, making
-        // the whole fleet drop and re-read its cached key over one truncated file. Recorded first so
-        // a genuine wrong-key symptom from a sibling still outranks it.
-        if blobs.count < present.count { outcome.record(.malformedCache) }
-        for blob in blobs {
-            switch decryptor.decrypt(v10Blob: blob.data, key: key) {
-            case let .success(plaintext):
-                if let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
-                    caches.append(cache)
-                    if blob.isLive { readLiveCache = true }
-                } else {
-                    outcome.record(.malformedCache)
-                }
-            case let .failure(error):
-                outcome.record(.decryptFailed(error))
-            }
-        }
+        let readout = readCaches(blobs, dropped: present.count - blobs.count, key: key)
+        let caches = readout.caches
+        let outcome = readout.outcome
         guard !caches.isEmpty else { return .failure(outcome.lastFailure) }
 
         // An empty map is what Desktop's logout leaves behind — it rewrites the key rather than
-        // removing it. An emptied v2 can still sit beside a v1 holding the entries, so entries
-        // anywhere outrank emptiness and only a profile with none of them is a sign-out candidate.
+        // removing it. So an empty live cache is an **answer**, and it ends the question here rather
+        // than becoming a reason to go looking for a better one.
+        //
+        // Falling through to a populated sibling is what let a profile the user had signed out of
+        // hand us a token anyway: a legacy entry still inside its validity produced real, current,
+        // entirely unmarked figures for a login they had left, and an expired one produced "Sign in"
+        // with the account's stored bars beside it. Either way the binding never reached the
+        // sign-out verdict, so none of the rules that strip a signed-out row's figures could fire.
+        //
+        // The shape that fall-through was written for — "an emptied v2 sitting beside a v1 that
+        // still has the entries" — was a conjecture, and reverse-engineering the shipping build
+        // refuted it: the two caches are cleared by *separate* functions, the legacy one from
+        // several call sites and the live one from none in that build. The real shape is the
+        // opposite, and it still works: an absent or undecryptable live cache said nothing, so a
+        // sibling is all we have and it still speaks, immediately below.
+        if let live = readout.live, live.isEmpty { return .failure(.signedOut) }
+
         let populated = caches.filter { !$0.isEmpty }
-        guard !populated.isEmpty else {
-            // `.signedOut` is a **positive claim about the login**, and only the live cache can make
-            // it: it costs the binding its figures, detaches it from its account's fan-out, and
-            // tells the user to sign in. An empty legacy blob sitting beside a v2 we could not
-            // decrypt supports none of that — the cache that would have said whether this profile
-            // is signed in is precisely the one that defeated us, and a profile that is signed in
-            // gets told to sign in again to no effect. Reporting the failure instead is also what
-            // keeps `UsageService.shouldSelfHeal` able to see a rotated key and recover the fleet.
-            //
-            // The mirror case is why this discriminates rather than treating any failure as
-            // disqualifying: a live cache that decrypted and is empty *is* a logout, and an
-            // unreadable legacy blob left behind by an old rotation must not turn it into a fault.
-            return .failure(readLiveCache ? .signedOut : outcome.lastFailure)
-        }
+        // Nothing readable held anything, and the live cache is not among what we read — otherwise
+        // the guard above would have answered. So this is a failure to report, never a sign-out:
+        // the cache that would have said whether this profile is signed in is precisely the one that
+        // defeated us, and telling a signed-in user to sign in again fixes nothing. Reporting the
+        // reason is also what keeps `UsageService.shouldSelfHeal` able to see a rotated key and
+        // recover the whole fleet.
+        guard !populated.isEmpty else { return .failure(outcome.lastFailure) }
 
         // Every populated cache gets a turn, not just the first. Election can decline one — a cache
         // holding nothing but another client's entries, or an elected entry whose token is an empty
@@ -229,6 +215,54 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             rateLimitTier: entry.value["rateLimitTier"] as? String,
             bindingID: binding.id
         ))
+    }
+
+    /// What one decrypt pass learned about a profile's caches.
+    ///
+    /// `live` is held apart from `caches` rather than reduced to a flag, because what the live cache
+    /// *contains* — not merely that it was readable — is what settles the login.
+    private struct CacheReadout {
+        var caches: [[String: Any]] = []
+        var live: [String: Any]?
+        /// Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
+        /// luckier sibling — see `ProbeResult.record`.
+        let outcome = ProbeResult()
+    }
+
+    /// Decrypt every cache this profile has, not just the one that happened to come first.
+    ///
+    /// No side effects on failure: the shared fleet key must not be invalidated for one binding's
+    /// corrupt blob — rotated-key self-heal is handled fleet-wide by `UsageService` (invalidate once
+    /// only when *every* binding fails), where the whole-fleet view can tell rotation from a single
+    /// corrupt blob.
+    ///
+    /// `dropped` is how many values never got this far because they were not base64. They are still
+    /// caches that defeated us, and leaving them unrecorded is not merely imprecise: `lastFailure`
+    /// substitutes `.decryptFailed` for silence, so a half-written `config.json` beside an empty
+    /// sibling would announce a **rotated safeStorage key** — the one symptom
+    /// `UsageService.shouldSelfHeal` acts on, making the whole fleet drop and re-read its cached key
+    /// over one truncated file. Recorded first so a genuine wrong-key symptom still outranks it.
+    private func readCaches(
+        _ blobs: [(isLive: Bool, data: Data)],
+        dropped: Int,
+        key: Data
+    ) -> CacheReadout {
+        var readout = CacheReadout()
+        if dropped > 0 { readout.outcome.record(.malformedCache) }
+        for blob in blobs {
+            switch decryptor.decrypt(v10Blob: blob.data, key: key) {
+            case let .success(plaintext):
+                if let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
+                    readout.caches.append(cache)
+                    if blob.isLive { readout.live = cache }
+                } else {
+                    readout.outcome.record(.malformedCache)
+                }
+            case let .failure(error):
+                readout.outcome.record(.decryptFailed(error))
+            }
+        }
+        return readout
     }
 
     /// An elected cache entry that has cleared both bars: something matched, and what matched holds
