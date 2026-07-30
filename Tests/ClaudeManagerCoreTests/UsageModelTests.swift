@@ -95,4 +95,18 @@ struct UsageModelTests {
         // the dedup *key* is `uuid` (used explicitly by the resolver), not Set identity.
         #expect(set.count == 2)
     }
+
+    @Test
+    func anIdentityDecodesFromAPayloadWrittenBeforeItHadEveryField() throws {
+        // The type is `public` and `Codable`. Swift's synthesized decoder falls back to a
+        // *declaration* default for a missing key, but a property defaulted only on `init` makes
+        // the whole payload fail to decode — so a field added later would silently break anything
+        // that had already been written. Nothing here encodes an identity today; this is what
+        // keeps that a free choice rather than one that has to be remembered.
+        let old = Data(#"{"uuid":"u1","email":"a@example.com"}"#.utf8)
+        let decoded = try JSONDecoder().decode(AccountIdentity.self, from: old)
+        #expect(decoded.uuid == "u1")
+        #expect(decoded.email == "a@example.com")
+        #expect(decoded.isProvisional == false)
+    }
 }

@@ -5,10 +5,22 @@ import Foundation
 public struct UsageRefreshResult: Sendable, Equatable {
     public var accounts: [AccountUsage]
     public var bindingFailures: [String: TokenProviderError]
+    /// For each binding that could not spend a token this pass, the account its `config.json`
+    /// names — resolved to something nameable, or absent.
+    ///
+    /// Kept out of `accounts` on purpose: these are attributions, not readings. Nothing was
+    /// fetched for them, nothing was stored under them, and no token of theirs may ever be spent
+    /// on the named account's behalf. The fold is the only consumer.
+    public var hintedAccounts: [String: AccountIdentity]
 
-    public init(accounts: [AccountUsage], bindingFailures: [String: TokenProviderError]) {
+    public init(
+        accounts: [AccountUsage],
+        bindingFailures: [String: TokenProviderError],
+        hintedAccounts: [String: AccountIdentity] = [:]
+    ) {
         self.accounts = accounts
         self.bindingFailures = bindingFailures
+        self.hintedAccounts = hintedAccounts
     }
 }
 
@@ -128,7 +140,21 @@ public struct UsageService: Sendable {
             if Task.isCancelled { break }
             await accounts.append(usage(for: account, now: now, interactive: interactive))
         }
-        return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
+        // Last, and deliberately so: every call and every write is behind us, so nothing this
+        // resolves can reach a storage key. It reads `accounts` rather than `settled` because a
+        // late `/profile` inside the loop above can have moved an account onto its real uuid.
+        //
+        // Gated like every other phase: this one reads usage.db, and "off stops all storage"
+        // (README / SECURITY.md) covers reads as much as writes. Breaking out of the account loop
+        // above used to fall straight into it.
+        guard !Task.isCancelled else {
+            return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
+        }
+        return await UsageRefreshResult(
+            accounts: accounts,
+            bindingFailures: resolved.failures,
+            hintedAccounts: hintedAccounts(resolved.hints, among: accounts)
+        )
     }
 
     // MARK: - Per account
@@ -296,6 +322,19 @@ public struct UsageService: Sendable {
     /// failure to be crypto-related meant the always-present default-account binding — permanently
     /// `.noTokenCache` for anyone who only uses launchers — silently disabled recovery for the
     /// whole fleet, leaving a rotated key stuck behind a process-lifetime cache until relaunch.
+    /// A binding that decrypted cleanly — `.signedOut`, `.noUsableEntry` — looks like proof the key
+    /// in hand is right, and it is tempting to let one **veto** recovery so a permanently corrupt
+    /// sibling cannot re-derive the key on every tick. It must not: the proof is only about *that*
+    /// binding, and a profile signed out long ago keeps a cache written under the key of its day,
+    /// so after a rotation it still decrypts while every live profile's rewritten cache does not.
+    /// They abstain — neither evidence of rotation nor a block on it.
+    ///
+    /// Abstaining is not the same as recovering, and this is worth stating plainly: on a machine
+    /// carrying a stale keychain account beside the live one, a signed-out binding's `{}` blob
+    /// decrypts under the *stale* password, so it elects and caches that key for the fleet, and the
+    /// re-resolve after `invalidate()` elects it again. Every live profile then fails and the loop
+    /// repeats each tick. Fixing that means electing the key from the strongest available evidence
+    /// rather than the first binding to answer — a rework of key election, not of this predicate.
     private static func shouldSelfHeal(_ resolved: ResolvedAccounts) -> Bool {
         guard resolved.accounts.isEmpty else { return false }
         return resolved.failures.values.contains(where: isWrongKeyEvidence)
@@ -346,6 +385,7 @@ extension ResolvedAccount {
         // sample and notification is filed under the real account — and two tokens that turn out to
         // be different accounts keep their distinct uuids, never folding in `regroup`.
         updated.identity.uuid = profile.uuid
+        updated.identity.isProvisional = false
         return updated
     }
 }

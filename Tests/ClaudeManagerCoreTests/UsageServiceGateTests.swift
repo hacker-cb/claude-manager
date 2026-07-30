@@ -141,6 +141,75 @@ extension UsageServiceTests {
     }
 
     @Test
+    func anExplicitRefreshDoesNotLiftARateLimitBackoff() async {
+        // The interactive exit is documented for a **terminal** park only, and the test above only
+        // ever exercised that half — its handler 401s every call, so nothing there could have
+        // noticed the rule going the other way. A 429 window belongs to the server: honouring the
+        // button inside it would re-issue a call against an endpoint that had just told us to stop.
+        let http = ScriptedHTTP { url, _ in
+            if url.path.hasSuffix(CoreConstants.usageAPIProfilePath) {
+                return HTTPResponse(status: 200, body: ScriptedHTTP.profileBody("acct"))
+            }
+            return HTTPResponse(status: 429, body: Data(), headers: ["retry-after": "600"])
+        }
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p"))]),
+            http: http,
+            history: history
+        )
+        _ = await service.refresh(bindings: [binding("p")], now: now)
+        #expect(http.usageCallCount == 1)
+
+        let inside = now.addingTimeInterval(300) // past the 60s floor, well inside the 600s window
+        let result = await service.refresh(bindings: [binding("p")], now: inside, interactive: true)
+        #expect(http.usageCallCount == 1)
+        #expect(result.accounts.first?.state == .rateLimited)
+    }
+
+    @Test
+    func anExplicitRefreshDoesNotLiftAnOfflineBackoff() async {
+        // Same rule, the other non-terminal reason. A network that is down is not something the
+        // user's button can argue with, and retrying on every press would strip the exponential
+        // backoff exactly when the machine is least able to pay for it.
+        let http = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
+        let history = UsageHistoryStore(path: ":memory:")
+        let service = makeService(
+            provider: StubProvider(results: ["p": .success(token("p"))]),
+            http: http,
+            history: history
+        )
+        _ = await service.refresh(bindings: [binding("p")], now: now)
+        #expect(http.usageCallCount == 1)
+
+        let inside = now.addingTimeInterval(120) // past the floor, inside the 300s default backoff
+        let result = await service.refresh(bindings: [binding("p")], now: inside, interactive: true)
+        #expect(http.usageCallCount == 1)
+        // No stored sample to serve, so the parked state renders as offline rather than stale.
+        #expect(result.accounts.first?.state == .offline)
+    }
+
+    @Test
+    func selfHealIsDecidedByWhatResolvedNotByFailuresAlone() async {
+        // `shouldSelfHeal` is two clauses, and only one of them had a test: `shouldSelfHealForTest`
+        // hardcodes an empty account list, so every assertion above is about the *evidence* clause.
+        // The other one — that nothing resolved at all — is what stops a single corrupt blob from
+        // invalidating a key that decrypts the rest of the fleet, on every tick, forever.
+        let http = ScriptedHTTP(usage: usageBody)
+        let history = UsageHistoryStore(path: ":memory:")
+        let provider = CountingProvider(results: [
+            "live": .success(token("live")),
+            "rotated": .failure(.decryptFailed(.decryptFailed))
+        ])
+        let service = makeService(provider: provider, http: http, history: history)
+        _ = await service.refresh(bindings: [binding("live"), binding("rotated")], now: now)
+
+        // One read per binding. A self-heal would have invalidated the shared key and resolved the
+        // whole fleet a second time, which is what these counts would show.
+        #expect(provider.reads == ["live": 1, "rotated": 1])
+    }
+
+    @Test
     func aChangedElectedTokenDoesNotDiscardARateLimitBackoff() async {
         // Sibling launchers on one account re-elect a token whenever any of them refreshes its
         // own, with no re-login involved. That must not read as one and drop a 429 window.
@@ -182,5 +251,17 @@ extension UsageServiceTests {
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .decryptFailed(.notV10)]))
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .decryptFailed(.notBlockAligned)]))
         #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .noTokenCache]))
+    }
+
+    @Test
+    func aCleanlyDecryptedSiblingNeitherTriggersNorBlocksSelfHeal() {
+        // `.signedOut` decrypted to valid JSON, so on its own it is no evidence of a rotated key.
+        // But it must not *veto* recovery either, tempting as that is to spare a futile re-derive:
+        // a profile signed out long ago keeps a cache written under the key of its day, so after a
+        // rotation it still decrypts while every live profile's rewritten cache does not — and a
+        // veto there would strand the whole fleet with no usage until relaunch.
+        let rotated = TokenProviderError.decryptFailed(.decryptFailed)
+        #expect(!UsageService.shouldSelfHealForTest(failures: ["a": .signedOut]))
+        #expect(UsageService.shouldSelfHealForTest(failures: ["a": rotated, "b": .signedOut]))
     }
 }

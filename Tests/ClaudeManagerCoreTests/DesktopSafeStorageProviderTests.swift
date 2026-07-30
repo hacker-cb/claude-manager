@@ -3,101 +3,12 @@ import Testing
 @testable import ClaudeManagerCore
 
 struct DesktopSafeStorageProviderTests {
-    // MARK: - Harness
-
-    /// Stub keychain: one account under the service, returning a fixed secret or a chosen
-    /// `KeychainError`. Enumeration always finds the account (the item exists); the read is what
-    /// succeeds or fails — mirroring a present item whose data ACL blocks a background read.
-    private struct StubKeychain: KeychainReading {
-        let result: Result<Data, KeychainError>
-        func accounts(service _: String) throws -> [String] {
-            ["Claude"]
-        }
-
-        func secret(service _: String, account _: String, interactive _: Bool) throws -> Data {
-            try result.get()
-        }
-    }
-
-    /// Stub keychain with a per-account result. `accounts` reports exactly the keys present (an
-    /// empty map → no item under the service), and a read of an absent account throws `.notFound`
-    /// — so a test can model a machine that stores the password under any one account name, both,
-    /// or a name no static list would contain.
-    private struct PerAccountKeychain: KeychainReading {
-        let byAccount: [String: Result<Data, KeychainError>]
-        func accounts(service _: String) throws -> [String] {
-            Array(byAccount.keys)
-        }
-
-        func secret(service _: String, account: String, interactive _: Bool) throws -> Data {
-            try (byAccount[account] ?? .failure(.notFound)).get()
-        }
-    }
-
-    /// Answers differently by the `interactive` flag and records which accounts were read
-    /// interactively — modelling an item locked to a background read but readable once authorized,
-    /// so a test can assert how many Always-Allow dialogs a resolution would raise.
-    private final class InteractiveRecordingKeychain: KeychainReading, @unchecked Sendable {
-        typealias Answer = (background: Result<Data, KeychainError>, interactive: Result<Data, KeychainError>)
-        private let table: [String: Answer]
-        private let lock = NSLock()
-        private var interactiveReadsStore: [String] = []
-        init(_ table: [String: Answer]) {
-            self.table = table
-        }
-
-        var interactiveReads: [String] {
-            lock.withLock { interactiveReadsStore }
-        }
-
-        func accounts(service _: String) throws -> [String] {
-            Array(table.keys)
-        }
-
-        func secret(service _: String, account: String, interactive: Bool) throws -> Data {
-            if interactive { lock.withLock { interactiveReadsStore.append(account) } }
-            guard let entry = table[account] else { throw KeychainError.notFound }
-            return try (interactive ? entry.interactive : entry.background).get()
-        }
-    }
-
-    private let clientID = CoreConstants.oauthClientID
-    private let org = "11111111-2222-3333-4444-555555555555"
-    private let password = Data("kc-password".utf8)
-
-    private func inferenceCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:inference user:file_upload user:profile"
-    }
-
-    private func profileCompositeKey() -> String {
-        "\(clientID):\(org):https://api.anthropic.com:user:profile"
-    }
-
-    /// Write a `config.json` whose `oauth:tokenCacheV2` is the given map, encrypted under the
-    /// key derived from `password` (the same the stub keychain returns) — a faithful blob
-    /// with no real token.
-    private func writeConfig(
-        cache: [String: Any],
-        into dir: URL
-    ) throws -> URL {
-        let key = SafeStorageDecryptor.deriveKey(password: password)!
-        let cacheData = try JSONSerialization.data(withJSONObject: cache)
-        let blob = SafeStorageDecryptorTests.makeV10Blob(cacheData, key: key)
-        let root: [String: Any] = [CoreConstants.desktopTokenCacheKeyV2: blob.base64EncodedString()]
-        let url = dir.appendingPathComponent("config.json")
-        try JSONSerialization.data(withJSONObject: root).write(to: url)
-        return url
-    }
-
-    private func provider(keychain: KeychainReading) -> DesktopSafeStorageProvider {
-        DesktopSafeStorageProvider(keyStore: SafeStorageKeyStore(keychain: keychain))
-    }
-
-    private func withTempDir(_ body: (URL) async throws -> Void) async throws {
-        let dir = try Fixture.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try await body(dir)
-    }
+    // Stored properties only — an extension cannot hold them, and the rest of the scaffolding
+    // (stub keychains, the config writer, the temp-dir wrapper) lives in
+    // `DesktopSafeStorageProviderTestHarness.swift` so this file stays about the behaviour.
+    let clientID = CoreConstants.oauthClientID
+    let org = "11111111-2222-3333-4444-555555555555"
+    let password = Data("kc-password".utf8)
 
     // MARK: - Success
 
@@ -115,7 +26,7 @@ struct DesktopSafeStorageProviderTests {
             ]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
 
             #expect(token.token == "BEARER-inference-token")
             #expect(token.hasInferenceScope)
@@ -137,7 +48,7 @@ struct DesktopSafeStorageProviderTests {
             ]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "INFERENCE")
             #expect(token.hasInferenceScope)
         }
@@ -151,7 +62,7 @@ struct DesktopSafeStorageProviderTests {
             ]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "PROFILE-ONLY")
             #expect(!token.hasInferenceScope)
         }
@@ -163,7 +74,7 @@ struct DesktopSafeStorageProviderTests {
             let cache: [String: Any] = [inferenceCompositeKey(): ["token": "T"]]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.expiresAt == .distantFuture)
             #expect(!token.isExpired())
         }
@@ -183,7 +94,7 @@ struct DesktopSafeStorageProviderTests {
             ]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "VALID")
         }
     }
@@ -197,7 +108,7 @@ struct DesktopSafeStorageProviderTests {
             let cache: [String: Any] = [inferenceCompositeKey(): ["token": "T", "expiresAt": "1785320075857"]]
             let url = try writeConfig(cache: cache, into: dir)
             let token = try await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(abs(token.expiresAt.timeIntervalSince1970 - 1_785_320_075.857) < 0.01)
         }
     }
@@ -215,7 +126,7 @@ struct DesktopSafeStorageProviderTests {
             let url = try writeConfig(cache: cache, into: dir)
             let keychain = PerAccountKeychain(byAccount: ["Claude Key": .success(password)])
             let token = try await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -230,7 +141,7 @@ struct DesktopSafeStorageProviderTests {
             let url = try writeConfig(cache: cache, into: dir)
             let keychain = PerAccountKeychain(byAccount: ["Claude Nightly Key": .success(password)])
             let token = try await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -244,7 +155,7 @@ struct DesktopSafeStorageProviderTests {
             let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
             let keychain = PerAccountKeychain(byAccount: [:])
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.keychainUnavailable(.notFound)))
         }
     }
@@ -261,7 +172,7 @@ struct DesktopSafeStorageProviderTests {
                 "Claude Key": .failure(.notFound)
             ])
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.keychainUnavailable(.interactionNotAllowed)))
         }
     }
@@ -279,7 +190,7 @@ struct DesktopSafeStorageProviderTests {
                 "Claude Key": .success(Data("wrong-readable-password".utf8))
             ])
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             // The point is it's a *decrypt-side* failure (the readable key just doesn't work), not
             // `.keychainUnavailable(.interactionNotAllowed)` from the sibling — which reason of the
             // two (wrong key vs decrypted-but-not-JSON) depends on the stub password is irrelevant.
@@ -302,7 +213,7 @@ struct DesktopSafeStorageProviderTests {
             let url = dir.appendingPathComponent("config.json")
             try JSONSerialization.data(withJSONObject: root).write(to: url)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.decryptFailed(.notV10)))
         }
     }
@@ -325,7 +236,7 @@ struct DesktopSafeStorageProviderTests {
                 "Claude Key": (background: .failure(.interactionNotAllowed), interactive: .success(password))
             ])
             let token = try await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: true).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: true).token.get()
             #expect(token.token == "T")
             #expect(keychain.interactiveReads == ["Claude Key"])
         }
@@ -347,7 +258,7 @@ struct DesktopSafeStorageProviderTests {
                 "Claude Key": .success(password)
             ])
             let token = try await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false).get()
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token.get()
             #expect(token.token == "T")
         }
     }
@@ -375,7 +286,7 @@ extension DesktopSafeStorageProviderTests {
     func missingConfigIsConfigUnreadable() async {
         let url = URL(fileURLWithPath: "/nonexistent/config.json")
         let result = await provider(keychain: StubKeychain(result: .success(password)))
-            .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+            .read(TokenBinding(id: "p", configURL: url), interactive: false).token
         #expect(result == .failure(.configUnreadable))
     }
 
@@ -385,7 +296,7 @@ extension DesktopSafeStorageProviderTests {
             let url = dir.appendingPathComponent("config.json")
             try Data(#"{"locale":"en-US"}"#.utf8).write(to: url)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.noTokenCache))
         }
     }
@@ -396,7 +307,7 @@ extension DesktopSafeStorageProviderTests {
             let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": "T"]], into: dir)
             let keychain = StubKeychain(result: .failure(.interactionNotAllowed))
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.keychainUnavailable(.interactionNotAllowed)))
         }
     }
@@ -411,7 +322,7 @@ extension DesktopSafeStorageProviderTests {
             // point is it never succeeds and never crashes.
             let keychain = StubKeychain(result: .success(Data("wrong-password".utf8)))
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             switch result {
             case .failure(.decryptFailed), .failure(.malformedCache): break
             default: Issue.record("expected decryptFailed or malformedCache, got \(result)")
@@ -426,7 +337,7 @@ extension DesktopSafeStorageProviderTests {
             let key = "someone-else:\(org):https://api.anthropic.com:user:inference"
             let url = try writeConfig(cache: [key: ["token": "T"]], into: dir)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.noUsableEntry))
         }
     }
@@ -436,7 +347,7 @@ extension DesktopSafeStorageProviderTests {
         try await withTempDir { dir in
             let url = try writeConfig(cache: [inferenceCompositeKey(): ["token": ""]], into: dir)
             let result = await provider(keychain: StubKeychain(result: .success(password)))
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: false)
+                .read(TokenBinding(id: "p", configURL: url), interactive: false).token
             #expect(result == .failure(.noUsableEntry))
         }
     }
@@ -456,7 +367,7 @@ extension DesktopSafeStorageProviderTests {
                 )
             ])
             let result = await provider(keychain: keychain)
-                .token(for: TokenBinding(id: "p", configURL: url), interactive: true)
+                .read(TokenBinding(id: "p", configURL: url), interactive: true).token
             #expect(result == .failure(.keychainUnavailable(.unexpected(-128))))
         }
     }

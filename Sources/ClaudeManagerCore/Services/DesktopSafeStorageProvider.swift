@@ -18,59 +18,134 @@ public struct DesktopSafeStorageProvider: TokenProvider {
         self.decryptor = decryptor
     }
 
-    /// Scratch state threaded through `SafeStorageKeyStore.key`'s `accepts` probe: the plaintext the
-    /// accepted candidate produced (so the caller decrypts the blob once, not twice) and the most
-    /// recent rejection reason (so a not-v10 / corrupt blob is reported precisely, not as a generic
-    /// wrong-key `decryptFailed`). `@unchecked Sendable` because the probe closure is `@Sendable`,
+    /// Scratch state threaded through `SafeStorageKeyStore.key`'s `accepts` probe: the most recent
+    /// rejection reason, so a not-v10 / corrupt blob is reported precisely rather than as a generic
+    /// wrong-key `decryptFailed`. `@unchecked Sendable` because the probe closure is `@Sendable`,
     /// but it runs synchronously inside the actor before `key` returns — no concurrent access.
     private final class ProbeResult: @unchecked Sendable {
-        var plaintext: Data?
-        var lastFailure: TokenProviderError = .decryptFailed(.decryptFailed)
+        private var failure: TokenProviderError?
+
+        /// What to report, defaulting to wrong-key when nothing was recorded.
+        var lastFailure: TokenProviderError {
+            failure ?? .decryptFailed(.decryptFailed)
+        }
+
+        /// Record a rejection, **keeping wrong-key evidence once seen**.
+        ///
+        /// `.decryptFailed(.decryptFailed)` is the only symptom that means the key itself is wrong,
+        /// and `UsageService.shouldSelfHeal` keys off exactly it. Now that several blobs are tried
+        /// per candidate, a later one that unpads by luck (~1/256) and isn't JSON would otherwise
+        /// overwrite that evidence with `.malformedCache` — and silently suppress the fleet's
+        /// recovery from a rotated key, which is the one thing this reason is load-bearing for.
+        func record(_ next: TokenProviderError) {
+            if case .decryptFailed(.decryptFailed)? = failure { return }
+            failure = next
+        }
     }
 
-    public func token(
-        for binding: TokenBinding,
-        interactive: Bool
-    ) async -> Result<DesktopToken, TokenProviderError> {
+    public func read(_ binding: TokenBinding, interactive: Bool) async -> BindingReading {
         guard let configData = try? Data(contentsOf: binding.configURL),
               let root = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
         else {
-            return .failure(.configUnreadable)
+            // The one failure that costs us the hint too, and correctly so: there is no file to
+            // have hinted anything.
+            return BindingReading(token: .failure(.configUnreadable))
         }
+        // Lifted **before** the token work, so it survives every early return below it. That is the
+        // whole point of reading the file into a reading rather than a result: five of the six ways
+        // this can fail leave the account perfectly nameable, and used to discard the name anyway.
+        return await BindingReading(
+            token: tokenResult(root: root, binding: binding, interactive: interactive),
+            hintedAccountUUID: accountHint(in: root)
+        )
+    }
 
-        let cacheString = (root[CoreConstants.desktopTokenCacheKeyV2] as? String)
-            ?? (root[CoreConstants.desktopTokenCacheKeyV1] as? String)
-        guard let cacheString, let blob = Data(base64Encoded: cacheString) else {
-            return .failure(.noTokenCache)
+    /// `lastKnownAccountUuid`, if the file carries a UUID.
+    ///
+    /// **Parsed**, not measured. A length test would let 36 arbitrary characters through — and
+    /// costs nothing less than this one — while `UUID(uuidString:)` says exactly what the name
+    /// claims. Rejecting a non-canonical spelling loses nothing either: this value's only use is to
+    /// match `account_profiles.account_uuid`, which comes from `/oauth/profile` in canonical form,
+    /// so anything that fails to parse could never have matched.
+    ///
+    /// It is still a filter rather than a sanitizer, and the distinction is worth keeping straight:
+    /// what actually bounds this value is downstream — `UsageService.hintedAccounts` uses it only
+    /// as a **lookup key** into answers this machine already holds, so the raw string never becomes
+    /// an account uuid, never reaches a file path or a URL, and only ever meets SQLite through a
+    /// bound parameter. Parsing here just drops the obviously-wrong before it costs a lookup.
+    private func accountHint(in root: [String: Any]) -> String? {
+        guard let hint = root[CoreConstants.desktopAccountHintKey] as? String,
+              UUID(uuidString: hint) != nil
+        else { return nil }
+        return hint
+    }
+
+    private func tokenResult(
+        root: [String: Any],
+        binding: TokenBinding,
+        interactive: Bool
+    ) async -> Result<DesktopToken, TokenProviderError> {
+        // Both cache keys, v2 first — and **every** decodable one is kept, not just the first.
+        // Presence and decodability cannot tell which of them holds the live token: an upgraded
+        // profile can carry a corrupt v2 beside a live v1, and deciding on the first alone buried a
+        // usable token in the same file we had already read.
+        //
+        // What a sibling may *not* do is answer a question the live cache already answered — see the
+        // empty-live-cache guard below.
+        let present = [
+            root[CoreConstants.desktopTokenCacheKeyV2] as? String,
+            root[CoreConstants.desktopTokenCacheKeyV1] as? String
+        ].compactMap(\.self)
+        guard !present.isEmpty else { return .failure(.noTokenCache) }
+        // Present but undecodable *everywhere* is a corrupt cache, not an absent login. The two
+        // used to share `.noTokenCache` harmlessly, when it meant no more than "no token here";
+        // it now carries a sign-in remedy and drops the binding out of its account's fan-out, so
+        // coalescing them would tell a user with a damaged config to sign in — which cannot fix
+        // it — and quietly rewrite what the other profiles on that login say about themselves.
+        //
+        // Each blob keeps its **position**, not just its payload: `present[0]` is the live cache
+        // (v2 wherever it exists, v1 when there is no v2), and what *that* one turns out to hold is
+        // what settles the login below. Dropping the position — as a plain `compactMap` did — is what
+        // let a legacy sibling answer for a login it knows nothing about, in both directions: by
+        // claiming a sign-out the live cache never supported, and by overriding one it did.
+        let blobs: [(isLive: Bool, data: Data)] = present.enumerated().compactMap { index, value in
+            Data(base64Encoded: value).map { (isLive: index == 0, data: $0) }
         }
+        guard !blobs.isEmpty else { return .failure(.malformedCache) }
 
-        // Resolve the safeStorage key by which keychain account's password actually decrypts this
-        // blob — the account name under the service varies by Claude Desktop version (`Claude` vs
+        // Resolve the safeStorage key by which keychain account's password actually decrypts these
+        // blobs — the account name under the service varies by Claude Desktop version (`Claude` vs
         // `Claude Key`), and a stale item can sit beside the live one, so the store enumerates them
         // and this probe picks the live one. A cached key is returned as-is; only the first
-        // resolution runs the probe. The probe records the plaintext it produced (reused below so
-        // the blob is decrypted once, not twice) and, on rejection, the precise reason.
+        // resolution runs the probe, which records the precise reason on rejection.
         let probe = ProbeResult()
         let key: Data
         do {
             key = try await keyStore.key(interactive: interactive) { [decryptor] candidate in
-                switch decryptor.decrypt(v10Blob: blob, key: candidate) {
-                case let .success(plaintext):
-                    // Accept only if it decrypts to a JSON *object* — the token cache's shape — not
-                    // merely on PKCS7 success. A wrong key (a stale account tried before the live
-                    // one) unpads cleanly ~1/256 of the time on garbage; accepting on decrypt alone
-                    // would cache that garbage key and never reach the live account. Requiring valid
-                    // JSON makes a false accept astronomically unlikely.
-                    guard (try? JSONSerialization.jsonObject(with: plaintext)) is [String: Any] else {
-                        probe.lastFailure = .malformedCache
-                        return false
+                // **Any** blob proving the candidate is enough. Judging the key by the first one
+                // alone meant a corrupt v2 condemned the whole binding: every keychain account was
+                // rejected and the failure reported, while a perfectly good v1 sat unread in the
+                // same file — the very thing reading both keys is supposed to prevent.
+                for blob in blobs {
+                    switch decryptor.decrypt(v10Blob: blob.data, key: candidate) {
+                    case let .success(plaintext):
+                        // Accept only if it decrypts to a JSON *object* — the token cache's shape —
+                        // not merely on PKCS7 success. A wrong key (a stale account tried before the
+                        // live one) unpads cleanly ~1/256 of the time on garbage; accepting on
+                        // decrypt alone would cache that garbage key and never reach the live
+                        // account. Requiring valid JSON makes a false accept astronomically unlikely.
+                        guard (try? JSONSerialization.jsonObject(with: plaintext)) is [String: Any]
+                        else {
+                            probe.record(.malformedCache)
+                            continue
+                        }
+                        return true
+                    case let .failure(error):
+                        probe.record(.decryptFailed(error))
+                        continue
                     }
-                    probe.plaintext = plaintext
-                    return true
-                case let .failure(error):
-                    probe.lastFailure = .decryptFailed(error)
-                    return false
                 }
+                return false
             }
         } catch let error as KeychainError {
             return .failure(.keychainUnavailable(error))
@@ -84,41 +159,132 @@ public struct DesktopSafeStorageProvider: TokenProvider {
             return .failure(.malformedCache)
         }
 
-        // Reuse the plaintext the probe already produced on a fresh resolution; only the cached-key
-        // path (the probe didn't run this call) decrypts here. No side effects on failure: the
-        // shared fleet key must not be invalidated for one binding's corrupt blob — rotated-key
-        // self-heal is handled fleet-wide by UsageService (invalidate once only when *every* binding
-        // fails), where the whole-fleet view can tell rotation from a single corrupt blob.
-        let plaintext: Data
-        if let captured = probe.plaintext {
-            plaintext = captured
-        } else {
-            switch decryptor.decrypt(v10Blob: blob, key: key) {
-            case let .success(data): plaintext = data
-            case let .failure(error): return .failure(.decryptFailed(error))
-            }
-        }
+        // Read every cache this profile has, not just the one that happened to come first. No side
+        // effects on failure: the shared fleet key must not be invalidated for one binding's corrupt
+        // blob — rotated-key self-heal is handled fleet-wide by UsageService (invalidate once only
+        // when *every* binding fails), where the whole-fleet view can tell rotation from a single
+        // corrupt blob.
+        let readout = readCaches(blobs, dropped: present.count - blobs.count, key: key)
+        let caches = readout.caches
+        let outcome = readout.outcome
+        guard !caches.isEmpty else { return .failure(outcome.lastFailure) }
 
-        guard let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else {
-            return .failure(.malformedCache)
-        }
+        // An empty map is what Desktop's logout leaves behind — it rewrites the key rather than
+        // removing it. So an empty live cache is an **answer**, and it ends the question here rather
+        // than becoming a reason to go looking for a better one.
+        //
+        // Falling through to a populated sibling is what let a profile the user had signed out of
+        // hand us a token anyway: a legacy entry still inside its validity produced real, current,
+        // entirely unmarked figures for a login they had left, and an expired one produced "Sign in"
+        // with the account's stored bars beside it. Either way the binding never reached the
+        // sign-out verdict, so none of the rules that strip a signed-out row's figures could fire.
+        //
+        // The shape that fall-through was written for — "an emptied v2 sitting beside a v1 that
+        // still has the entries" — was a conjecture, and reverse-engineering the shipping build
+        // refuted it: the two caches are cleared by *separate* functions, the legacy one from
+        // several call sites and the live one from none in that build. The real shape is the
+        // opposite, and it still works: an absent or undecryptable live cache said nothing, so a
+        // sibling is all we have and it still speaks, immediately below.
+        if let live = readout.live, live.isEmpty { return .failure(.signedOut) }
 
-        guard let (compositeKey, value) = pickEntry(from: cache) else {
-            return .failure(.noUsableEntry)
-        }
-        guard let token = value["token"] as? String, !token.isEmpty else {
+        let populated = caches.filter { !$0.isEmpty }
+        // Nothing readable held anything, and the live cache is not among what we read — otherwise
+        // the guard above would have answered. So this is a failure to report, never a sign-out:
+        // the cache that would have said whether this profile is signed in is precisely the one that
+        // defeated us, and telling a signed-in user to sign in again fixes nothing. Reporting the
+        // reason is also what keeps `UsageService.shouldSelfHeal` able to see a rotated key and
+        // recover the whole fleet.
+        guard !populated.isEmpty else { return .failure(outcome.lastFailure) }
+
+        // Every populated cache gets a turn, not just the first. Election can decline one — a cache
+        // holding nothing but another client's entries, or an elected entry whose token is an empty
+        // string — and a decline used to end the read then and there, with a usable token sitting
+        // decrypted in the sibling this same loop had already read into memory. `.noUsableEntry`
+        // keeps its meaning of "entries exist, none of them ours", which is why it is not a sign-in
+        // prompt: it now says so about *all* of this profile's caches rather than one of them.
+        guard let entry = populated.compactMap({ usableEntry(in: $0) }).first else {
             return .failure(.noUsableEntry)
         }
 
         return .success(DesktopToken(
-            token: token,
-            expiresAt: expiry(from: value["expiresAt"]),
-            scopes: scopes(fromComposite: compositeKey),
-            organizationUUID: organizationUUID(fromComposite: compositeKey),
-            subscriptionType: value["subscriptionType"] as? String,
-            rateLimitTier: value["rateLimitTier"] as? String,
+            token: entry.token,
+            expiresAt: expiry(from: entry.value["expiresAt"]),
+            scopes: scopes(fromComposite: entry.composite),
+            organizationUUID: organizationUUID(fromComposite: entry.composite),
+            subscriptionType: entry.value["subscriptionType"] as? String,
+            rateLimitTier: entry.value["rateLimitTier"] as? String,
             bindingID: binding.id
         ))
+    }
+
+    /// What one decrypt pass learned about a profile's caches.
+    ///
+    /// `live` is held apart from `caches` rather than reduced to a flag, because what the live cache
+    /// *contains* — not merely that it was readable — is what settles the login.
+    private struct CacheReadout {
+        var caches: [[String: Any]] = []
+        var live: [String: Any]?
+        /// Same discipline as the probe: wrong-key evidence, once seen, is not overwritten by a
+        /// luckier sibling — see `ProbeResult.record`.
+        let outcome = ProbeResult()
+    }
+
+    /// Decrypt every cache this profile has, not just the one that happened to come first.
+    ///
+    /// No side effects on failure: the shared fleet key must not be invalidated for one binding's
+    /// corrupt blob — rotated-key self-heal is handled fleet-wide by `UsageService` (invalidate once
+    /// only when *every* binding fails), where the whole-fleet view can tell rotation from a single
+    /// corrupt blob.
+    ///
+    /// `dropped` is how many values never got this far because they were not base64. They are still
+    /// caches that defeated us, and leaving them unrecorded is not merely imprecise: `lastFailure`
+    /// substitutes `.decryptFailed` for silence, so a half-written `config.json` beside an empty
+    /// sibling would announce a **rotated safeStorage key** — the one symptom
+    /// `UsageService.shouldSelfHeal` acts on, making the whole fleet drop and re-read its cached key
+    /// over one truncated file. Recorded first so a genuine wrong-key symptom still outranks it.
+    private func readCaches(
+        _ blobs: [(isLive: Bool, data: Data)],
+        dropped: Int,
+        key: Data
+    ) -> CacheReadout {
+        var readout = CacheReadout()
+        if dropped > 0 { readout.outcome.record(.malformedCache) }
+        for blob in blobs {
+            switch decryptor.decrypt(v10Blob: blob.data, key: key) {
+            case let .success(plaintext):
+                if let cache = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
+                    readout.caches.append(cache)
+                    if blob.isLive { readout.live = cache }
+                } else {
+                    readout.outcome.record(.malformedCache)
+                }
+            case let .failure(error):
+                readout.outcome.record(.decryptFailed(error))
+            }
+        }
+        return readout
+    }
+
+    /// An elected cache entry that has cleared both bars: something matched, and what matched holds
+    /// a token. A type rather than a tuple because the three parts travel together out of
+    /// `usableEntry(in:)` and each is read by name at the construction site below.
+    private struct ElectedEntry {
+        let composite: String
+        let value: [String: Any]
+        let token: String
+    }
+
+    /// The entry to use out of one decrypted cache — whatever `pickEntry` elects, and only when it
+    /// actually carries a token.
+    ///
+    /// Nil means "nothing usable in *this* cache", which is a reason to look at the next one rather
+    /// than a verdict about the profile. Folding the empty-token check in here is what makes that
+    /// true of both ways a cache can come up short.
+    private func usableEntry(in cache: [String: Any]) -> ElectedEntry? {
+        guard let (composite, value) = pickEntry(from: cache),
+              let token = value["token"] as? String, !token.isEmpty
+        else { return nil }
+        return ElectedEntry(composite: composite, value: value, token: token)
     }
 
     // MARK: - tokenCacheV2 map interpretation

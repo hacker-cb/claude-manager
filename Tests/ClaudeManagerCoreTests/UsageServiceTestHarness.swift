@@ -7,13 +7,18 @@ import Testing
 extension UsageServiceTests {
     // MARK: - Harness
 
+    /// Canned readings by binding id. `configURL` is ignored entirely — deliberately, since the
+    /// real provider derives both the token and the hint from that file, and a test that needs the
+    /// two to come from one config must build `DesktopSafeStorageProvider` instead.
     struct StubProvider: TokenProvider {
         let results: [String: Result<DesktopToken, TokenProviderError>]
-        func token(
-            for binding: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
-            results[binding.id] ?? .failure(.configUnreadable)
+        var hints: [String: String] = [:]
+
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            BindingReading(
+                token: results[binding.id] ?? .failure(.configUnreadable),
+                hintedAccountUUID: hints[binding.id]
+            )
         }
     }
 
@@ -75,6 +80,67 @@ extension UsageServiceTests {
             timeout _: TimeInterval
         ) async throws -> HTTPResponse {
             try handler(url, record(url.path))
+        }
+    }
+
+    /// Cancels the task it runs on the moment a named binding is read, then answers normally.
+    ///
+    /// The deterministic way to test the master switch: `refresh` is structured, so the provider
+    /// runs on the very task the caller awaits, and `withUnsafeCurrentTask` from in here cancels
+    /// exactly that task at exactly the phase this stub sits in. A timer or a sleep would be
+    /// racing the same code it is trying to observe.
+    final class CancellingProvider: TokenProvider, @unchecked Sendable {
+        private let cancelOn: String
+        private let results: [String: Result<DesktopToken, TokenProviderError>]
+        private let lock = NSLock()
+        private var readsStore: [String] = []
+
+        init(cancelOn: String, results: [String: Result<DesktopToken, TokenProviderError>]) {
+            self.cancelOn = cancelOn
+            self.results = results
+        }
+
+        /// Which bindings were read, in order. The observable that actually depends on
+        /// `AccountResolver`'s in-loop guard: without it the loop keeps reading the rest of the
+        /// fleet's keychain entries, and every *other* signal a cancellation test could check is
+        /// produced identically by the next check downstream.
+        var reads: [String] {
+            lock.withLock { readsStore }
+        }
+
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            lock.withLock { readsStore.append(binding.id) }
+            if binding.id == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
+            return BindingReading(
+                token: results[binding.id] ?? .failure(.configUnreadable)
+            )
+        }
+    }
+
+    /// Counts how many times each binding was read — the only way to observe a fleet-wide key
+    /// self-heal from outside, since recovery is "invalidate the key and resolve everything a
+    /// second time" and leaves no other trace when the retry fails too.
+    final class CountingProvider: TokenProvider, @unchecked Sendable {
+        private let results: [String: Result<DesktopToken, TokenProviderError>]
+        private let hints: [String: String]
+        private let lock = NSLock()
+        private var counts: [String: Int] = [:]
+
+        init(results: [String: Result<DesktopToken, TokenProviderError>], hints: [String: String] = [:]) {
+            self.results = results
+            self.hints = hints
+        }
+
+        var reads: [String: Int] {
+            lock.withLock { counts }
+        }
+
+        func read(_ binding: TokenBinding, interactive _: Bool) async -> BindingReading {
+            lock.withLock { counts[binding.id, default: 0] += 1 }
+            return BindingReading(
+                token: results[binding.id] ?? .failure(.configUnreadable),
+                hintedAccountUUID: hints[binding.id]
+            )
         }
     }
 

@@ -32,7 +32,13 @@ extension AppModel {
         guard !already else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "\(accountDisplayName(for: account)) — \(warning.limitLabel) limit"
+        // Named from the **published** entry, not this pass's raw account. `result.accounts` carries
+        // only the bindings that resolved, so a login whose second profile merely could not be read
+        // looks like a one-profile account here — and the title reverts to that profile's name for a
+        // quota both of them draw on, while the panes beside it say "shared with 2 profiles". The
+        // fold is where membership is settled; this reads its answer.
+        let published = account.bindingIDs.compactMap { usageByBinding[$0] }.first ?? account
+        content.title = "\(accountDisplayName(for: published)) — \(warning.limitLabel) limit"
         var body = "You've used \(UsageFormat.percent(warning.utilization)) of your \(warning.limitLabel) limit"
         if let resets = UsageFormat.resets(warning.resetsAt, now: now) { body += " · \(resets)" }
         content.body = body
@@ -59,15 +65,19 @@ extension AppModel {
         )
     }
 
-    /// A human name for the row: the default profile, else a bound profile's display name, else
-    /// the Claude login's own label (email / display name), falling back to "Claude account".
+    /// What to call an account in a notification title or the Doctor inspector. The rule lives in
+    /// core (`UsagePresentation.accountName`) and is tested there; this supplies the one thing core
+    /// cannot know — what each binding is called on screen.
     func accountDisplayName(for account: AccountUsage) -> String {
-        if account.bindingIDs.contains(TokenBinding.defaultID) { return "Default profile" }
-        for id in account.bindingIDs {
-            if let managed = profiles.first(where: { $0.profile.id == id }) {
-                return managed.profile.displayName
-            }
+        UsagePresentation.accountName(account, profileNames: profileNames)
+    }
+
+    /// Binding id → the name the UI shows for it.
+    private var profileNames: [String: String] {
+        var names = [TokenBinding.defaultID: "Default profile"]
+        for managed in profiles {
+            names[managed.profile.id] = managed.profile.displayName
         }
-        return account.identity.accountLabel ?? "Claude account"
+        return names
     }
 }

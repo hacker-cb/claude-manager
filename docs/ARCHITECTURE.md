@@ -187,15 +187,78 @@ state; an account is only "login needed" if **every** binding fails.
 
 **Neither the org nor a config hint is an account key.** A Team/Enterprise org holds many
 accounts, so keying on `organizationUUID` would collapse two profiles signed in as different
-users. The config's `lastKnownAccountUuid` is no safer — it can lag the actual token (a
-re-login, a copied dir), so merging on it would file one account's usage under another; it is
-deliberately not read at all. So distinct tokens are **never** merged locally — each stands
-alone as a **provisional** account keyed by its token fingerprint — and `UsageService` settles
-the real account with a `/profile` call. The fingerprint is a stable placeholder (a changed
-token changes it), so it can't flip mid-life the way a hint could; and the moment `/profile`
-first resolves the real uuid, `UsageHistoryStore.reassignAccount` moves the throttle window,
-samples, and notification ledger off the fingerprint onto it — so the key promotion orphans
-nothing.
+users. The config's `lastKnownAccountUuid` is no safer as a *key* — it can lag the actual token
+(a re-login, a copied dir), so merging on it would file one account's usage under another. So
+distinct tokens are **never** merged locally — each stands alone as a **provisional** account
+keyed by its token fingerprint — and `UsageService` settles the real account with a `/profile`
+call. The fingerprint is a stable placeholder (a changed token changes it), so it can't flip
+mid-life the way a hint could; and the moment `/profile` first resolves the real uuid,
+`UsageHistoryStore.reassignAccount` moves the throttle window, samples, and notification ledger
+off the fingerprint onto it — so the key promotion orphans nothing.
+
+**A profile stays on its login even when we can't read it.** That is a *display* question, and
+it has a different answer from the keying one above. A binding belonged to its account only
+while it could itself present that account's token, so one failed decrypt did not make a profile
+"temporarily unreadable" — it removed it from the login entirely, name and membership included.
+Three defects came out of that: a profile with an expired, never-identified token stood alone as
+a fingerprint-keyed phantom showing an orange "Sign in" beside a sibling on the same login
+showing real figures; a cold start could not name a signed-out profile at all (the "was ps@…"
+clause needed a snapshot carried within the same process, and the map is empty at launch); and a
+profile we merely could not read went silent on every surface.
+
+The answer is the same `lastKnownAccountUuid`, under a boundary that makes it safe:
+
+> **The hint decides how a profile is displayed, never where usage is filed.**
+
+`DesktopSafeStorageProvider` returns a `BindingReading` — the token arm plus the plaintext hint,
+lifted out immediately after the JSON parse so it survives every way the token work below it can
+fail. `AccountResolver` carries it in a separate `ResolvedAccounts.hints` channel, collected only
+for bindings that cannot spend a token (none readable, or the readable one expired), so a healthy
+fleet pays nothing; grouping and election never see it. `UsageService.merge` is the only consumer,
+and it runs after every call and every write — so nothing a hint resolves can reach a storage key.
+Three shapes, told apart by the failure that brought them: an **expired** token takes the name and
+the membership but keeps "Sign in" (its own credential is dead, and its row is the only place that
+can say so); a profile **signed in but unreadable** takes the account's current figures from
+whichever sibling resolved, while still naming its own blocker; a **signed-out** one takes the name
+and nothing else — no figures, and no place in its former sibling's "shared with N profiles".
+
+A binding's published state has **two halves**, and both are folded, through one rule. Beside the
+per-binding account map the app publishes a per-binding *failure* map, which is the only voice a
+binding has when nothing could be resolved or carried for it — a profile signed out before launch
+on a machine whose `account_profiles` cannot name its login. Only a sign-out may speak without an
+account (`UsagePresentation.speaksWithoutAccount`), so a single poll that read `config.json` mid-
+rewrite used to replace `.signedOut` with `.configUnreadable` and take the row's account line, cell
+and menu suffix with it. `UsageService.mergeFailures` folds that map exactly as `merge` folds the
+other, sharing the stickiness rule rather than paraphrasing it: a binding that had already lost its
+login does not regain one because the next pass could not read the file that would say so. The rule
+stays narrow to `.configUnreadable` — every other failure names a real, current blocker, and a
+keychain refusal held behind a stale "signed out" would never be shown at all.
+
+Four bounds, each with a test. A hint may only point at an account something else already
+knows — this pass's results, else `account_profiles` via `UsageHistoryStore.profile(accountUUID:)`
+— so a stale hint can misattribute a row to a real login and can never invent one. A hint never
+overrules `/profile`: only a still-**provisional** identity may take a name from a config. Donors
+are read from the pass's own accounts, never from the map being built, so attachments cannot chain.
+And nothing is written — no `/usage`, no `/profile`, no sample, no throttle row — or the next real
+fetch for that login would be gated by a floor it never earned.
+
+The interaction worth naming: `shouldSelfHeal` guards on *nothing having resolved*. Had hints
+minted accounts, a machine whose safeStorage key had rotated would present a full account list
+beside an empty token set and lose fleet-wide key recovery **silently**. The separate channel is
+what keeps that guard true.
+
+Residual risks, accepted deliberately: a hint that lags a re-login can show the previous login's
+figures on a row whose token happens to be unreadable at that moment (display only, self-corrects
+on the first readable pass); `account_profiles` is promoted from a cache to the local account
+directory and is not pruned, so a login the user has left keeps naming its former profile; and a
+`usageSchemaVersion` bump drops that directory, after which only a token that gets identified can
+put a row back. For a login with a readable profile that is the next pass — but for one whose only
+profile is signed out there is no token to identify, so **that account stays unnameable until the
+user signs in again**, not for a pass. Two other plaintext signals were examined and rejected:
+`dxt:allowlist*:<orgUuid>` keys **accumulate historically** (a profile carries one per org it has
+ever touched, so they name no current account), and `windowSizeWasSignedIn` could only ever
+*demote* a live profile out of its login on a stale `false`, which is strictly worse than the
+status quo.
 
 **N launchers, one login — still one account.** Wanting several windows on one login is a
 normal reason to make several launchers; each carries its own token, so they resolve as
@@ -254,6 +317,38 @@ keychain access — and one "Always Allow" prompt. Background polls read with
 keychain fails fast (serve stale) instead of prompting mid-poll; the prompt is deferred to an
 interactive Refresh. No item at all under the service reads as `.notFound` (Claude never
 signed in here) — distinct from an access refusal, so the UI can point at the right fix.
+
+**Which cache may speak for the login.** An upgraded profile carries both `oauth:tokenCacheV2`
+and the legacy `oauth:tokenCache`, and neither presence nor decodability says which of them holds
+a live token — so both are read, and the whole rule is **the live cache is asked first and its
+answer stands**; a sibling only ever fills a silence. "Live" means v2 wherever it exists, v1 when
+there is no v2.
+
+Two answers count as an answer, and the second was the expensive one to learn:
+
+- **Empty.** Desktop's logout rewrites the cache as an encrypted `{}` rather than removing the
+  key, so an empty live cache *is* the sign-out and the read stops there. Falling through to a
+  populated legacy sibling — which is what the code did until this was traced — handed a
+  signed-out profile a token anyway: still inside its validity it produced real, current,
+  unmarked figures for a login the user had left, and expired it produced "Sign in" with the
+  account's stored bars beside it. Neither could be caught downstream, because every rule that
+  strips a signed-out row's figures keys on a verdict that shape never reached. The
+  justification for that fall-through — "an emptied v2 can sit beside a v1 that still has the
+  entries" — was a conjecture, and reverse-engineering Desktop 1.24012.9 refuted it: the two
+  caches have **separate** clear functions, the legacy one called from several sites and the
+  live one's whole-map clear from none in that build. The shape it was protecting is the
+  opposite one, and that one still works (below).
+- **Entries.** Election runs over every populated cache, so a foreign-only v2 — another OAuth
+  client's entries, or an organization the user has left — cannot bury a usable token sitting
+  decrypted in the v1 beside it. `.noUsableEntry` is therefore a verdict about the *profile*,
+  not about one of its caches.
+
+Silence is the only case a sibling answers: an **absent or undecryptable** live cache said
+nothing, so a populated legacy one is all there is and it speaks. And when nothing readable held
+anything, the verdict is the failure, never a sign-out — `.signedOut` is a positive claim (it
+costs the binding its figures, detaches it from its account's fan-out, and tells the user to sign
+in), and the cache that would have supported it is precisely the one that defeated us. Reporting
+the honest reason is also what lets the fleet-wide self-heal recognise a rotated key.
 
 **Parsing is forward-compatible by design.** The `/usage` `limits[]` array is
 self-describing (`kind`, `group`, `percent`, `resets_at`, `scope`, `severity`,

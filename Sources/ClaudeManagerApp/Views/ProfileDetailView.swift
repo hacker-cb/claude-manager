@@ -60,10 +60,13 @@ struct ProfileDetailView: View {
             BadgePreview(label: profile.label, color: profile.color, size: 88)
             VStack(alignment: .leading, spacing: 6) {
                 Text(profile.displayName).font(.title2).bold()
-                // The Anthropic login this launcher holds. Identity, not statistics — so it sits
-                // with the name rather than inside the Usage section, where it read as a detail
-                // of the numbers and was easy to miss.
-                if let account = model.usage(forBinding: profile.id)?.identity.accountLabel {
+                // The Anthropic login this launcher holds — or that it holds none. Identity, not
+                // statistics, so it sits with the name rather than inside the Usage section, where
+                // it read as a detail of the numbers and was easy to miss.
+                if let account = UsagePresentation.accountLine(
+                    usage: model.usage(forBinding: profile.id),
+                    failure: model.usageFailure(forBinding: profile.id)
+                ) {
                     Text(account).font(.callout).foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }

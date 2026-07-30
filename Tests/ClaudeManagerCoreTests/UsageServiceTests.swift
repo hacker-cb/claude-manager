@@ -219,12 +219,12 @@ struct UsageServiceTests {
             self.healed = healed
         }
 
-        func token(
-            for _: TokenBinding,
-            interactive _: Bool
-        ) async -> Result<DesktopToken, TokenProviderError> {
+        func read(_: TokenBinding, interactive _: Bool) async -> BindingReading {
             let n = lock.withLock { calls += 1; return calls }
-            return n <= firstPassCount ? .failure(.decryptFailed(.decryptFailed)) : .success(healed)
+            let token: Result<DesktopToken, TokenProviderError> = n <= firstPassCount
+                ? .failure(.decryptFailed(.decryptFailed))
+                : .success(healed)
+            return BindingReading(token: token)
         }
     }
 
@@ -264,5 +264,25 @@ struct UsageServiceTests {
         let result = await service.refresh(bindings: [binding("p")], now: now)
         #expect(result.accounts.isEmpty)
         #expect(result.bindingFailures["p"] == .malformedCache)
+    }
+
+    @Test
+    func aSignedOutFleetCallsNothingAndStoresNothing() async {
+        let history = UsageHistoryStore(path: ":memory:")
+        let http = ScriptedHTTP(usage: usageBody)
+        // Every profile signed out: there is no token to spend a call on, so the pass must be free
+        // — not even the `/profile` identity call, which would 401 on a login that no longer exists.
+        let provider = StubProvider(results: [
+            "p": .failure(.signedOut),
+            "q": .failure(.signedOut)
+        ])
+        let service = makeService(provider: provider, http: http, history: history)
+        let result = await service.refresh(bindings: [binding("p"), binding("q")], now: now)
+
+        #expect(result.accounts.isEmpty)
+        #expect(result.bindingFailures["p"] == .signedOut)
+        #expect(result.bindingFailures["q"] == .signedOut)
+        #expect(http.callCount == 0)
+        #expect(await history.latest(accountUUID: "acct") == nil)
     }
 }

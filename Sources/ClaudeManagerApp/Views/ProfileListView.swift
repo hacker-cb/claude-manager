@@ -52,14 +52,21 @@ struct ProfileEntryRow: View {
 /// else; a column has to agree on the edge the eye reads from.
 struct SidebarProfileRow<Leading: View>: View {
     let name: String
-    /// The Anthropic login — what actually says *which account* a row is. Absent until the first
-    /// usage pass learns it.
-    let account: String?
     let isRunning: Bool
     let usage: AccountUsage?
+    /// Why this binding's token couldn't be read. Needed alongside `usage` because a profile that
+    /// was already signed out when the app launched never produces an account at all — see
+    /// `UsageAccessory.failure`.
+    let failure: TokenProviderError?
     /// Empty for the default profile, which has no launcher that could be broken or out of date.
     let attentions: [LauncherAttention]
     @ViewBuilder let leading: Leading
+
+    /// The Anthropic login this row holds — or, where it holds none, that fact. Decided in core and
+    /// shared with both detail-pane headers, which ask the same question of the same binding.
+    private var subtitle: String? {
+        UsagePresentation.accountLine(usage: usage, failure: failure)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -82,8 +89,8 @@ struct SidebarProfileRow<Leading: View>: View {
                     Text(name).font(.body).lineLimit(1)
                     ForEach(attentions, id: \.self) { AttentionGlyph(attention: $0) }
                 }
-                if let account {
-                    Text(account)
+                if let subtitle {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -91,7 +98,7 @@ struct SidebarProfileRow<Leading: View>: View {
                 }
             }
             Spacer(minLength: 6)
-            UsageAccessory(usage: usage)
+            UsageAccessory(usage: usage, failure: failure)
         }
         // A row with no login yet is exactly as tall as one that has it: `accountLabel` arrives
         // asynchronously on the first usage pass and disappears wholesale when tracking is turned
@@ -163,13 +170,9 @@ struct PrimaryProfileRow: View {
     var body: some View {
         SidebarProfileRow(
             name: "Default profile",
-            // The Anthropic login, once usage has learned it, and nothing else. This line used to
-            // fall back to a sentence about the row ("Your primary Claude — no launcher"), which
-            // made the default the only row carrying a subtitle when tracking is off — reading as
-            // an inconsistency rather than as help. The detail pane still explains the row.
-            account: usage?.identity.accountLabel,
             isRunning: status.isRunning,
             usage: usage,
+            failure: model.usageFailure(forBinding: TokenBinding.defaultID),
             attentions: []
         ) {
             // Sized to the clone rows' BadgeChip (22pt) so every row's leading mark lines up.
@@ -197,15 +200,15 @@ struct ProfileRow: View {
 
     var body: some View {
         SidebarProfileRow(
-            name: managed.profile.displayName,
             // The login this launcher holds, not where its data lives: launcher names are whatever
             // the user typed, so the email is the thing that says which account this row is. The
             // profile directory used to stand in when no login was known, but a path answers a
             // different question than the neighbouring rows' subtitles do — it lives in the detail
             // pane and the context menu, which is where you go when you actually want it.
-            account: model.usage(forBinding: managed.profile.id)?.identity.accountLabel,
+            name: managed.profile.displayName,
             isRunning: managed.isRunning,
             usage: model.usage(forBinding: managed.profile.id),
+            failure: model.usageFailure(forBinding: managed.profile.id),
             attentions: managed.attentions
         ) {
             BadgeChip(
