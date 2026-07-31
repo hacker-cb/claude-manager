@@ -32,9 +32,12 @@ exists — e.g. `feat/42-custom-hex-badges`, `docs/readme-overhaul`.
 - Standalone PRs **squash-merge** into `dev`; `dev` integrates into `master` by merge
   commit at release time.
 
-Large features spread across several PRs use a long-lived `umbrella/<issue>-<slug>`
-branch as the single integration point — see
-[`.claude/rules/git-branches.md`](.claude/rules/git-branches.md) for the full policy.
+A feature spread across several PRs gets its own shared branch as the single
+integration point: each PR targets that branch and squash-merges into it, and once
+the feature is whole the branch lands on `dev` **by merge commit**, keeping one
+commit per PR. Cut each PR from the shared branch rather than from a sibling, and
+bring `dev` into it by merge — it is published, and a rebase rewrites what the
+open PRs are based on.
 
 ## Reporting bugs &amp; ideas
 

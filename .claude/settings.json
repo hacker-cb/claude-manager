@@ -1,0 +1,14 @@
+{
+  "enabledPlugins": {
+    "github@claude-plugins-official": true,
+    "hcb-dev@hacker-cb-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "hacker-cb-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "hacker-cb/claude-code-plugins"
+      }
+    }
+  }
+}

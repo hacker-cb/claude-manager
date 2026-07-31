@@ -1,15 +1,15 @@
 name: CI
 
-# Gate every PR regardless of base (a slice PR may target an umbrella, not the
-# trunk), and every push to the long-lived branches. Feature branches are already
-# gated by their PR's synchronize event, so they need no push trigger.
+# Gate every PR regardless of base (a PR may target another feature branch rather
+# than the trunk), and every push to the trunks. Every other branch is gated
+# through its own PR (opened and then `synchronize`d), including a shared one that
+# collects several.
 on:
   pull_request:
   push:
     branches:
       - master
       - dev
-      - "umbrella/**"
   workflow_dispatch:
 
 concurrency:
