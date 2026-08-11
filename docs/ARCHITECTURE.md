@@ -435,19 +435,24 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
   regenerate the whole bundle (script + Info.plist + icon) from the current format; a
   *running* launcher is skipped, not failed (a live bundle can't be rewritten). The
   marker reads an absent version as `1`, so pre-versioning launchers are stale.
-- **Name the badge resource after its own bytes, or an edited icon never appears.**
-  IconServices keys a rendered icon on things a rebuild leaves *untouched*: the bundle
-  path, its `CFBundleIdentifier`, and its `CFBundleVersion` (launchers ship a fixed `1`).
-  Rewriting one constant `Badge.icns` in place therefore changes no key at all, and the
-  cache goes on serving the old image — `lsregister -f` + `touch` included, which is why
-  changing a profile's colour used to leave the Dock, and Finder, showing the previous
-  badge indefinitely. `LauncherBundle.iconFileName` fixes that at the source by naming the
-  resource `Badge-<sha256(icns)[:16]>.icns` and pointing `CFBundleIconFile` at it: new
-  bytes ⇒ new name ⇒ a resource the cache has never seen, so it cannot answer from the old
-  entry. Nothing accumulates — `build` assembles into a fresh staging directory, so the
-  previous name leaves with the bundle it belonged to. The read side follows the same
-  rule: `build` byte-compares against the installed bundle's *recorded* `CFBundleIconFile`
-  rather than a hardcoded name, which also keeps it correct against a pre-v4 launcher.
+- **Name the badge resource after its own bytes, or an edited icon never appears.** A
+  launcher rebuild presents the same bundle *identity* every time — same path, same
+  `CFBundleIdentifier`, same `CFBundleVersion` (launchers ship a fixed `1`) — so when it
+  also points at the same constant `Badge.icns`, IconServices has nothing to tell the new
+  icon apart by and goes on serving the image it already rendered, `lsregister -f` +
+  `touch` included. That is why changing a profile's colour used to leave the Dock, and
+  Finder, showing the previous badge indefinitely. The resource name is the one part of
+  that identity we control, so `LauncherBundle.iconFileName` derives it from the icon:
+  `Badge-<sha256(icns)[:16]>.icns`, with `CFBundleIconFile` pointing at it. New bytes ⇒ new
+  name ⇒ an icon nothing has rendered yet. Nothing accumulates — `build` assembles into a
+  fresh staging directory, so the previous name leaves with the bundle it belonged to.
+  The read side follows the same rule: `build` compares against the installed bundle's
+  *recorded* `CFBundleIconFile` rather than a hardcoded name, which keeps it correct
+  against a pre-v4 launcher — and it treats a changed **name** as an icon change, not only
+  changed bytes. That last part is not a detail: a pre-v4 launcher that was already edited
+  holds the current bytes behind a stale-rendered name, so a byte-only check would call the
+  migration rebuild "unchanged" and withhold the Dock refresh from exactly the launchers
+  this fix exists for.
 - **Icon cache is sticky, but a rebuild never flashes the screen.** Content-addressing
   settles what the *cache* answers; a tile the Dock has **already drawn** is a second,
   opaque cache on top of it, and no write reaches that one — there is no documented
@@ -455,16 +460,23 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
   screen (the Dock repaints the wallpaper as it relaunches). So the Dock restart is
   **never** issued silently by a rebuild. Instead every write reports whether the icon
   actually changed (`add`/`update`/`rebuild`/`rebuildAll` surface a `dockRefreshPending`
-  flag) and the app offers a single opt-in **Refresh Dock now** banner — the only path
-  that calls `IconCache.restartDock`. That call kills `iconservicesagent` *before*
-  `killall Dock`, and the order carries the whole point: the Dock does not own the image
-  it draws, it asks that agent, so restarting the Dock alone brings it back to a cache
-  still holding the old badge. Both are launchd-managed and return on demand. A rebuild
-  that leaves the icon byte-identical (a wrapper-format bump, the common case) sets
+  flag) and the app offers an opt-in **Refresh Dock now** banner. `IconCache.restartDock`
+  signals `iconservicesagent` *before* `killall Dock`, and the order matters: the Dock does
+  not render the image it draws, it asks that agent, so restarting the Dock alone hands it
+  back to a live process holding the old render. `killall` only *sends* SIGTERM, and macOS
+  has no `-w` (that flag is Linux's), so `restartDock` polls `pgrep` for a bounded spell to
+  let the agent actually exit before the Dock comes back. Treat the agent kill as
+  best-effort, **not** a guarantee: the agent also reads a persistent on-disk store only
+  root can remove, so for a *pre-v4* bundle a relaunched agent can answer from the same
+  stale entry — there the real remedy is the rebuild onto a content-addressed name.
+  A rebuild that leaves the icon unchanged (a wrapper-format bump, the common case) sets
   nothing and shows no banner.
   **Do not promise a pinned tile "self-heals the next time you open it"** — it is not
   observed to, and wording the banner that way sends the user off to wait for a repaint
-  that never comes.
+  that never comes. For the same reason the refresh is reachable from **Settings → Badge
+  style → Refresh Dock icons** and not only from the dismissible banner, whose flag is
+  in-memory: dismissing it, or relaunching the app, must not leave a stale tile with no
+  in-app remedy.
 - **Process detection.** Main Claude processes are `ps` lines at
   `.../Contents/MacOS/<exe>` with **ppid == 1** (launchd). The ppid filter excludes
   Electron's renderer/utility/MCP children (forked from the main). Paths may contain

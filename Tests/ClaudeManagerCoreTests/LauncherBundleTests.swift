@@ -109,12 +109,13 @@ struct LauncherBundleTests {
             == LauncherBundle.iconFileName(for: red))
     }
 
-    /// The change check reads the installed bundle's *recorded* `CFBundleIconFile` rather
-    /// than a hardcoded name, so a launcher built before v4 — whose badge is still the
-    /// fixed `Badge.icns` — is compared against its real icon instead of reading nothing
-    /// and reporting every rebuild as an icon change.
+    /// A pre-v4 launcher — badge still at the fixed `Badge.icns` — must report an icon
+    /// change on the migrating rebuild **even when its bytes already match**, because that
+    /// is the exact shape of the bug this whole change fixes: the edit wrote the new badge
+    /// to disk and IconServices went on drawing the old one. Comparing bytes alone would
+    /// call it unchanged and withhold the Dock refresh from the one user who needs it.
     @Test
-    func iconChangeIsComparedAgainstAPreV4BundlesOwnIconName() throws {
+    func aPreV4BundleReportsAnIconChangeSoTheMigrationOffersItsDockRefresh() throws {
         let dir = try Fixture.makeTempDir()
         defer { try? fm.removeItem(at: dir) }
         let bundle = LauncherBundle(runner: stubbedSigningRunner())
@@ -122,7 +123,8 @@ struct LauncherBundleTests {
         let icns = Data("legacy-badge".utf8)
         try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns)
 
-        // Rewrite the freshly built bundle into the pre-v4 shape: a fixed `Badge.icns`.
+        // Rewrite the freshly built bundle into the pre-v4 shape: a fixed `Badge.icns`
+        // already holding the *current* badge bytes.
         let contents = URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents")
         let resources = contents.appendingPathComponent("Resources")
         try fm.moveItem(
@@ -135,7 +137,12 @@ struct LauncherBundleTests {
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: infoURL)
 
-        // Same badge bytes as the legacy bundle carries → no icon change, no Dock refresh.
+        // The name moves Badge.icns -> Badge-<hash>.icns, so this counts as changed.
+        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns))
+        #expect(try #require(RealClaude.plist(at: infoURL))["CFBundleIconFile"] as? String
+            == LauncherBundle.iconFileName(for: icns))
+        // Migrated: a second rebuild of the same badge is genuinely unchanged again, so the
+        // name check costs no spurious refresh once a launcher is on the new format.
         #expect(try !bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns))
     }
 

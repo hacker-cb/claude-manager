@@ -58,14 +58,15 @@ public struct LauncherBundle {
     /// The `Contents/Resources` file name carrying `icnsData` — content-addressed, so the
     /// name changes exactly when the icon's bytes do.
     ///
-    /// This is what makes an edited badge actually *appear*. IconServices caches a
-    /// bundle's icon under keys that are all constant for a launcher across a rebuild —
-    /// the bundle path, its `CFBundleIdentifier`, its `CFBundleVersion` (we ship a fixed
-    /// `1`) — so re-writing one fixed `Badge.icns` in place leaves every key untouched and
-    /// the cached image is served on. Naming the resource after its content makes the new
-    /// icon a resource the cache has never seen, so it cannot answer from the old entry.
-    /// The staging build always writes into a fresh directory, so the previous name is
-    /// dropped with the bundle it belonged to rather than accumulating.
+    /// This is what makes an edited badge actually *appear*. A launcher rebuild presents
+    /// the same bundle identity every time — same path, same `CFBundleIdentifier`, same
+    /// `CFBundleVersion` (we ship a fixed `1`) — so when it also points at the same
+    /// `Badge.icns`, IconServices has nothing to tell the new icon apart by and serves the
+    /// image it already rendered. The resource name is the one part of that identity this
+    /// app controls, so deriving it from the icon's own bytes is what makes an edited badge
+    /// a thing the cache has never seen. The staging build always writes into a fresh
+    /// directory, so the previous name is dropped with the bundle it belonged to rather
+    /// than accumulating.
     ///
     /// `sha256(icns)[:16]` mirrors `TokenProvider.fingerprint`: 64 bits is far past any
     /// practical collision here, and the name stays short enough to read in Finder.
@@ -84,13 +85,13 @@ public struct LauncherBundle {
         let iconFileName = Self.iconFileName(for: icnsData)
 
         // Whether the badge icon changes vs. what's already installed here. A rebuild that
-        // leaves the icon byte-identical (a wrapper-format bump, a script fix) needs no
-        // Dock refresh at all; only a real icon change does. A brand-new path has no prior
-        // icon and counts as changed — callers pair this with "was a bundle already here"
-        // to decide whether a pinned tile could be stale. Compared against the freshly
+        // leaves the icon untouched (a wrapper-format bump, a script fix) needs no Dock
+        // refresh at all; only a real icon change does. A brand-new path has no prior icon
+        // and counts as changed — callers pair this with "was a bundle already here" to
+        // decide whether a pinned tile could be stale. Compared against the freshly
         // rendered `icnsData`, so a non-deterministic renderer degrades gracefully: the
         // worst case is a redundant refresh hint, never a spurious silent flash.
-        let iconChanged = installedIconData(at: appURL) != icnsData
+        let iconChanged = installedIconDiffers(at: appURL, name: iconFileName, data: icnsData)
 
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -164,24 +165,37 @@ public struct LauncherBundle {
         return iconChanged
     }
 
-    /// The badge bytes the bundle installed at `appURL` currently carries, read through its
-    /// own `CFBundleIconFile`. The name is content-addressed, so it differs per bundle and
-    /// cannot be hardcoded; reading the plist also keeps this working against a launcher
-    /// built before that naming, whose icon is still the fixed `Badge.icns`. `nil` when no
-    /// bundle is installed here yet, or its plist/icon can't be read.
-    private func installedIconData(at appURL: URL) -> Data? {
+    /// Whether the badge this build is about to write differs from what the bundle
+    /// installed at `appURL` presents — by the resource **name** it points at as well as by
+    /// its bytes. Both are read from that bundle's own `CFBundleIconFile`, never a
+    /// hardcoded name, which is also what keeps this correct against a launcher built
+    /// before v4 whose badge is still the fixed `Badge.icns`.
+    ///
+    /// The name is checked on its own for one case, and it is the case this whole change
+    /// exists for: a pre-v4 launcher that was already edited carries the *current* badge
+    /// bytes behind a name IconServices has a stale render for. Comparing bytes alone
+    /// calls that "unchanged", so the migration rebuild — the very moment the fix reaches
+    /// that launcher — would decline to offer the Dock refresh its tile needs. After v4
+    /// the name is derived from the bytes, so this adds nothing to an ordinary rebuild:
+    /// same icon, same name, still unchanged.
+    private func installedIconDiffers(at appURL: URL, name: String, data: Data) -> Bool {
         let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
         guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
               let recorded = info["CFBundleIconFile"] as? String, !recorded.isEmpty
-        else { return nil }
+        else { return true } // nothing installed here yet, or unreadable — treat as changed
         // `lastPathComponent` keeps this read inside `Contents/Resources`: a launcher
         // bundle is user-writable, so the recorded value is not trusted to be a bare
         // file name. The extension is optional in `CFBundleIconFile`, so restore it.
-        var name = (recorded as NSString).lastPathComponent
-        if !name.hasSuffix(".icns") { name += ".icns" }
-        return try? Data(
-            contentsOf: appURL.appendingPathComponent("Contents/Resources").appendingPathComponent(name)
+        var installedName = (recorded as NSString).lastPathComponent
+        if !installedName.hasSuffix(".icns") { installedName += ".icns" }
+        guard installedName == name else { return true }
+        // Same name still gets a byte check: it catches a truncated or hand-edited
+        // resource, where the name promises bytes the file no longer holds.
+        let installed = try? Data(
+            contentsOf: appURL.appendingPathComponent("Contents/Resources")
+                .appendingPathComponent(installedName)
         )
+        return installed != data
     }
 
     func writeInfoPlist(

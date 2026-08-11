@@ -406,20 +406,26 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
-    /// The opt-in "Refresh Dock now": restart the Dock so pinned tiles repaint with the
-    /// new icon. Flashes the screen once, by explicit user request, then clears the banner.
+    /// Restart the Dock so pinned tiles repaint with the new icon — flashing the screen
+    /// once, by explicit user request — and clear the banner. Reached from the post-rebuild
+    /// banner and from the standing **Refresh Dock icons** button in Settings; the second
+    /// is what keeps a dismissed banner from being a dead end, since nothing else can set
+    /// `dockRefreshPending` again.
     func refreshDock() async {
-        // Restarting the Dock (`killall Dock`) has no dependency on Claude.app, so run it
-        // directly rather than through `perform` — which requires a located `realClaude` and
-        // would otherwise surface an unrelated "Claude not found" error while never
-        // restarting the Dock. Off-main because it forks a subprocess. Always runs while the
-        // banner is up, so the banner clears unconditionally afterwards.
+        // `IconCache.restartDock` signals `iconservicesagent` and the Dock; neither has any
+        // dependency on Claude.app, so run it directly rather than through `perform` —
+        // which requires a located `realClaude` and would otherwise surface an unrelated
+        // "Claude not found" error while never restarting anything. Off-main because it
+        // forks subprocesses and waits briefly for the agent to exit. The banner clears
+        // unconditionally afterwards: the attempt is best-effort (see `restartDock`), and
+        // Settings carries the retry.
         await Task.detached { IconCache(runner: SystemCommandRunner()).restartDock() }.value
         dockRefreshPending = false
     }
 
-    /// Dismiss the Dock-refresh banner without restarting the Dock, leaving pinned tiles
-    /// on their old icon until something else repaints them.
+    /// Dismiss the Dock-refresh banner without restarting the Dock, leaving pinned tiles on
+    /// their old icon. Not a dead end: **Refresh Dock icons** in Settings runs the same
+    /// action whenever the user wants it.
     func dismissDockRefresh() {
         dockRefreshPending = false
     }

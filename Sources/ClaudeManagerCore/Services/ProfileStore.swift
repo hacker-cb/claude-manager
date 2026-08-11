@@ -36,9 +36,9 @@ public struct AddResult: Sendable {
     public let reusedProfileData: Bool
     /// True when this write changed the launcher's icon at a path whose Dock tile could
     /// already be cached (a forced rebuild, or a trashed same-named twin) — so a pinned
-    /// tile may show the old icon until the launcher is next opened, and the app may offer
-    /// an opt-in "Refresh Dock now". False for a brand-new bundle (nothing cached at a
-    /// fresh path) or when the icon is byte-identical.
+    /// tile keeps the old icon until the Dock is refreshed, and the app may offer an
+    /// opt-in "Refresh Dock now". False for a brand-new bundle (nothing cached at a fresh
+    /// path) or when the icon is unchanged.
     public let dockRefreshPending: Bool
 }
 

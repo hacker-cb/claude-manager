@@ -45,12 +45,35 @@ struct LauncherRebuildTests {
     /// located Claude.app, so the app can invoke it directly.
     ///
     /// The order is asserted, not just the pair: the Dock renders nothing itself, it asks
-    /// `iconservicesagent`, so restarting the Dock first would only bring it back to a
-    /// cache still holding the old badge.
+    /// `iconservicesagent`, so restarting the Dock first would only hand it back to a live
+    /// process holding the old render.
     @Test
     func restartDockDropsTheIconAgentBeforeRestartingTheDock() {
-        let runner = RecordingCommandRunner()
+        let runner = RecordingCommandRunner { executable, _ in
+            // pgrep exits non-zero when nothing matched: the agent is already gone, so the
+            // wait returns at once.
+            let gone = executable == CoreConstants.pgrepPath
+            return CommandOutput(exitCode: gone ? 1 : 0, standardOutput: "", standardError: "")
+        }
         IconCache(runner: runner).restartDock()
+        #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments)
+            == [["iconservicesagent"], ["Dock"]])
+    }
+
+    /// `killall` only *sends* SIGTERM, and macOS has no `-w`, so `restartDock` polls for the
+    /// agent to actually exit — otherwise the Dock relaunches into a live agent still
+    /// holding the old render. The wait is bounded: an agent that never dies must delay the
+    /// refresh, never hang it, so the Dock is still restarted once the budget is spent.
+    @Test
+    func restartDockWaitsForTheIconAgentButNeverHangsOnIt() {
+        // Every probe exits 0 with a pid: pgrep keeps reporting the agent alive — the
+        // wedged-agent case.
+        let runner = RecordingCommandRunner { _, _ in
+            CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+        }
+        IconCache(runner: runner, agentExitAttempts: 3, agentExitInterval: 0).restartDock()
+        #expect(runner.invocations(of: CoreConstants.pgrepPath).count == 3)
+        // The budget is spent, and the Dock is restarted anyway.
         #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments)
             == [["iconservicesagent"], ["Dock"]])
     }
