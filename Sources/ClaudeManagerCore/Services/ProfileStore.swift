@@ -38,7 +38,10 @@ public struct AddResult: Sendable {
     /// already be cached (a forced rebuild, or a trashed same-named twin) — so a pinned
     /// tile keeps the old icon until the Dock is refreshed, and the app may offer an
     /// opt-in "Refresh Dock now". False for a brand-new bundle (nothing cached at a fresh
-    /// path) or when the icon is unchanged.
+    /// path), or when the icon's *presentation* is unchanged — both the recorded
+    /// `CFBundleIconFile` and the bytes behind it. A pre-v4 launcher migrating onto the
+    /// content-addressed name counts as changed on the name alone, even where its bytes
+    /// already match, because that is exactly the bundle whose drawn tile is stale.
     public let dockRefreshPending: Bool
 }
 

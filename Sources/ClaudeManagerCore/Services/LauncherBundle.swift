@@ -75,6 +75,22 @@ public struct LauncherBundle {
         return "Badge-\(hex.prefix(16)).icns"
     }
 
+    /// The `Contents/Resources` file name a bundle's recorded `CFBundleIconFile` refers to,
+    /// or `nil` when it records nothing usable. The single place that value is interpreted,
+    /// so every reader resolves it the same way:
+    ///
+    /// - `lastPathComponent` keeps the read inside `Contents/Resources`. A launcher bundle
+    ///   is user-writable, so the recorded value is not trusted to be a bare file name.
+    /// - The extension is optional in `CFBundleIconFile`, so restore it when absent —
+    ///   otherwise a hand-written `Badge` resolves to no file at all.
+    public static func iconResourceName(recorded: String?) -> String? {
+        guard let recorded, !recorded.isEmpty else { return nil }
+        var name = (recorded as NSString).lastPathComponent
+        guard !name.isEmpty, name != "/" else { return nil }
+        if !name.hasSuffix(".icns") { name += ".icns" }
+        return name
+    }
+
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
     /// at the same path — callers enforce the force/running policy first. Returns whether
     /// the badge icon actually changed vs. what was installed at this path, so a caller
@@ -181,13 +197,8 @@ public struct LauncherBundle {
     private func installedIconDiffers(at appURL: URL, name: String, data: Data) -> Bool {
         let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
         guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
-              let recorded = info["CFBundleIconFile"] as? String, !recorded.isEmpty
+              let installedName = Self.iconResourceName(recorded: info["CFBundleIconFile"] as? String)
         else { return true } // nothing installed here yet, or unreadable — treat as changed
-        // `lastPathComponent` keeps this read inside `Contents/Resources`: a launcher
-        // bundle is user-writable, so the recorded value is not trusted to be a bare
-        // file name. The extension is optional in `CFBundleIconFile`, so restore it.
-        var installedName = (recorded as NSString).lastPathComponent
-        if !installedName.hasSuffix(".icns") { installedName += ".icns" }
         guard installedName == name else { return true }
         // Same name still gets a byte check: it catches a truncated or hand-edited
         // resource, where the name promises bytes the file no longer holds.

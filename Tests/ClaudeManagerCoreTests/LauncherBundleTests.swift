@@ -109,6 +109,33 @@ struct LauncherBundleTests {
             == LauncherBundle.iconFileName(for: red))
     }
 
+    /// `CFBundleIconFile` is read out of a user-writable bundle, so the one place it is
+    /// interpreted has to be strict about it: never a path out of `Contents/Resources`,
+    /// and the optional extension restored rather than left to resolve to no file.
+    @Test
+    func aRecordedIconNameResolvesToOneFileInsideResources() {
+        // The ordinary cases: our own name, and a hand-written one with the extension
+        // left off (CFBundleIconFile permits that).
+        #expect(LauncherBundle.iconResourceName(recorded: "Badge-abc123.icns") == "Badge-abc123.icns")
+        #expect(LauncherBundle.iconResourceName(recorded: "Badge") == "Badge.icns")
+        // Nothing usable recorded.
+        #expect(LauncherBundle.iconResourceName(recorded: nil) == nil)
+        #expect(LauncherBundle.iconResourceName(recorded: "") == nil)
+        #expect(LauncherBundle.iconResourceName(recorded: "/") == nil)
+        // A value carrying a path is reduced to its last component, so the read stays in
+        // Resources instead of following the value out of the bundle.
+        #expect(LauncherBundle.iconResourceName(recorded: "../../../../etc/passwd") == "passwd.icns")
+        #expect(LauncherBundle.iconResourceName(recorded: "/tmp/evil.icns") == "evil.icns")
+        for resolved in [
+            LauncherBundle.iconResourceName(recorded: "../../../../etc/passwd"),
+            LauncherBundle.iconResourceName(recorded: "/tmp/evil.icns"),
+            LauncherBundle.iconResourceName(recorded: ".."),
+            LauncherBundle.iconResourceName(recorded: "a/b/c")
+        ] {
+            #expect(!(resolved ?? "").contains("/"))
+        }
+    }
+
     /// A pre-v4 launcher — badge still at the fixed `Badge.icns` — must report an icon
     /// change on the migrating rebuild **even when its bytes already match**, because that
     /// is the exact shape of the bug this whole change fixes: the edit wrote the new badge
