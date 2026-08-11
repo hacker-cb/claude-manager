@@ -59,6 +59,11 @@ short form:
   the `.app` will, and `scripts/assert-build-signed.sh` does it in CI.
 - **Keep `CFBundleIconName` out of launcher Info.plists** — otherwise macOS reads
   `Assets.car` and ignores our `.icns`.
+- **The badge resource is named after its own bytes** (`Badge-<sha256[:16]>.icns`, via
+  `LauncherBundle.iconFileName`), and `CFBundleIconFile` points at that name. Never put a
+  fixed file name back: IconServices keys its cache on the bundle path, id and version —
+  none of which a rebuild changes — so a constant name means an edited badge is never
+  drawn. Read the installed icon through the recorded `CFBundleIconFile`, never a literal.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of
   running the launcher (and thus Claude) translated under Rosetta.
 - **Process detection filters on ppid == 1** to find main Claude processes and skip

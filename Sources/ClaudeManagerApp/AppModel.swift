@@ -54,11 +54,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var currentError: AppError?
 
-    /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile may keep
-    /// showing the old icon until the launcher is next opened. Drives an opt-in "Refresh
-    /// Dock now" banner — a Dock restart flashes the whole screen, so it is never done
-    /// silently. Stays set until the user refreshes or dismisses it (the tiles self-heal
-    /// on next open regardless).
+    /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile keeps showing
+    /// the old icon until the Dock is refreshed. Drives an opt-in "Refresh Dock now"
+    /// banner — a Dock restart flashes the whole screen, so it is never done silently.
+    /// Stays set until the user refreshes or dismisses it.
     @Published private(set) var dockRefreshPending = false
 
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
@@ -419,8 +418,8 @@ final class AppModel: ObservableObject {
         dockRefreshPending = false
     }
 
-    /// Dismiss the Dock-refresh banner without restarting the Dock — each launcher's tile
-    /// self-heals the next time it is opened.
+    /// Dismiss the Dock-refresh banner without restarting the Dock, leaving pinned tiles
+    /// on their old icon until something else repaints them.
     func dismissDockRefresh() {
         dockRefreshPending = false
     }

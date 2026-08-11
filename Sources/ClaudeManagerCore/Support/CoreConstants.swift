@@ -20,8 +20,11 @@ public enum CoreConstants {
     /// History: 1 = MVP. 2 = adds `LSArchitecturePriority` so profiles run native
     /// (arm64) instead of translated under Rosetta. 3 = the bundle is ad-hoc signed;
     /// without a signature macOS refuses to execute a newly built launcher at all, so
-    /// every unsigned bundle must be flagged for rebuild.
-    public static let currentWrapperVersion = 3
+    /// every unsigned bundle must be flagged for rebuild. 4 = the badge resource is
+    /// content-addressed (`Badge-<sha256[:16]>.icns`, see `LauncherBundle.iconFileName`);
+    /// a launcher still on the fixed `Badge.icns` keeps hitting the stale IconServices
+    /// entry after an edit, so it is offered a rebuild.
+    public static let currentWrapperVersion = 4
 
     /// The single source of the staleness rule: whether a launcher stamped with
     /// `version` predates `currentWrapperVersion` and should be offered a rebuild.

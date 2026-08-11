@@ -50,7 +50,8 @@ struct LauncherBundleTests {
         let app = URL(fileURLWithPath: profile.appPath)
         let launcher = app.appendingPathComponent("Contents/MacOS/launcher")
         #expect(fm.fileExists(atPath: launcher.path))
-        #expect(fm.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Badge.icns").path))
+        let iconName = LauncherBundle.iconFileName(for: Data("icns".utf8))
+        #expect(fm.fileExists(atPath: app.appendingPathComponent("Contents/Resources/\(iconName)").path))
 
         let perms = try fm.attributesOfItem(atPath: launcher.path)[.posixPermissions] as? NSNumber
         #expect(perms?.intValue == 0o755)
@@ -74,6 +75,70 @@ struct LauncherBundleTests {
         #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("B".utf8)))
     }
 
+    /// The badge resource is named after its own bytes, which is what makes an edited icon
+    /// visible at all: IconServices keys its cache on the bundle path, id and version —
+    /// all unchanged by a rebuild — so a constant file name leaves every key intact and the
+    /// stale image is served on.
+    @Test
+    func iconResourceIsNamedAfterItsContent() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
+        let profile = makeProfile(installDir: dir)
+        let resources = URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents/Resources")
+        let infoURL = URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents/Info.plist")
+
+        let blue = Data("blue-badge".utf8)
+        let red = Data("red-badge".utf8)
+        #expect(LauncherBundle.iconFileName(for: blue) != LauncherBundle.iconFileName(for: red))
+        // Deterministic: identical bytes must not churn the name (and thus the cache key).
+        #expect(LauncherBundle.iconFileName(for: blue) == LauncherBundle.iconFileName(for: blue))
+
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: blue)
+        #expect(try #require(RealClaude.plist(at: infoURL))["CFBundleIconFile"] as? String
+            == LauncherBundle.iconFileName(for: blue))
+
+        // A colour change renames the resource and repoints CFBundleIconFile at it; the
+        // previous file leaves with the bundle it belonged to rather than accumulating.
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: red)
+        let redIcon = resources.appendingPathComponent(LauncherBundle.iconFileName(for: red))
+        let blueIcon = resources.appendingPathComponent(LauncherBundle.iconFileName(for: blue))
+        #expect(fm.fileExists(atPath: redIcon.path))
+        #expect(!fm.fileExists(atPath: blueIcon.path))
+        #expect(try #require(RealClaude.plist(at: infoURL))["CFBundleIconFile"] as? String
+            == LauncherBundle.iconFileName(for: red))
+    }
+
+    /// The change check reads the installed bundle's *recorded* `CFBundleIconFile` rather
+    /// than a hardcoded name, so a launcher built before v4 — whose badge is still the
+    /// fixed `Badge.icns` — is compared against its real icon instead of reading nothing
+    /// and reporting every rebuild as an icon change.
+    @Test
+    func iconChangeIsComparedAgainstAPreV4BundlesOwnIconName() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let bundle = LauncherBundle(runner: stubbedSigningRunner())
+        let profile = makeProfile(installDir: dir)
+        let icns = Data("legacy-badge".utf8)
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns)
+
+        // Rewrite the freshly built bundle into the pre-v4 shape: a fixed `Badge.icns`.
+        let contents = URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents")
+        let resources = contents.appendingPathComponent("Resources")
+        try fm.moveItem(
+            at: resources.appendingPathComponent(LauncherBundle.iconFileName(for: icns)),
+            to: resources.appendingPathComponent("Badge.icns")
+        )
+        let infoURL = contents.appendingPathComponent("Info.plist")
+        var info = try #require(RealClaude.plist(at: infoURL))
+        info["CFBundleIconFile"] = "Badge.icns"
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: infoURL)
+
+        // Same badge bytes as the legacy bundle carries → no icon change, no Dock refresh.
+        #expect(try !bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns))
+    }
+
     @Test
     func writesInfoPlistWithMarkerAndNoIconName() throws {
         let dir = try Fixture.makeTempDir()
@@ -91,7 +156,7 @@ struct LauncherBundleTests {
         #expect(info["CFBundleExecutable"] as? String == "launcher")
         #expect(info["CFBundleIdentifier"] as? String == profile.bundleID)
         #expect(info["CFBundleName"] as? String == profile.displayName)
-        #expect(info["CFBundleIconFile"] as? String == "Badge.icns")
+        #expect(info["CFBundleIconFile"] as? String == LauncherBundle.iconFileName(for: Data("i".utf8)))
         // CFBundleIconName must be absent, else macOS ignores the .icns.
         #expect(info["CFBundleIconName"] == nil)
         // Force native execution: without this the script-based bundle launches

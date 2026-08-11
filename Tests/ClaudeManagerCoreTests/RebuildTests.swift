@@ -43,11 +43,16 @@ struct LauncherRebuildTests {
     /// The opt-in "Refresh Dock now" restarts the Dock via `IconCache.restartDock()` — the
     /// one path that flashes the screen. It depends only on the CommandRunner, not on a
     /// located Claude.app, so the app can invoke it directly.
+    ///
+    /// The order is asserted, not just the pair: the Dock renders nothing itself, it asks
+    /// `iconservicesagent`, so restarting the Dock first would only bring it back to a
+    /// cache still holding the old badge.
     @Test
-    func restartDockInvokesKillallDock() {
+    func restartDockDropsTheIconAgentBeforeRestartingTheDock() {
         let runner = RecordingCommandRunner()
         IconCache(runner: runner).restartDock()
-        #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments) == [["Dock"]])
+        #expect(runner.invocations(of: CoreConstants.killallPath).map(\.arguments)
+            == [["iconservicesagent"], ["Dock"]])
     }
 
     @Test

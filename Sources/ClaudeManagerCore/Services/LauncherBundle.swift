@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Creates, reads, and removes the thin launcher `.app` bundles. The bundle's
@@ -54,6 +55,25 @@ public struct LauncherBundle {
 
     // MARK: - Build
 
+    /// The `Contents/Resources` file name carrying `icnsData` — content-addressed, so the
+    /// name changes exactly when the icon's bytes do.
+    ///
+    /// This is what makes an edited badge actually *appear*. IconServices caches a
+    /// bundle's icon under keys that are all constant for a launcher across a rebuild —
+    /// the bundle path, its `CFBundleIdentifier`, its `CFBundleVersion` (we ship a fixed
+    /// `1`) — so re-writing one fixed `Badge.icns` in place leaves every key untouched and
+    /// the cached image is served on. Naming the resource after its content makes the new
+    /// icon a resource the cache has never seen, so it cannot answer from the old entry.
+    /// The staging build always writes into a fresh directory, so the previous name is
+    /// dropped with the bundle it belonged to rather than accumulating.
+    ///
+    /// `sha256(icns)[:16]` mirrors `TokenProvider.fingerprint`: 64 bits is far past any
+    /// practical collision here, and the name stays short enough to read in Finder.
+    public static func iconFileName(for icnsData: Data) -> String {
+        let hex = SHA256.hash(data: icnsData).map { String(format: "%02x", $0) }.joined()
+        return "Badge-\(hex.prefix(16)).icns"
+    }
+
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
     /// at the same path — callers enforce the force/running policy first. Returns whether
     /// the badge icon actually changed vs. what was installed at this path, so a caller
@@ -61,6 +81,7 @@ public struct LauncherBundle {
     @discardableResult
     public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws -> Bool {
         let appURL = profile.appURL
+        let iconFileName = Self.iconFileName(for: icnsData)
 
         // Whether the badge icon changes vs. what's already installed here. A rebuild that
         // leaves the icon byte-identical (a wrapper-format bump, a script fix) needs no
@@ -69,10 +90,7 @@ public struct LauncherBundle {
         // to decide whether a pinned tile could be stale. Compared against the freshly
         // rendered `icnsData`, so a non-deterministic renderer degrades gracefully: the
         // worst case is a redundant refresh hint, never a spurious silent flash.
-        let previousIcon = try? Data(
-            contentsOf: appURL.appendingPathComponent("Contents/Resources/Badge.icns")
-        )
-        let iconChanged = previousIcon != icnsData
+        let iconChanged = installedIconData(at: appURL) != icnsData
 
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -90,8 +108,8 @@ public struct LauncherBundle {
         try fileManager.createDirectory(at: macOS, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
 
-        // Badge icon.
-        try icnsData.write(to: resources.appendingPathComponent("Badge.icns"))
+        // Badge icon, under its content-addressed name.
+        try icnsData.write(to: resources.appendingPathComponent(iconFileName))
 
         // Launcher script (executable).
         let script = LauncherScript.render(
@@ -112,7 +130,8 @@ public struct LauncherBundle {
         try writeInfoPlist(
             at: contents.appendingPathComponent("Info.plist"),
             profile: profile,
-            marker: marker
+            marker: marker,
+            iconFileName: iconFileName
         )
 
         // Ad-hoc sign LAST — macOS refuses to execute a launcher that has no valid
@@ -145,7 +164,32 @@ public struct LauncherBundle {
         return iconChanged
     }
 
-    func writeInfoPlist(at url: URL, profile: Profile, marker: LauncherMarker) throws {
+    /// The badge bytes the bundle installed at `appURL` currently carries, read through its
+    /// own `CFBundleIconFile`. The name is content-addressed, so it differs per bundle and
+    /// cannot be hardcoded; reading the plist also keeps this working against a launcher
+    /// built before that naming, whose icon is still the fixed `Badge.icns`. `nil` when no
+    /// bundle is installed here yet, or its plist/icon can't be read.
+    private func installedIconData(at appURL: URL) -> Data? {
+        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+        guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
+              let recorded = info["CFBundleIconFile"] as? String, !recorded.isEmpty
+        else { return nil }
+        // `lastPathComponent` keeps this read inside `Contents/Resources`: a launcher
+        // bundle is user-writable, so the recorded value is not trusted to be a bare
+        // file name. The extension is optional in `CFBundleIconFile`, so restore it.
+        var name = (recorded as NSString).lastPathComponent
+        if !name.hasSuffix(".icns") { name += ".icns" }
+        return try? Data(
+            contentsOf: appURL.appendingPathComponent("Contents/Resources").appendingPathComponent(name)
+        )
+    }
+
+    func writeInfoPlist(
+        at url: URL,
+        profile: Profile,
+        marker: LauncherMarker,
+        iconFileName: String
+    ) throws {
         // NB: deliberately no `CFBundleIconName` — when present macOS reads the icon
         // from Assets.car and ignores our `.icns`.
         //
@@ -162,7 +206,7 @@ public struct LauncherBundle {
             "CFBundleIdentifier": profile.bundleID,
             "CFBundleName": profile.displayName,
             "CFBundleDisplayName": profile.displayName,
-            "CFBundleIconFile": "Badge.icns",
+            "CFBundleIconFile": iconFileName,
             "CFBundlePackageType": "APPL",
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleShortVersionString": "1.0",

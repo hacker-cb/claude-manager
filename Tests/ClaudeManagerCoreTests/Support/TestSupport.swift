@@ -231,6 +231,17 @@ enum Fixture {
         }
     }
 
+    /// The badge bytes a built launcher carries, resolved through its own
+    /// `CFBundleIconFile`. The resource is content-addressed, so its name depends on the
+    /// icon rendered for that profile and no test can hardcode it.
+    static func installedBadgeData(inLauncherAt appPath: String) throws -> Data {
+        let app = URL(fileURLWithPath: appPath)
+        guard let info = RealClaude.plist(at: app.appendingPathComponent("Contents/Info.plist")),
+              let iconName = info["CFBundleIconFile"] as? String
+        else { throw FixtureError(message: "no CFBundleIconFile in \(appPath)") }
+        return try Data(contentsOf: app.appendingPathComponent("Contents/Resources/\(iconName)"))
+    }
+
     static func makeTempDir(_ fileManager: FileManager = .default) throws -> URL {
         let url = fileManager.temporaryDirectory
             .appendingPathComponent("cmtest-\(UUID().uuidString)", isDirectory: true)

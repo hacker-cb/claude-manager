@@ -265,8 +265,8 @@ public struct ProfileStore {
 
         // Register so Finder/LaunchServices pick up the icon — never flash the screen. A
         // pinned tile can only be stale when a bundle was already here (forced rebuild or a
-        // trashed twin) *and* the icon changed; that tile self-heals on next open, or via
-        // the app's opt-in "Refresh Dock now". A brand-new path has nothing cached.
+        // trashed twin) *and* the icon changed; that tile is repainted by the app's opt-in
+        // "Refresh Dock now". A brand-new path has nothing cached.
         iconCache.register(appURL: profile.appURL)
         let dockRefreshPending =
             iconChanged && (request.force || bundle.hasTrashedTwin(appURL: profile.appURL))
@@ -325,10 +325,10 @@ public struct ProfileStore {
             _ = try? bundle.moveToTrash(appURL: original.appURL)
         }
 
-        // Register so the new icon is picked up on next fetch/open — never flash the
-        // screen. A pinned tile can be stale only for an in-place edit (or a rename onto a
-        // trashed twin) that changed the icon; it self-heals on next open, or via the
-        // app's opt-in refresh. A fresh rename path has nothing cached.
+        // Register so the new icon is picked up on next fetch — never flash the screen. A
+        // pinned tile can be stale only for an in-place edit (or a rename onto a trashed
+        // twin) that changed the icon; it is repainted by the app's opt-in refresh. A
+        // fresh rename path has nothing cached.
         iconCache.register(appURL: updated.appURL)
         let dockRefreshPending =
             iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
