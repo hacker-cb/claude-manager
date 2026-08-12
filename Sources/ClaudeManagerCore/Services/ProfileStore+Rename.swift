@@ -46,8 +46,9 @@ extension ProfileStore {
             }
         }
         // Only ever a directory this call created and left empty — never pre-existing profile
-        // data. Without it a rename that relocated the data dir leaves an empty one behind,
-        // which Doctor then reports as an orphan the user never made, under an error saying
+        // data. An edit cannot relocate the data dir (`ProfileEdits`), so the one way `update`
+        // creates one is a profile whose directory the user deleted by hand; leaving that
+        // behind would have Doctor report an orphan the user never made, under an error saying
         // nothing changed.
         if !profileDirExisted, !directoryHasContents(updated.profilePath) {
             try? fileManager.removeItem(at: updated.profileURL)

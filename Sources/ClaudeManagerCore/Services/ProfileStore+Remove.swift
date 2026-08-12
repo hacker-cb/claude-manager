@@ -31,6 +31,11 @@ public extension ProfileStore {
             // Consistent domain error instead of a raw CocoaError from trashItem.
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
         }
+        // This trashes the bundle at `appPath` and, on request, deletes the directory at
+        // `profilePath` — so it must be established that the two belong together, and to this
+        // profile. Otherwise a profile pointed at another bundle trashes *that* application
+        // while purging its own credentials.
+        let profile = try profileMatchingItsLauncher(profile)
         if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
@@ -72,15 +77,27 @@ public extension ProfileStore {
         let sharing = survivors.filter {
             Self.directoriesOverlap($0.marker.profile, profile.profilePath)
         }
+        // The default profile owns no launcher, so it appears in no scan and the sharing check
+        // cannot see it — yet pointing a clone at its directory to reuse an existing login is
+        // a supported thing to do (`AddResult.reusedProfileData` exists for it). Purging there
+        // would take the user's primary Anthropic login and every chat in it, and even the
+        // running check cannot object: Claude's own process carries no `--user-data-dir` for
+        // `runningPID` to match.
+        let isDefaultProfileData = Self
+            .sameDirectory(profile.profilePath, configuration.defaultProfileUserDataPath)
         // Existence first, so a refusal is only reported where there is something to refuse
         // over: with the directory already gone, "your login was kept" names credentials that
         // are not there and sends the user to remove a launcher for nothing.
         guard fileManager.fileExists(atPath: profile.profilePath) else {
             // The overlay is swept even here — it is created independently of the data dir —
-            // but not when the path is shared, where it is the survivor's overlay too.
-            if sharing.isEmpty { sweepOverlay(for: profile, survivors: survivors) }
+            // but not when the path is shared, where it is the survivor's overlay too, nor
+            // when it is the default profile's, where it is Claude's own config tier.
+            if sharing.isEmpty, !isDefaultProfileData {
+                sweepOverlay(for: profile, survivors: survivors)
+            }
             return .alreadyGone
         }
+        guard !isDefaultProfileData else { return .keptForDefaultProfile }
         guard sharing.isEmpty else {
             return .keptSharedWith(launchers: sharing.map(\.profile.displayName))
         }

@@ -126,10 +126,10 @@ struct ProfileStoreTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var evil = original
+        var evil = ProfileEdits(original)
         evil.displayName = "../../../Evil"
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: original, to: evil)
+            try env.store.update(original, applying: evil)
         }
     }
 
@@ -246,19 +246,54 @@ struct ProfileStoreTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("job"))
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var updated = original
-        updated.displayName = env.display("job")
-        updated.label = "JB"
-        updated.color = .named("red")
-        updated.appPath = env.appPath("job")
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        edits.label = "JB"
+        edits.color = .named("red")
 
-        _ = try env.store.update(original: original, to: updated)
+        let updated = try env.store.update(original, applying: edits).profile
         #expect(!fm.fileExists(atPath: original.appPath))
+        // The caller no longer supplies the bundle path — the core derives it from the new
+        // display name, and the result is where it says the launcher went.
+        #expect(updated.appPath == env.appPath("job"))
         #expect(fm.fileExists(atPath: updated.appPath))
+        // Identity is carried through untouched, whatever the edit said.
+        #expect(updated.name == original.name)
+        #expect(updated.profilePath == original.profilePath)
 
-        let discovered = try #require(LauncherBundle().readMarker(at: URL(fileURLWithPath: updated.appPath)))
+        let discovered = try #require(LauncherBundle().readMarker(at: updated.appURL))
         #expect(discovered.marker.label == "JB")
         #expect(discovered.marker.color == "red")
+    }
+
+    /// The invariant the typed edits exist for. A rename is the one edit that moves something
+    /// — the bundle — and it must leave the user-data directory exactly where it was, with its
+    /// contents. Substituting that directory is not merely rejected here, it is unrepresentable:
+    /// `ProfileEdits` has no field for it and `Profile.profilePath` is `let`.
+    @Test
+    func aRenameLeavesTheProfileDataWhereItWas() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("job"))
+        }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        // Stand in for the Anthropic token and the chat history.
+        let token = URL(fileURLWithPath: original.profilePath).appendingPathComponent("token")
+        try Data("secret".utf8).write(to: token)
+
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        let updated = try env.store.update(original, applying: edits).profile
+
+        #expect(updated.profilePath == original.profilePath)
+        #expect(fm.fileExists(atPath: token.path))
+        #expect(try Data(contentsOf: token) == Data("secret".utf8))
+        // And no second data directory was conjured next to it.
+        let dirs = try fm.contentsOfDirectory(atPath: env.profilesDir.path)
+        #expect(dirs.filter { !$0.hasSuffix("-3p") } == [URL(fileURLWithPath: original.profilePath)
+                .lastPathComponent])
     }
 
     /// A rename whose Trash step fails is undone, not left half-applied.
@@ -275,12 +310,12 @@ struct ProfileStoreTests {
         defer { try? fm.removeItem(at: env.root) }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         let originalColor = try #require(LauncherBundle().readMarker(at: original.appURL)).marker.color
-        var updated = original
-        updated.displayName = env.display("job")
-        updated.color = .named("red")
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        edits.color = .named("red")
 
         let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.update(original: original, to: updated)
+            try env.store.update(original, applying: edits)
         }
 
         // The old launcher is untouched and the new one was rolled back, so the install
@@ -310,11 +345,11 @@ struct ProfileStoreTests {
         let env = try makeStoreEnv(fileManager: TrashRefusingLosingRemovalsFileManager())
         defer { try? fm.removeItem(at: env.root) }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var updated = original
-        updated.displayName = env.display("job")
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
 
         let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.update(original: original, to: updated)
+            try env.store.update(original, applying: edits)
         }
 
         #expect(!fm.fileExists(atPath: env.appPath("job")))
@@ -333,10 +368,10 @@ struct ProfileStoreTests {
         let env = try makeStoreEnv(fileManager: TrashVanishingFileManager())
         defer { try? fm.removeItem(at: env.root) }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var updated = original
-        updated.displayName = env.display("job")
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
 
-        let result = try env.store.update(original: original, to: updated)
+        let result = try env.store.update(original, applying: edits)
 
         #expect(result.profile.displayName == env.display("job"))
         #expect(fm.fileExists(atPath: env.appPath("job")))
@@ -389,7 +424,7 @@ struct ProfileStorePreconditionTests {
             try store.add(AddProfileRequest(name: "work"))
         }
         #expect(throws: ClaudeManagerError.realClaudeNotFound) {
-            try store.update(original: profile, to: profile)
+            try store.update(profile, applying: ProfileEdits(profile))
         }
         #expect(throws: ClaudeManagerError.realClaudeNotFound) {
             try store.rebuild(profile)

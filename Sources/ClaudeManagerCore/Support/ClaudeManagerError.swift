@@ -12,6 +12,12 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     /// A purge was asked for over a directory that *contains* another launcher's user-data
     /// dir. Refused before anything is touched — see `remove`.
     case profileDataHoldsAnother(name: String, others: [String])
+    /// A forced create would have rebuilt an existing launcher onto a *different* user-data
+    /// directory, abandoning the one it has — see `add`.
+    case launcherHoldsOtherProfileData(appPath: String, installed: String, requested: String)
+    /// A write was aimed at a launcher describing a different profile than the one supplied —
+    /// see `profileMatchingItsLauncher`.
+    case launcherBelongsToAnotherProfile(appPath: String, installedName: String, installedPath: String)
     /// A rename could not retire the old bundle, and the edit was rolled back — see `update`.
     case renameUndone(path: String, reason: String)
     /// A rename could not retire the old bundle *and* could not roll itself back, so both
@@ -42,9 +48,23 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .launcherNotFound(name):
             return "No launcher named \"\(name)\"."
         case let .launcherAlreadyExists(path):
-            return "A launcher already exists at \(path). Use force to rebuild it."
+            // "Force" only rebuilds one of *our* launchers, over its own profile data — say so
+            // rather than sending the user to an option that then refuses them.
+            return "Something already exists at \(PathUtils.abbreviatingHome(path)). If it is "
+                + "this profile's launcher, use force to rebuild it; otherwise remove it in "
+                + "Finder first."
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
+        case let .launcherHoldsOtherProfileData(appPath, installed, requested):
+            return "\(PathUtils.abbreviatingHome(appPath)) already exists and uses "
+                + "\(PathUtils.abbreviatingHome(installed)) for its profile data. Rebuilding "
+                + "it with \(PathUtils.abbreviatingHome(requested)) would leave the login and "
+                + "chat history in the first folder behind, with no launcher opening them. "
+                + "Use that folder, or remove the existing launcher first."
+        case let .launcherBelongsToAnotherProfile(appPath, installedName, installedPath):
+            return "\(PathUtils.abbreviatingHome(appPath)) is the launcher for \"\(installedName)\", "
+                + "whose profile data is in \(PathUtils.abbreviatingHome(installedPath)). "
+                + "Refresh the profile list and try again."
         case let .renameUndone(path, reason):
             // No "delete it yourself" here: after the rollback that bundle is the profile's
             // only launcher, so trashing it would remove the profile from the app entirely.
@@ -78,7 +98,12 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .installDirectoryNotWritable(path):
             return "Cannot write launchers to \(path). Check permissions or choose another location."
         case let .markerMissing(path):
-            return "\(path) is not a Claude Manager launcher (no marker in Info.plist)."
+            // Reached when a write was aimed at that path, so it needs a way forward: the app
+            // will not overwrite a bundle it does not own, and cannot repair one whose marker
+            // it cannot read.
+            return "\(PathUtils.abbreviatingHome(path)) is not a Claude Manager launcher (no "
+                + "marker in Info.plist), so it is left alone. Remove it in Finder if you want "
+                + "a launcher at that path."
         case let .codeSigningFailed(path, exitCode, message):
             // Not cosmetic: macOS refuses to execute a launcher without a valid
             // signature, so an unsigned bundle would look like it "hangs and never opens".

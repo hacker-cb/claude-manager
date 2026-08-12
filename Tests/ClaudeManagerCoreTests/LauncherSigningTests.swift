@@ -199,10 +199,10 @@ struct LauncherSigningTests {
         defer { Fixture.purgeTrash(displayNamePrefix: env.display("work")) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
 
-        var edited = profile
-        edited.displayName = env.display("work") + " Renamed"
-        edited.color = .named("red")
-        let updated = try env.store.update(original: profile, to: edited).profile
+        var edits = ProfileEdits(profile)
+        edits.displayName = env.display("work") + " Renamed"
+        edits.color = .named("red")
+        let updated = try env.store.update(profile, applying: edits).profile
 
         #expect(SignatureProbe.isValidAdHoc(URL(fileURLWithPath: updated.appPath)))
     }

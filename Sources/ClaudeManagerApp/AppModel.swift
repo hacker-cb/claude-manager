@@ -398,9 +398,9 @@ final class AppModel: ObservableObject {
     }
 
     /// Apply edits. Throws for the same reason as `addProfile`.
-    func updateProfile(original: Profile, to updated: Profile) async throws {
+    func updateProfile(_ profile: Profile, applying edits: ProfileEdits) async throws {
         let result = try await performThrowing { store in
-            try store.update(original: original, to: updated)
+            try store.update(profile, applying: edits)
         }
         if result.dockRefreshPending { dockRefreshPending = true }
         noteLiveRewrites(result.liveRewrite.map { [$0] } ?? [])
