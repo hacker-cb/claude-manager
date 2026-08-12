@@ -13,10 +13,11 @@ import Foundation
 @MainActor
 extension AppModel {
     /// Record launchers rewritten under a live instance, so each shows the nudge until that
-    /// instance is restarted.
+    /// instance is restarted. Keyed by launcher, not by user-data dir — see
+    /// `AppModel.pendingRestart`.
     func noteLiveRewrites(_ rewrites: [LiveRewrite]) {
         for rewrite in rewrites {
-            pendingRestart[rewrite.profile.profilePath] = rewrite.pid
+            pendingRestart[rewrite.profile.id] = rewrite.pid
         }
     }
 
@@ -27,20 +28,20 @@ extension AppModel {
     /// pid stops matching and the banner goes without anyone clearing it.
     func needsRestartToApply(_ managed: ManagedProfile) -> Bool {
         guard let pid = managed.pid else { return false }
-        return pendingRestart[managed.profile.profilePath] == pid
+        return pendingRestart[managed.profile.id] == pid
     }
 
     /// Drop nudges with nothing left to say — the instance was restarted (new pid), stopped
-    /// (no pid), or the profile is gone. `needsRestartToApply` already reads false for all
-    /// three, so this is about not accumulating an entry per profile ever edited live, and
-    /// about not letting a profile removed and re-added at the same user-data dir inherit a
-    /// stale one. Called from `refresh`, where the fresh pids arrive.
+    /// (no pid), or the launcher is gone. `needsRestartToApply` already reads false for all
+    /// three, so this is about not accumulating an entry per launcher ever rewritten live,
+    /// and about not letting a launcher re-created at the same path inherit a stale one.
+    /// Called from `refresh`, where the fresh pids arrive.
     func prunePendingRestarts() {
         guard !pendingRestart.isEmpty else { return }
         var live: [String: Int32] = [:]
         for managed in profiles where managed.pid != nil {
-            live[managed.profile.profilePath] = managed.pid
+            live[managed.profile.id] = managed.pid
         }
-        pendingRestart = pendingRestart.filter { path, pid in live[path] == pid }
+        pendingRestart = pendingRestart.filter { id, pid in live[id] == pid }
     }
 }

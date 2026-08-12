@@ -70,7 +70,6 @@ public extension ProfileStore {
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
         }
-        let livePID = runningPID(for: profile)
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: profile.label,
@@ -87,10 +86,8 @@ public extension ProfileStore {
         // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too,
         // and is harmless under a live instance: the clone reads it at next launch.
         try? reconcileManagedConfig(for: profile)
-        return RebuildResult(
-            iconChanged: iconChanged,
-            liveRewrite: livePID.map { LiveRewrite(profile: profile, pid: $0) }
-        )
+        // Sampled after the swap, for the reason `liveRewrite(for:)` gives.
+        return RebuildResult(iconChanged: iconChanged, liveRewrite: liveRewrite(for: profile))
     }
 
     /// Rebuild every launcher (see `rebuild`). Running ones are rebuilt too and reported in

@@ -62,15 +62,20 @@ final class AppModel: ObservableObject {
     @Published var dockRefreshPending = false
 
     /// Instances that were live when their launcher was rewritten, as
-    /// `profilePath -> pid observed at the write`. A running Claude keeps the name and Dock
+    /// `Profile.id -> pid observed at the write`. A running Claude keeps the name and Dock
     /// tile it launched with, so the edit only reaches it on a restart — this is what drives
     /// the per-profile "Restart to apply" nudge.
     ///
-    /// Keyed on `profilePath`, not `Profile.id`: the id *is* the bundle path, so a rename —
-    /// the very edit most worth nudging about — would file the entry under a key the profile
-    /// no longer has. The user-data dir is fixed for a profile's lifetime (the editor shows
-    /// it read-only) and is also what running-state detection matches on, so the key and the
-    /// pid come from the same notion of identity.
+    /// Keyed on the launcher's identity (`Profile.id`, its bundle path), not on the
+    /// user-data dir: two launchers are allowed to share one profile directory, and keying
+    /// on the directory would raise the nudge on the untouched sibling as well — where
+    /// "Restart" would then relaunch the wrong bundle and clear the real one's nudge. A
+    /// rename survives this because `LiveRewrite` carries the profile *after* the edit, so
+    /// the key is the path the launcher now has and the one the next scan reports.
+    ///
+    /// In memory only, so quitting Claude Manager forgets it while the rewritten instance
+    /// stays open. Deliberate for now — see the follow-up on deriving the nudge from
+    /// process start time vs bundle mtime, which would make it stateless.
     ///
     /// Non-private so the `AppModel+RestartNudge` extension (another file) can drive it, as
     /// `inflight` is for `AppModel+Perform`.

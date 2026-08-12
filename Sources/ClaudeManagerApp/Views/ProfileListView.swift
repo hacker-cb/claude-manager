@@ -227,7 +227,6 @@ struct ProfileRow: View {
                 Button("Restart") { Task { await model.restart(managed.profile) } }
             }
             Button("Rebuild Launcher") { Task { await model.rebuild(managed.profile) } }
-                .disabled(managed.isRunning)
             Divider()
             Button("Reveal Profile Data in Finder") { model.revealProfileData(managed.profile) }
             Button("Reveal Launcher in Finder") { model.revealLauncher(managed.profile) }
