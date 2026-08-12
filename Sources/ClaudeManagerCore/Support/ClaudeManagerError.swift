@@ -12,6 +12,12 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     /// A purge was asked for over a directory that *contains* another launcher's user-data
     /// dir. Refused before anything is touched — see `remove`.
     case profileDataHoldsAnother(name: String, others: [String])
+    /// A rename could not retire the old bundle, and the edit was rolled back — see `update`.
+    case renameUndone(path: String, reason: String)
+    /// A rename could not retire the old bundle *and* could not roll itself back, so both
+    /// launchers are on disk pointing at one profile — see `update`. Distinct from
+    /// `renameUndone` because the state, and therefore the remedy, is the opposite one.
+    case renameLeftBothLaunchers(oldPath: String, newPath: String, reason: String)
     case invalidProfileName(String)
     case invalidDisplayName(String)
     case invalidBundleID(String)
@@ -39,6 +45,18 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "A launcher already exists at \(path). Use force to rebuild it."
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
+        case let .renameUndone(path, reason):
+            // No "delete it yourself" here: after the rollback that bundle is the profile's
+            // only launcher, so trashing it would remove the profile from the app entirely.
+            return "The launcher at \(PathUtils.abbreviatingHome(path)) could not be moved to "
+                + "the Trash: \(Sentences.terminated(reason)) The edit was undone — nothing "
+                + "changed. Try the rename again once that launcher can be moved."
+        case let .renameLeftBothLaunchers(oldPath, newPath, reason):
+            return "The launcher at \(PathUtils.abbreviatingHome(oldPath)) could not be moved "
+                + "to the Trash: \(Sentences.terminated(reason)) Undoing the edit failed too, "
+                + "so this profile now has two launchers — the one just named above, and "
+                + "\(PathUtils.abbreviatingHome(newPath)). Move the first to the Trash in "
+                + "Finder; until you do, both open this profile and either can start it."
         case let .profileDataHoldsAnother(name, others):
             let list = Sentences.list(others)
             return "\"\(name)\"'s profile data folder contains the data for \(list), so "

@@ -347,8 +347,11 @@ struct StoreEnv {
 /// install dir — what the signature suites assert on. It is opt-in because a real
 /// signature costs a subprocess per launcher write, and every store suite paying that
 /// is enough to wedge a small CI runner.
+/// `fileManager` is injectable so a suite can make one operation fail without touching the
+/// filesystem's real permissions — `TrashRefusingFileManager` is the case that needs it.
 func makeStoreEnv(
     signingForReal: Bool = false,
+    fileManager: FileManager = .default,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -374,6 +377,7 @@ func makeStoreEnv(
             shipItStatePath: shipItStatePath
         ),
         runner: runner,
+        fileManager: fileManager,
         signalSender: { _, _ in 0 }
     )
     let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
@@ -415,4 +419,45 @@ func rawOverlay(_ userDataPath: String, fileManager: FileManager = .default) -> 
           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
     return dict
+}
+
+// MARK: - A FileManager whose Trash is broken
+
+/// Fails `trashItem` and behaves like `FileManager.default` for everything else.
+///
+/// The real thing fails for reasons a test cannot arrange without touching the machine — a
+/// volume with no Trash, a file another process holds open, a revoked permission — and a
+/// rename's Trash step is exactly the operation whose failure the store has to report rather
+/// than swallow. Subclassing reaches it because every caller goes through the injected
+/// instance, so nothing else in the store is disturbed.
+final class TrashRefusingFileManager: FileManager, @unchecked Sendable {
+    /// The reason the store is expected to carry into its report.
+    static let message = "The Trash is unavailable on this volume."
+
+    override func trashItem(
+        at _: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteUnknownError,
+            userInfo: [NSLocalizedDescriptionKey: Self.message]
+        )
+    }
+}
+
+/// Deletes the item outright and *then* fails — standing in for the race where something else
+/// removes the bundle between the store's existence check and its Trash call.
+final class TrashVanishingFileManager: FileManager, @unchecked Sendable {
+    override func trashItem(
+        at url: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        try? removeItem(at: url)
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileNoSuchFileError,
+            userInfo: [NSLocalizedDescriptionKey: "The file doesn’t exist."]
+        )
+    }
 }

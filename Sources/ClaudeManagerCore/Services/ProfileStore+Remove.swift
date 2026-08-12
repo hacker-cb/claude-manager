@@ -89,7 +89,7 @@ public extension ProfileStore {
         } catch {
             // The overlay stays: this profile's data is still on disk, and the overlay is what
             // keeps Claude's own updater out of it.
-            return .purgeFailed(reason: (error as? LocalizedError)?.errorDescription ?? "\(error)")
+            return .purgeFailed(reason: Sentences.reason(error))
         }
         sweepOverlay(for: profile, survivors: survivors)
         return .purged

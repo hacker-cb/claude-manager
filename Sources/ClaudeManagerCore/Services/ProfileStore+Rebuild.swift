@@ -126,7 +126,7 @@ public extension ProfileStore {
                 // and continue, so the batch report can say what actually went wrong.
                 failed.append(RebuildAllResult.Failure(
                     profile: profile,
-                    reason: (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    reason: Sentences.reason(error)
                 ))
                 // Still seed the overlay. `rebuild` reconciles only after a successful
                 // build, so without this a batch on a machine where the icon pipeline or
