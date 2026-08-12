@@ -86,9 +86,9 @@ struct SettingsView: View {
         } message: {
             Text(
                 "Each launcher is regenerated with the current badge style and wrapper "
-                    + "format (script, icon, Info.plist). Open profiles are rebuilt too and "
-                    + "then ask to be restarted, since a running window keeps the name and "
-                    + "icon it started with."
+                    + "format (script, icon, Info.plist). Open profiles are rebuilt too; any "
+                    + "whose icon actually changes then asks to be restarted, since a running "
+                    + "window keeps the icon it started with."
             )
         }
     }

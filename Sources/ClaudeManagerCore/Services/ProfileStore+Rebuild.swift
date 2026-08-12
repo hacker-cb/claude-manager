@@ -108,10 +108,14 @@ public extension ProfileStore {
         var liveRewrites: [LiveRewrite] = []
         var failed: [RebuildAllResult.Failure] = []
         var dockRefreshPending = false
-        for managed in list() {
+        // `scan`, not `list()`: the batch rebuilds every launcher regardless of state, so the
+        // full `ps` sweep and per-launcher `pgrep` that `list()` runs to fill in running
+        // state and versions would be paid for and thrown away. It was needed while running
+        // launchers were skipped; `rebuild` still probes for itself, once, after its swap.
+        for profile in bundle.scan(installDirectory: configuration.installDirectory).map(\.profile) {
             do {
-                let result = try rebuild(managed.profile)
-                rebuilt.append(managed.profile)
+                let result = try rebuild(profile)
+                rebuilt.append(profile)
                 if let live = result.liveRewrite { liveRewrites.append(live) }
                 if result.iconChanged { dockRefreshPending = true }
             } catch {
@@ -119,7 +123,7 @@ public extension ProfileStore {
                 // mid-batch, …) must not abort the rest — record it *with its reason*
                 // and continue, so the batch report can say what actually went wrong.
                 failed.append(RebuildAllResult.Failure(
-                    profile: managed.profile,
+                    profile: profile,
                     reason: (error as? LocalizedError)?.errorDescription ?? "\(error)"
                 ))
                 // Still seed the overlay. `rebuild` reconciles only after a successful
@@ -127,7 +131,7 @@ public extension ProfileStore {
                 // signing is broken reconciles *nothing* — and a clone left without its
                 // overlay lets Claude's own updater run inside it. The batch used to
                 // guarantee this for every launcher it touched; keep that guarantee.
-                try? reconcileManagedConfig(for: managed.profile)
+                try? reconcileManagedConfig(for: profile)
             }
         }
         // No automatic Dock restart — a rebuild never flashes the screen. When an icon
