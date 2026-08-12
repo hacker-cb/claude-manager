@@ -48,7 +48,7 @@ struct LiveIntegrationTests {
         #expect(script.contains(real.binaryURL.path))
 
         // Badge is a genuine, non-trivial .icns built from the real icon.
-        let icns = try Data(contentsOf: appURL.appendingPathComponent("Contents/Resources/Badge.icns"))
+        let icns = try Fixture.installedBadgeData(inLauncherAt: result.profile.appPath)
         #expect(icns.prefix(4) == Data("icns".utf8))
         #expect(icns.count > 10000)
 

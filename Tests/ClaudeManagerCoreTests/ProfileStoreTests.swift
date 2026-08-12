@@ -24,8 +24,7 @@ struct ProfileStoreTests {
         #expect(listed[0].isRunning == false)
 
         // The generated badge is a genuine .icns.
-        let icns = try Data(contentsOf: URL(fileURLWithPath: result.profile.appPath)
-            .appendingPathComponent("Contents/Resources/Badge.icns"))
+        let icns = try Fixture.installedBadgeData(inLauncherAt: result.profile.appPath)
         #expect(icns.prefix(4) == Data("icns".utf8))
 
         // A brand-new bundle (no trashed twin) must not restart the Dock.

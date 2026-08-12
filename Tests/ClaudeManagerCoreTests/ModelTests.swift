@@ -195,11 +195,28 @@ struct ManagedProfileTests {
     func theSigningFloorNeverRisesAboveTheCurrentWrapper() {
         // What makes `attentions`' health precedence load-bearing: `isUnrunnable` must stay a
         // *subset* of `needsRebuild`, so a launcher macOS refuses to execute always also counts as
-        // stale and the `else if` can never be reached first. Asserted as the invariant rather
-        // than through a stale-but-runnable `ManagedProfile`, because while the two constants are
-        // equal no such version exists to construct — and a test that quietly cannot run is worse
-        // than one that states what it is really pinning.
+        // stale and the `else if` can never be reached first.
         #expect(CoreConstants.minimumRunnableWrapperVersion <= CoreConstants.currentWrapperVersion)
+    }
+
+    @Test
+    func aStaleButRunnableLauncherIsNudged() throws {
+        // The state between the two constants: signed (so macOS runs it) but behind the current
+        // format. It first became constructible when the wrapper went to 4 over a signing floor of
+        // 3 — the content-addressed badge bump — and it is the state every existing launcher lands
+        // in on upgrade, so the soft nudge has to be the one it gets. The precedence in
+        // `attentions` is only observable here: while the two constants were equal, no version sat
+        // between them and the `else if` could not be reached.
+        try #require(
+            CoreConstants.minimumRunnableWrapperVersion < CoreConstants.currentWrapperVersion,
+            "no wrapper version sits between the signing floor and the current format"
+        )
+        let stale = ManagedProfile(
+            profile: makeProfile(), pid: nil, wrapperVersion: CoreConstants.currentWrapperVersion - 1
+        )
+        #expect(stale.needsRebuild)
+        #expect(!stale.isUnrunnable)
+        #expect(stale.attentions == [.rebuildAvailable])
     }
 }
 

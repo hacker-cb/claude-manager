@@ -179,6 +179,19 @@ struct SettingsView: View {
             }
             Text("Editing updates newly created launchers. “Apply” rebuilds every existing launcher.")
                 .font(.caption).foregroundStyle(.secondary)
+
+            // The standing entry point for the Dock refresh. The banner offering it after a
+            // rebuild is dismissible and its flag is in-memory only, so without this a
+            // dismissal — or a relaunch of this app — left a stale pinned tile with no
+            // in-app remedy at all and `killall Dock` in Terminal as the only way out.
+            // Always enabled: it depends on neither Claude.app nor a profile, and the user
+            // reaching for it already knows a tile looks wrong.
+            HStack {
+                Button("Refresh Dock icons") { Task { await model.refreshDock() } }
+                Spacer()
+            }
+            Text("Restarts the Dock so pinned launcher icons repaint — the screen briefly flashes.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

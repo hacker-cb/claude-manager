@@ -101,8 +101,8 @@ public extension ProfileStore {
             }
         }
         // No automatic Dock restart — a rebuild never flashes the screen. When an icon
-        // actually changed, the app surfaces an opt-in "Refresh Dock now"; otherwise the
-        // pinned tiles self-heal the next time each launcher is opened.
+        // actually changed, the app surfaces an opt-in "Refresh Dock now"; when none did,
+        // no pinned tile can be showing anything but the icon already installed.
         // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
         // (harmless while live — read at next launch). No extra scan: reuse the sets.
         for profile in skippedRunning {

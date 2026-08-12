@@ -113,13 +113,15 @@ struct RootView: View {
     }
 
     /// Shown after a rebuild/edit changed a launcher's icon. A pinned Dock tile keeps the
-    /// old icon until the launcher is next opened; the button forces it now at the cost of
-    /// one screen flash (restarting the Dock is the only reliable way — there is no
-    /// documented per-tile refresh). Dismiss leaves the tiles to self-heal on next open.
+    /// old icon until the Dock is refreshed; the button does that now at the cost of one
+    /// screen flash (restarting the Dock, and the icon-rendering agent behind it, is the
+    /// only reliable way — there is no documented per-tile refresh). Dismiss leaves the
+    /// tiles on their old icon, which is what the wording has to say: promising they heal
+    /// on next open is how a user ends up staring at an icon that never changes.
     private var dockRefreshBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(.blue)
-            Text("Launcher icons updated — their Dock tiles refresh the next time you open them.")
+            Text("Launcher icons updated — pinned Dock tiles keep the old icon until the Dock is refreshed.")
                 .font(.callout)
             Spacer()
             Button("Refresh Dock now") { Task { await model.refreshDock() } }
@@ -129,7 +131,7 @@ struct RootView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Dismiss")
-            .help("Dismiss — the icons still update the next time each launcher opens")
+            .help("Dismiss — pinned tiles keep the old icon until you refresh the Dock")
         }
         .padding(8)
         .background(.blue.opacity(0.12))
