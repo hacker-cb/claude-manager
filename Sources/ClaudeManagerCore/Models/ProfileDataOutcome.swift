@@ -32,6 +32,11 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// take their login and history with it. Carries their display names because the remedy is
     /// per-launcher.
     case keptSharedWith(launchers: [String])
+    /// Deletion was asked for and declined because the directory is the **default profile's**
+    /// own — the one Claude itself uses. It owns no launcher, so it appears in no scan and
+    /// `keptSharedWith` cannot name it; pointing a clone at it to reuse an existing login is
+    /// a supported thing to do, and purging from there would sign the user out of Claude.
+    case keptForDefaultProfile
     /// Deletion was asked for and there was nothing at the path.
     case alreadyGone
     /// Deletion was not asked for — "Move Launcher to Trash (keep login)".
@@ -57,6 +62,14 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             nil
         case let .keptSharedWith(launchers):
             Self.sharedNotice(displayName: displayName, launchers: launchers)
+        case .keptForDefaultProfile:
+            RemovalNotice(
+                title: "Profile data was kept",
+                message: "\(displayName) used the default profile's own folder, so its login "
+                    + "and chat history are Claude's own — deleting them from here would sign "
+                    + "you out of Claude itself. The launcher is in the Trash; the data is "
+                    + "untouched."
+            )
         case let .purgeFailed(reason):
             RemovalNotice(
                 title: "Profile data wasn't deleted",

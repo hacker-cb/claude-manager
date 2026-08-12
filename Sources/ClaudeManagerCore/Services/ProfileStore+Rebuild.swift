@@ -72,6 +72,9 @@ public extension ProfileStore {
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
         }
+        // Same reason as `update`: a `Profile` shaped to sit on someone else's launcher would
+        // rebuild that launcher onto this profile's directory, abandoning its own.
+        let profile = try profileMatchingItsLauncher(profile)
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: profile.label,

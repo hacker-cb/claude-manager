@@ -183,6 +183,61 @@ struct ProfileStoreRemoveTests {
         #expect(fm.fileExists(atPath: tier(first).path))
     }
 
+    /// The default profile owns no launcher, so it is in no scan and none of the sharing
+    /// checks can see it — while pointing a clone at its directory to reuse an existing login
+    /// is a supported thing to do. Purging there would delete Claude's own login and history.
+    @Test
+    func removeRefusesToPurgeTheDefaultProfilesData() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("clone"))
+        }
+        let defaultData = URL(fileURLWithPath: env.defaultProfileUserDataPath)
+        try fm.createDirectory(at: defaultData, withIntermediateDirectories: true)
+        let token = defaultData.appendingPathComponent("token")
+        try Data("primary login".utf8).write(to: token)
+        let clone = try env.store.add(AddProfileRequest(
+            name: env.name("clone"), profilePath: defaultData.path
+        )).profile
+
+        let result = try env.store.remove(clone, purgeProfile: true)
+
+        #expect(result.profileData == .keptForDefaultProfile)
+        #expect(fm.fileExists(atPath: defaultData.path))
+        #expect(fm.fileExists(atPath: token.path))
+        #expect(!fm.fileExists(atPath: clone.appPath)) // the launcher itself did go
+        let notice = try #require(result.profileData.notice(forRemovalOf: clone.displayName))
+        #expect(notice.message.contains("sign you out of Claude itself"))
+    }
+
+    /// Pointing at the default profile's directory when that directory is already gone is
+    /// "nothing to delete", not "your login was kept" — and the message for the second would
+    /// promise data that is not there. The default profile's `-3p` tier is Claude's own config
+    /// and must survive either way.
+    @Test
+    func removeReportsAlreadyGoneWhenTheDefaultProfilesDataIsMissing() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("clone"))
+        }
+        let defaultData = URL(fileURLWithPath: env.defaultProfileUserDataPath)
+        try fm.createDirectory(at: defaultData, withIntermediateDirectories: true)
+        let clone = try env.store.add(AddProfileRequest(
+            name: env.name("clone"), profilePath: defaultData.path
+        )).profile
+        let tier = ManagedConfigWriter.localTierURL(forUserDataPath: defaultData.path)
+        try fm.removeItem(at: defaultData) // deleted by hand, after the clone was made
+
+        let result = try env.store.remove(clone, purgeProfile: true)
+
+        #expect(result.profileData == .alreadyGone)
+        #expect(result.profileData.notice(forRemovalOf: clone.displayName) == nil)
+        // Claude's own config tier is not ours to sweep.
+        #expect(fm.fileExists(atPath: tier.path))
+    }
+
     /// A purge that cannot complete. The launcher is already in the Trash by then, so this
     /// must not throw: a thrown error reports the whole removal as failed while half of it
     /// happened, and the half that did not is the half holding the credentials. Skipped

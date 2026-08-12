@@ -314,6 +314,28 @@ struct ProfileDataOutcomeTests {
     }
 }
 
+struct ProfileEditsTests {
+    /// Opening the editor on a profile submits its current values unchanged — the shape a
+    /// "Save" on an untouched form takes, and what every caller starts from.
+    @Test
+    func initialisingFromAProfileCarriesItsEditableFields() {
+        let profile = Profile(
+            name: "work",
+            displayName: "Claude WORK",
+            label: "W",
+            color: .named("blue"),
+            profilePath: "/tmp/work",
+            bundleID: "com.example.work",
+            appPath: "/Applications/Claude WORK.app"
+        )
+        let edits = ProfileEdits(profile)
+        #expect(edits.displayName == profile.displayName)
+        #expect(edits.label == profile.label)
+        #expect(edits.color == profile.color)
+        #expect(edits.bundleID == profile.bundleID)
+    }
+}
+
 struct SentencesTests {
     @Test
     func listReadsAsEnglish() {

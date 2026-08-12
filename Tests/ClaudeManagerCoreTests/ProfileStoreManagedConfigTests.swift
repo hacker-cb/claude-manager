@@ -63,7 +63,7 @@ struct ProfileStoreManagedConfigTests {
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         try fm.removeItem(at: tier(profile))
 
-        _ = try env.store.update(original: profile, to: profile)
+        _ = try env.store.update(profile, applying: ProfileEdits(profile))
         #expect(probe(env).isSatisfied(.clone(), userDataPath: profile.profilePath))
     }
 

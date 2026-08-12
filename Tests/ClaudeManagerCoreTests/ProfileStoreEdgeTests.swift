@@ -39,9 +39,9 @@ struct ProfileStoreMutationEdgeTests {
         defer { try? fm.removeItem(at: env.root) }
         let original = try env.store
             .add(AddProfileRequest(name: env.name("work"), color: .named("blue"))).profile
-        var edited = original
-        edited.color = .named("red") // changes the rendered badge in place
-        let result = try env.store.update(original: original, to: edited)
+        var edits = ProfileEdits(original)
+        edits.color = .named("red") // changes the rendered badge in place
+        let result = try env.store.update(original, applying: edits)
         #expect(result.dockRefreshPending == true)
         // Offered as opt-in, never a silent screen-flashing restart.
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
@@ -57,10 +57,10 @@ struct ProfileStoreMutationEdgeTests {
         }
         let aa = try env.store.add(AddProfileRequest(name: env.name("aa"))).profile
         _ = try env.store.add(AddProfileRequest(name: env.name("bb"))).profile
-        var renamed = aa
+        var renamed = ProfileEdits(aa)
         renamed.displayName = env.display("bb") // collides with bb's launcher
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: aa, to: renamed)
+            try env.store.update(aa, applying: renamed)
         }
     }
 
@@ -72,10 +72,10 @@ struct ProfileStoreMutationEdgeTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var bad = work
+        var bad = ProfileEdits(work)
         bad.bundleID = "no dots here"
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: work, to: bad)
+            try env.store.update(work, applying: bad)
         }
     }
 
@@ -99,9 +99,9 @@ struct ProfileStoreMutationEdgeTests {
             }
             return idleStub(executable, args)
         }
-        var edited = work
-        edited.label = "ZZ"
-        let result = try env.store.update(original: work, to: edited)
+        var edits = ProfileEdits(work)
+        edits.label = "ZZ"
+        let result = try env.store.update(work, applying: edits)
 
         #expect(result.liveRewrite?.pid == 888)
         #expect(result.liveRewrite?.profile.label == "ZZ")
@@ -126,9 +126,9 @@ struct ProfileStoreMutationEdgeTests {
             }
             return idleStub(executable, args)
         }
-        var edited = work
-        edited.bundleID = "com.example.renamed"
-        let result = try env.store.update(original: work, to: edited)
+        var edits = ProfileEdits(work)
+        edits.bundleID = "com.example.renamed"
+        let result = try env.store.update(work, applying: edits)
         #expect(result.liveRewrite == nil)
         // The edit still landed — it just isn't something a restart would show.
         #expect(LauncherBundle().readMarker(at: result.profile.appURL) != nil)
@@ -159,9 +159,9 @@ struct ProfileStoreMutationEdgeTests {
             }
             return idleStub(executable, args)
         }
-        var edited = one
-        edited.label = "ZZ"
-        let result = try env.store.update(original: one, to: edited)
+        var edits = ProfileEdits(one)
+        edits.label = "ZZ"
+        let result = try env.store.update(one, applying: edits)
 
         // The edit lands; only the nudge is withheld, because pid 888 may be the sibling's.
         #expect(result.liveRewrite == nil)
