@@ -79,8 +79,11 @@ struct ProfileStoreManagedConfigTests {
         try fm.removeItem(at: profile.profileURL)
         #expect(fm.fileExists(atPath: tier(profile).path))
 
-        _ = try env.store.remove(profile, purgeProfile: true)
+        let result = try env.store.remove(profile, purgeProfile: true)
         #expect(!fm.fileExists(atPath: tier(profile).path))
+        // The overlay sweep runs on the "nothing was there" path too, so the outcome has to
+        // distinguish it from a refusal — which skips the sweep entirely.
+        #expect(result.profileData == .alreadyGone)
     }
 
     @Test
@@ -94,7 +97,7 @@ struct ProfileStoreManagedConfigTests {
         #expect(fm.fileExists(atPath: tier(profile).path))
 
         let result = try env.store.remove(profile, purgeProfile: true)
-        #expect(result.purgedProfileData)
+        #expect(result.profileData == .purged)
         #expect(!fm.fileExists(atPath: tier(profile).path))
     }
 

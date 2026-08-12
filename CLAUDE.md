@@ -67,6 +67,12 @@ short form:
   constant one means an edited badge is never drawn. Read the installed icon through the
   recorded `CFBundleIconFile`, never a literal, and treat a *name* change as an icon change
   (that is what makes the v3→v4 migration offer its Dock refresh).
+- **Never compare two profile directories by string equality.** The path is free text in
+  the editor, so one profile's user-data dir can *be* another's, or sit inside it — and
+  `removeItem` is recursive, so purging the outer one takes the inner profile's Anthropic
+  token and chat history with it. `ProfileStore+Remove.directoriesOverlap` compares
+  standardized paths by *component* (never by string prefix: `…/work` is not inside
+  `…/wo`), and a purge that would reach another launcher's data is declined and reported.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of
   running the launcher (and thus Claude) translated under Rosetta.
 - **Process detection filters on ppid == 1** to find main Claude processes and skip

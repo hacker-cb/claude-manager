@@ -15,7 +15,9 @@ extension AppModel {
         setApplyingStagedUpdate(true)
         let result = await perform { store in await store.applyStagedUpdateToAll() }
         if let result, let notice = Self.notice(for: result) {
-            currentError = AppError(message: notice)
+            // `notice` is nil on success, so every message reaching here is a reason the
+            // update did not go through.
+            currentError = AppError(title: "Update wasn't applied", message: notice)
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
         // otherwise the default profile's version display lags a build until the next poll.
@@ -34,6 +36,7 @@ extension AppModel {
     func launchBlockedByStagedApply() -> Bool {
         guard isApplyingStagedUpdate else { return false }
         currentError = AppError(
+            title: "Update in progress",
             message: "A Claude update is being applied to all profiles. "
                 + "Wait for it to finish, then try again."
         )

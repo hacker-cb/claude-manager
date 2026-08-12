@@ -9,6 +9,9 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case launcherNotFound(name: String)
     case launcherAlreadyExists(path: String)
     case profileRunning(name: String, pid: Int32)
+    /// A purge was asked for over a directory that *contains* another launcher's user-data
+    /// dir. Refused before anything is touched — see `remove`.
+    case profileDataHoldsAnother(name: String, others: [String])
     case invalidProfileName(String)
     case invalidDisplayName(String)
     case invalidBundleID(String)
@@ -36,6 +39,12 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
             return "A launcher already exists at \(path). Use force to rebuild it."
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
+        case let .profileDataHoldsAnother(name, others):
+            let list = Sentences.list(others)
+            return "\"\(name)\"'s profile data folder contains the data for \(list), so "
+                + "deleting it would delete their login and chat history too. Remove \(list) "
+                + "first, or use “Move Launcher to Trash (keep login)” to remove only the "
+                + "launcher."
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):
