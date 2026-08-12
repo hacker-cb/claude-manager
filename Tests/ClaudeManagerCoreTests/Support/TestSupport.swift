@@ -446,6 +446,30 @@ final class TrashRefusingFileManager: FileManager, @unchecked Sendable {
     }
 }
 
+/// Refuses the Trash *and* reports every removal as failed after performing it — standing in
+/// for a rollback whose target is already gone by the time the error comes back.
+final class TrashRefusingLosingRemovalsFileManager: FileManager, @unchecked Sendable {
+    override func trashItem(
+        at _: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteUnknownError,
+            userInfo: [NSLocalizedDescriptionKey: TrashRefusingFileManager.message]
+        )
+    }
+
+    override func removeItem(at url: URL) throws {
+        try super.removeItem(at: url)
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileNoSuchFileError,
+            userInfo: [NSLocalizedDescriptionKey: "The file doesn’t exist."]
+        )
+    }
+}
+
 /// Deletes the item outright and *then* fails — standing in for the race where something else
 /// removes the bundle between the store's existence check and its Trash call.
 final class TrashVanishingFileManager: FileManager, @unchecked Sendable {

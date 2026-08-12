@@ -302,6 +302,28 @@ struct ProfileStoreTests {
         #expect(!message.contains("Move the first to the Trash"))
     }
 
+    /// A rollback whose removal reports failure *after* the bundle is already gone still
+    /// achieved what it set out to do. Claiming two launchers there would send the user
+    /// hunting for a second one that does not exist.
+    @Test
+    func updateReportsAnUndoneRenameWhenTheRollbackTargetIsAlreadyGone() throws {
+        let env = try makeStoreEnv(fileManager: TrashRefusingLosingRemovalsFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var updated = original
+        updated.displayName = env.display("job")
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.update(original: original, to: updated)
+        }
+
+        #expect(!fm.fileExists(atPath: env.appPath("job")))
+        #expect(fm.fileExists(atPath: original.appPath))
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains("The edit was undone"))
+        #expect(!message.contains("two launchers"))
+    }
+
     /// The race the rollback must not lose to: the old bundle is removed by something else
     /// between the existence check and the Trash attempt. Retiring it is what the failed step
     /// was *for*, so the rename stands — undoing it here would delete the profile's only

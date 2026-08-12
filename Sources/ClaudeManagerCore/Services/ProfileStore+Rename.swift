@@ -35,12 +35,15 @@ extension ProfileStore {
         do {
             try fileManager.removeItem(at: updated.appURL)
         } catch {
-            // Both bundles are now on disk. The message has to say so rather than repeat the
-            // undo it could not perform: the state, and therefore the remedy, is the opposite
-            // of the one below.
-            throw ClaudeManagerError.renameLeftBothLaunchers(
-                oldPath: original.appPath, newPath: updated.appPath, reason: reason
-            )
+            // Symmetric to the vanished-old-bundle check above: a removal that failed because
+            // the new bundle is already gone *achieved* the rollback, so claiming two
+            // launchers would be false and would send the user hunting for a second one that
+            // does not exist. Only a bundle still on disk is that state.
+            if fileManager.fileExists(atPath: updated.appPath) {
+                throw ClaudeManagerError.renameLeftBothLaunchers(
+                    oldPath: original.appPath, newPath: updated.appPath, reason: reason
+                )
+            }
         }
         // Only ever a directory this call created and left empty — never pre-existing profile
         // data. Without it a rename that relocated the data dir leaves an empty one behind,
