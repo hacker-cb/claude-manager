@@ -73,9 +73,17 @@ final class AppModel: ObservableObject {
     /// rename survives this because `LiveRewrite` carries the profile *after* the edit, so
     /// the key is the path the launcher now has and the one the next scan reports.
     ///
-    /// In memory only, so quitting Claude Manager forgets it while the rewritten instance
-    /// stays open. Deliberate for now — see the follow-up on deriving the nudge from
-    /// process start time vs bundle mtime, which would make it stateless.
+    /// Two known limitations, both erring toward a nudge too many rather than a stale window
+    /// nobody is told about, and both survivable because the banner is dismissible:
+    ///
+    /// - In memory only, so quitting Claude Manager forgets it while the rewritten instance
+    ///   stays open.
+    /// - The evidence is "the bundle changed since the last write", not "the bundle differs
+    ///   from what this window launched with", so editing a live profile blue → red → blue
+    ///   keeps the nudge even though the running window already shows blue.
+    ///
+    /// Both want the same thing to go away properly: the launch-time presentation of the
+    /// running instance, which nothing here records. Filed as a follow-up.
     ///
     /// Non-private so the `AppModel+RestartNudge` extension (another file) can drive it, as
     /// `inflight` is for `AppModel+Perform`.

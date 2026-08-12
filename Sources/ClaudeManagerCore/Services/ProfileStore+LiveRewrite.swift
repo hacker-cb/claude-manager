@@ -26,9 +26,19 @@ extension ProfileStore {
     /// ignore. Between a nudge too many and a stale window nobody is told about, the extra
     /// nudge is the one to take.
     ///
+    /// Nothing is claimed when the pid's owner is ambiguous. `runningPID` matches on the
+    /// user-data dir, which is **not** unique — two launchers may point at one profile
+    /// directory, a configuration `remove` already handles explicitly. Rewriting the idle
+    /// one would then record the *other* one's pid, and the Restart offered against it stops
+    /// a live session and launches a different launcher in its place. That is too disruptive
+    /// to offer on a guess, so an ambiguous owner produces no nudge at all.
+    ///
     /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
     func liveRewrite(for profile: Profile, presentationChanged: Bool) -> LiveRewrite? {
-        guard presentationChanged else { return nil }
-        return runningPID(for: profile).map { LiveRewrite(profile: profile, pid: $0) }
+        guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
+        let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
+            .filter { $0.marker.profile == profile.profilePath }
+        guard sharingThisProfileDir.count <= 1 else { return nil }
+        return LiveRewrite(profile: profile, pid: pid)
     }
 }

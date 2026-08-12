@@ -135,6 +135,39 @@ struct ProfileStoreMutationEdgeTests {
         #expect(result.profile.bundleID == "com.example.renamed")
     }
 
+    /// Two launchers may point at one profile directory, and `runningPID` matches on that
+    /// directory — so a pid found while rewriting the idle one may well belong to the other.
+    /// Nudging there would offer a Restart that stops a live session and launches a
+    /// different launcher in its place, so an ambiguous owner produces no nudge at all.
+    @Test
+    func aPidSharedByTwoLaunchersProducesNoRestartNudge() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared").path
+        let one = try env.store.add(
+            AddProfileRequest(name: env.name("one"), profilePath: shared)
+        ).profile
+        _ = try env.store.add(AddProfileRequest(name: env.name("two"), profilePath: shared))
+
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        var edited = one
+        edited.label = "ZZ"
+        let result = try env.store.update(original: one, to: edited)
+
+        // The edit lands; only the nudge is withheld, because pid 888 may be the sibling's.
+        #expect(result.liveRewrite == nil)
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
     /// Removal is the one mutation a live instance still blocks: trashing the bundle out
     /// from under a profile the user may relaunch is a different act from rewriting it.
     @Test
