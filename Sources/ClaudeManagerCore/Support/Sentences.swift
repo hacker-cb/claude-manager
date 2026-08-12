@@ -14,6 +14,17 @@ enum Sentences {
         return names.dropLast().joined(separator: ", ") + " and " + last
     }
 
+    /// An error as a sentence the user can read.
+    ///
+    /// The fallback is `localizedDescription`, **not** `"\(error)"`. Foundation's own failures
+    /// are `NSError`, which does not conform to `LocalizedError`, so the interpolated form
+    /// renders the whole object — `Error Domain=NSCocoaErrorDomain Code=512 "…" UserInfo={…}` —
+    /// and that string ends up verbatim in an alert. `localizedDescription` is the message
+    /// inside it.
+    static func reason(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
     /// `text` with terminal punctuation, so it can be followed by another sentence.
     ///
     /// The reason inside a failure message comes from Foundation or from an interpolated

@@ -311,6 +311,9 @@ public struct ProfileStore {
         }
 
         try ensureInstallDirectoryWritable()
+        // Recorded for the rollback below, which must never delete a data directory it did not
+        // create — same guard `add` keeps for its own failure path.
+        let profileDirExisted = fileManager.fileExists(atPath: updated.profilePath)
         try fileManager.createDirectory(at: updated.profileURL, withIntermediateDirectories: true)
 
         let icns = try iconPipeline.makeBadgeICNS(
@@ -323,8 +326,32 @@ public struct ProfileStore {
             profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
         )
 
+        // The rename's second half — retiring the old bundle. If it fails, the edit is undone
+        // rather than left half-applied.
+        //
+        // Leaving the old bundle behind was the previous behaviour, and it is worse than it
+        // looks: two launchers on one user-data dir is a state the app reads as *deliberate*
+        // everywhere else, so nothing questions it. `list` scans the install directory, so the
+        // stale bundle stays in the sidebar as an ordinary row; `runningPID` keys on the
+        // profile dir, which both now share, so opening the profile lights up both rows with
+        // the same pid and a Stop on the wrong one ends the live session; the sidebar
+        // selection is the bundle path, so it goes on resolving to the *old* row after the
+        // rename; and `liveRewrite` requires a single owning launcher, so the restart nudge
+        // vanishes exactly when a running profile is renamed. Reporting all that is worse than
+        // not creating it.
+        //
+        // `renaming` means the new path was empty (the guard above), so the rollback removes
+        // only what this call wrote; the icon-cache registration and the managed-config
+        // overlay happen below, so neither has run yet.
         if renaming, fileManager.fileExists(atPath: original.appPath) {
-            _ = try? bundle.moveToTrash(appURL: original.appURL)
+            do {
+                _ = try bundle.moveToTrash(appURL: original.appURL)
+            } catch {
+                try rollBackRename(
+                    original: original, updated: updated,
+                    profileDirExisted: profileDirExisted, cause: error
+                )
+            }
         }
 
         // Register so the new icon is picked up on next fetch — never flash the screen. A

@@ -261,6 +261,89 @@ struct ProfileStoreTests {
         #expect(discovered.marker.color == "red")
     }
 
+    /// A rename whose Trash step fails is undone, not left half-applied.
+    ///
+    /// The alternative — keeping the new bundle and reporting the stray old one — leaves two
+    /// launchers on one user-data dir, which the app reads as deliberate everywhere else: the
+    /// stale bundle stays in the sidebar as an ordinary row, `runningPID` lights up both rows
+    /// with one pid, and `liveRewrite` drops the restart nudge because ownership is ambiguous.
+    @Test
+    func updateUndoesARenameWhoseTrashStepFails() throws {
+        // No `purgeTrash` cleanup: this store refuses every `trashItem`, so nothing of its
+        // making ever reaches the Trash.
+        let env = try makeStoreEnv(fileManager: TrashRefusingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let originalColor = try #require(LauncherBundle().readMarker(at: original.appURL)).marker.color
+        var updated = original
+        updated.displayName = env.display("job")
+        updated.color = .named("red")
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.update(original: original, to: updated)
+        }
+
+        // The old launcher is untouched and the new one was rolled back, so the install
+        // directory holds exactly the launcher it started with.
+        #expect(fm.fileExists(atPath: original.appPath))
+        #expect(!fm.fileExists(atPath: env.appPath("job")))
+        #expect(env.store.list().count == 1)
+        // And it still carries the badge it had — the edit did not land halfway.
+        let discovered = try #require(LauncherBundle().readMarker(at: original.appURL))
+        #expect(discovered.marker.color == originalColor)
+
+        // The message names the bundle to deal with, says the edit was undone, and carries
+        // the filesystem's own reason. It must *not* tell the user to trash that launcher:
+        // after the rollback it is the profile's only one.
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains(PathUtils.abbreviatingHome(original.appPath)))
+        #expect(message.contains(TrashRefusingFileManager.message))
+        #expect(message.contains("The edit was undone"))
+        #expect(!message.contains("Move the first to the Trash"))
+    }
+
+    /// A rollback whose removal reports failure *after* the bundle is already gone still
+    /// achieved what it set out to do. Claiming two launchers there would send the user
+    /// hunting for a second one that does not exist.
+    @Test
+    func updateReportsAnUndoneRenameWhenTheRollbackTargetIsAlreadyGone() throws {
+        let env = try makeStoreEnv(fileManager: TrashRefusingLosingRemovalsFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var updated = original
+        updated.displayName = env.display("job")
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.update(original: original, to: updated)
+        }
+
+        #expect(!fm.fileExists(atPath: env.appPath("job")))
+        #expect(fm.fileExists(atPath: original.appPath))
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains("The edit was undone"))
+        #expect(!message.contains("two launchers"))
+    }
+
+    /// The race the rollback must not lose to: the old bundle is removed by something else
+    /// between the existence check and the Trash attempt. Retiring it is what the failed step
+    /// was *for*, so the rename stands — undoing it here would delete the profile's only
+    /// remaining launcher and leave it with none.
+    @Test
+    func updateKeepsTheRenameWhenTheOldLauncherVanishedMidTrash() throws {
+        let env = try makeStoreEnv(fileManager: TrashVanishingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var updated = original
+        updated.displayName = env.display("job")
+
+        let result = try env.store.update(original: original, to: updated)
+
+        #expect(result.profile.displayName == env.display("job"))
+        #expect(fm.fileExists(atPath: env.appPath("job")))
+        #expect(!fm.fileExists(atPath: original.appPath))
+        #expect(env.store.list().count == 1)
+    }
+
     @Test
     func rebuildAllDefersDockRefreshAndNeverFlashes() throws {
         let env = try makeStoreEnv()
