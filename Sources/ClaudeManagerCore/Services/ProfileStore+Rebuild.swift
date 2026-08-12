@@ -86,8 +86,14 @@ public extension ProfileStore {
         // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too,
         // and is harmless under a live instance: the clone reads it at next launch.
         try? reconcileManagedConfig(for: profile)
-        // Sampled after the swap, for the reason `liveRewrite(for:)` gives.
-        return RebuildResult(iconChanged: iconChanged, liveRewrite: liveRewrite(for: profile))
+        // A rebuild regenerates from the bundle's own marker, so it cannot change the name a
+        // running window shows — the badge is the only thing a restart could reveal, and
+        // only when it actually changed. See `liveRewrite(for:presentationChanged:)`, which
+        // also explains why the pid is sampled here rather than before the swap.
+        return RebuildResult(
+            iconChanged: iconChanged,
+            liveRewrite: liveRewrite(for: profile, presentationChanged: iconChanged)
+        )
     }
 
     /// Rebuild every launcher (see `rebuild`). Running ones are rebuilt too and reported in
@@ -116,6 +122,12 @@ public extension ProfileStore {
                     profile: managed.profile,
                     reason: (error as? LocalizedError)?.errorDescription ?? "\(error)"
                 ))
+                // Still seed the overlay. `rebuild` reconciles only after a successful
+                // build, so without this a batch on a machine where the icon pipeline or
+                // signing is broken reconciles *nothing* — and a clone left without its
+                // overlay lets Claude's own updater run inside it. The batch used to
+                // guarantee this for every launcher it touched; keep that guarantee.
+                try? reconcileManagedConfig(for: managed.profile)
             }
         }
         // No automatic Dock restart — a rebuild never flashes the screen. When an icon

@@ -31,6 +31,13 @@ extension AppModel {
         return pendingRestart[managed.profile.id] == pid
     }
 
+    /// Drop one profile's nudge without restarting it — the user has seen it and wants the
+    /// banner (and its sidebar mark) gone mid-session. Not a dead end: Restart stays on the
+    /// detail pane and in the sidebar context menu, so the remedy outlives the reminder.
+    func dismissRestartNudge(_ profile: Profile) {
+        pendingRestart[profile.id] = nil
+    }
+
     /// Drop nudges with nothing left to say — the instance was restarted (new pid), stopped
     /// (no pid), or the launcher is gone. `needsRestartToApply` already reads false for all
     /// three, so this is about not accumulating an entry per launcher ever rewritten live,

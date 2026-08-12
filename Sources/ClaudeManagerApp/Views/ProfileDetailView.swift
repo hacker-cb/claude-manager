@@ -165,6 +165,17 @@ struct ProfileDetailView: View {
             Spacer()
             Button("Restart") { Task { await model.restart(profile) } }
                 .buttonStyle(.borderedProminent)
+            // Dismissible, like the Dock-refresh banner: a rewrite mid-session is not urgent,
+            // and without this the only way to clear it is to end a session the user may be
+            // in the middle of. It clears the sidebar mark with it, and unlike the Dock
+            // refresh that is not a dead end — Restart stays on this pane and in the
+            // context menu, so the remedy is always one click away.
+            Button { model.dismissRestartNudge(profile) } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Dismiss")
+            .help("Dismiss — the window keeps its old name and icon until you restart it")
         }
         .padding(12)
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

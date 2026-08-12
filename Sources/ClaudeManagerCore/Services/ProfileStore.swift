@@ -344,29 +344,15 @@ public struct ProfileStore {
         try? reconcileManagedConfig(for: updated)
         // The nudge names the *edited* profile, so it carries the updated value: after a
         // rename the old one names a bundle that is already in the Trash.
+        // A running window shows the launcher's name and its badge, and nothing else this
+        // write touches — so an edit that leaves both alone (a bundle-id change, or Save on
+        // an unmodified form) has nothing for a restart to reveal.
+        let presentationChanged = iconChanged || updated.displayName != original.displayName
         return UpdateResult(
             profile: updated,
             dockRefreshPending: dockRefreshPending,
-            liveRewrite: liveRewrite(for: updated)
+            liveRewrite: liveRewrite(for: updated, presentationChanged: presentationChanged)
         )
-    }
-
-    /// The instance to nudge for a restart after `profile`'s bundle was rewritten, sampled
-    /// **after** the swap rather than before it.
-    ///
-    /// The order is the point. Rendering the badge shells out to `iconutil`, so a write is
-    /// not instantaneous, and an instance can start during it — launched from the *old*
-    /// bundle, since the swap has not happened yet. A probe taken up front misses that
-    /// instance entirely (it reads "stopped"), or names a pid that has since been replaced,
-    /// and either way the profile that most needs the nudge never gets it. Sampling here
-    /// can instead catch an instance that started *after* the swap and already has the new
-    /// bundle — an unnecessary nudge, which costs a restart the user can ignore. Between a
-    /// nudge too many and a stale window nobody is told about, the extra nudge is the one to
-    /// take.
-    ///
-    /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
-    func liveRewrite(for profile: Profile) -> LiveRewrite? {
-        runningPID(for: profile).map { LiveRewrite(profile: profile, pid: $0) }
     }
 
     /// Move the launcher to Trash (and optionally delete the profile data).

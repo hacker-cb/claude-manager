@@ -87,23 +87,44 @@ struct LauncherRebuildTests {
     func rebuildRunsUnderALiveInstanceAndReportsIt() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let system = SystemCommandRunner()
+        var profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        // `makeStoreEnv` already delegates iconutil to the real system, so the handler only
+        // has to answer the pgrep probe.
         env.runner.setHandler { executable, args in
-            if executable == CoreConstants.iconutilPath {
-                return (try? system.run(executable, args))
-                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
+            return idleStub(executable, args)
+        }
+        // Change the badge, or the rebuild is byte-identical and correctly says there is
+        // nothing to restart for (see `rebuildOfAnUnchangedLauncherNeverNudgesForARestart`).
+        profile.label = "ZZ"
+        let result = try env.store.rebuild(profile)
+        #expect(result.iconChanged)
+        #expect(result.liveRewrite == LiveRewrite(profile: profile, pid: 888))
+        // The bundle really was rewritten, not skipped.
+        #expect(LauncherBundle().readMarker(at: profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// The nudge has to answer "would a restart reveal anything", not "is it running". A
+    /// rebuild regenerates from the bundle's own marker, so it cannot change the window's
+    /// name; when the badge comes out byte-identical too — which is what "Apply to all
+    /// launchers" does to already-current launchers — a nudge would ask the user to close a
+    /// live session to reveal a change that does not exist.
+    @Test
+    func rebuildOfAnUnchangedLauncherNeverNudgesForARestart() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        env.runner.setHandler { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
             return idleStub(executable, args)
         }
         let result = try env.store.rebuild(profile)
-        #expect(result.liveRewrite == LiveRewrite(profile: profile, pid: 888))
-        // The bundle really was rewritten, not skipped.
-        #expect(LauncherBundle().readMarker(at: profile.appURL)?.wrapperVersion
-            == CoreConstants.currentWrapperVersion)
+        #expect(!result.iconChanged)
+        #expect(result.liveRewrite == nil)
     }
 
     /// The batch no longer skips a running launcher: skipping is what left an always-open
@@ -116,15 +137,9 @@ struct LauncherRebuildTests {
         let running = try env.store.add(AddProfileRequest(name: env.name("running"))).profile
         _ = try env.store.add(AddProfileRequest(name: env.name("stopped")))
         // Report only the "running" profile's user-data-dir as live (its unique name
-        // appears in the pgrep pattern; the name has no regex metacharacters). Keep
-        // delegating iconutil to the real system so the "stopped" rebuild's icon packs.
+        // appears in the pgrep pattern; the name has no regex metacharacters).
         let runningName = env.name("running")
-        let system = SystemCommandRunner()
         env.runner.setHandler { executable, args in
-            if executable == CoreConstants.iconutilPath {
-                return (try? system.run(executable, args))
-                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
-            }
             if executable == CoreConstants.pgrepPath {
                 let live = (args.last ?? "").contains(runningName)
                 return CommandOutput(
@@ -133,8 +148,26 @@ struct LauncherRebuildTests {
             }
             return idleStub(executable, args)
         }
-        let result = try env.store.rebuildAll()
+        // Restyle, as "Apply to all launchers" does — otherwise every badge re-renders
+        // byte-identically and the batch rightly reports nothing to restart for.
+        var restyled = BadgeStyle.default
+        restyled.shape = BadgeStyle.Shape.allCases.first { $0 != restyled.shape } ?? restyled.shape
+        let restyledStore = ProfileStore(
+            realClaude: env.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: env.installDir,
+                defaultProfilesDirectory: env.profilesDir,
+                badgeStyle: restyled,
+                managedPreferencesURLs: env.managedPreferencesURLs,
+                defaultProfileUserDataPath: env.defaultProfileUserDataPath,
+                shipItStatePath: env.shipItStatePath
+            ),
+            runner: env.runner,
+            signalSender: { _, _ in 0 }
+        )
+        let result = try restyledStore.rebuildAll()
         #expect(Set(result.rebuilt.map(\.name)) == [env.name("running"), env.name("stopped")])
+        // Only the live one is nudged, and only because its badge really changed.
         #expect(result.liveRewrites.map(\.profile.name) == [running.name])
         #expect(result.liveRewrites.map(\.pid) == [777])
         #expect(result.failed.isEmpty)

@@ -91,12 +91,9 @@ struct ProfileStoreMutationEdgeTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let system = SystemCommandRunner()
+        // `makeStoreEnv` already delegates iconutil to the real system, so the handler only
+        // has to answer the pgrep probe.
         env.runner.setHandler { executable, args in
-            if executable == CoreConstants.iconutilPath {
-                return (try? system.run(executable, args))
-                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
-            }
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
@@ -110,6 +107,32 @@ struct ProfileStoreMutationEdgeTests {
         #expect(result.liveRewrite?.profile.label == "ZZ")
         // The write really landed: the bundle's marker carries the new label.
         #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// An edit that leaves the name and the badge alone has nothing for a restart to reveal,
+    /// so it must not nudge — the window shows neither the bundle id nor anything else this
+    /// write touches.
+    @Test
+    func anEditThatChangesNothingVisibleDoesNotNudgeForARestart() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        var edited = work
+        edited.bundleID = "com.example.renamed"
+        let result = try env.store.update(original: work, to: edited)
+        #expect(result.liveRewrite == nil)
+        // The edit still landed — it just isn't something a restart would show.
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL) != nil)
+        #expect(result.profile.bundleID == "com.example.renamed")
     }
 
     /// Removal is the one mutation a live instance still blocks: trashing the bundle out
@@ -128,7 +151,7 @@ struct ProfileStoreMutationEdgeTests {
             }
             return idleStub(executable, args)
         }
-        #expect(throws: ClaudeManagerError.self) {
+        #expect(throws: ClaudeManagerError.profileRunning(name: work.name, pid: 888)) {
             try env.store.remove(work, purgeProfile: false)
         }
     }

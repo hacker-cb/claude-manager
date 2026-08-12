@@ -412,9 +412,13 @@ final class AppModel: ObservableObject {
     /// Rebuild one launcher from the current wrapper format (script + Info.plist +
     /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
     func rebuild(_ profile: Profile) async {
-        guard let result = await perform({ store in try store.rebuild(profile) }) else { return }
-        if result.iconChanged { dockRefreshPending = true }
-        noteLiveRewrites(result.liveRewrite.map { [$0] } ?? [])
+        // Refresh even when the rebuild failed — `perform` returning nil means it threw, and
+        // the usual reason is a launcher that is no longer where we think it is. Returning
+        // early would leave that dead row in the sidebar, offering actions against a bundle
+        // that is gone, until the next monitor tick.
+        let result = await perform { store in try store.rebuild(profile) }
+        if result?.iconChanged == true { dockRefreshPending = true }
+        noteLiveRewrites(result?.liveRewrite.map { [$0] } ?? [])
         await refresh()
     }
 
