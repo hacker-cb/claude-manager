@@ -238,3 +238,45 @@ struct DiagnosticTests {
         #expect(a.id == b.id)
     }
 }
+
+struct ProfileDataOutcomeTests {
+    /// The three silent outcomes. Each one *is* what the user asked for, so an alert here
+    /// would be a notification that the button worked.
+    @Test
+    func outcomesThatMatchTheRequestSayNothing() {
+        for outcome: ProfileDataOutcome in [.purged, .alreadyGone, .notRequested] {
+            #expect(outcome.notice(forRemovalOf: "Work") == nil)
+        }
+    }
+
+    /// An empty holder list would produce "…: still point at the same folder", naming nobody
+    /// and offering no remedy. It cannot arise from `remove` (the outcome is only built from a
+    /// non-empty filter), but the sentence must not depend on that staying true.
+    @Test
+    func sharedWithNobodySaysNothing() {
+        #expect(ProfileDataOutcome.keptSharedWith(launchers: []).notice(forRemovalOf: "Work") == nil)
+    }
+
+    @Test
+    func oneHolderIsNamedInTheSingular() throws {
+        let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.contains("Work's profile data was kept"))
+        #expect(notice.contains("Personal still points at"))
+        #expect(notice.contains("Remove it too"))
+    }
+
+    /// Two and three holders differ only in the joining, and both have to read as English —
+    /// the list is dropped straight into a sentence.
+    @Test
+    func severalHoldersAreJoinedAndPluralized() throws {
+        let two = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test"])
+        let twoNotice = try #require(two.notice(forRemovalOf: "Work"))
+        #expect(twoNotice.contains("Personal and Test still point at"))
+        #expect(twoNotice.contains("Remove them too"))
+
+        let three = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test", "Spare"])
+        let threeNotice = try #require(three.notice(forRemovalOf: "Work"))
+        #expect(threeNotice.contains("Personal, Test and Spare still point at"))
+    }
+}

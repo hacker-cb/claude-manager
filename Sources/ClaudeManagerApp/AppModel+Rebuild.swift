@@ -27,7 +27,7 @@ extension AppModel {
         if result.dockRefreshPending { setDockRefreshPending(true) }
         noteLiveRewrites(result.liveRewrites)
         if let notice = rebuildAllNotice(for: result) {
-            currentError = AppError(message: notice)
+            currentError = AppError(title: "Some launchers weren't rebuilt", message: notice)
         }
         await refresh()
     }

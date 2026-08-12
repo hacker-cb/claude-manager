@@ -205,7 +205,10 @@ struct ProfileStoreMutationEdgeTests {
         )
         #expect(!fm.fileExists(atPath: profile.profilePath))
         let result = try env.store.remove(profile, purgeProfile: true)
-        #expect(!result.purgedProfileData) // nothing to purge
+        // Nothing to purge — distinct from a refusal, and silent: the user asked for an
+        // absence they already had.
+        #expect(result.profileData == .alreadyGone)
+        #expect(result.profileData.notice(forRemovalOf: profile.displayName) == nil)
         #expect(!fm.fileExists(atPath: profile.appPath)) // launcher still trashed
     }
 

@@ -3,18 +3,29 @@ import ClaudeManagerCore
 import SwiftUI
 import UserNotifications
 
-/// A user-facing error wrapped for `.alert(item:)`.
+/// A user-facing message wrapped for `.alert(item:)`.
+///
+/// Carries its own `title` because this is the app's only alert channel and not everything
+/// routed through it is a failure — a removal that kept shared profile data, or a batch
+/// rebuild reporting what it skipped, are outcomes the user has to act on, and "Something
+/// went wrong" over them is simply untrue.
 struct AppError: Identifiable {
+    /// The heading for anything that genuinely is a failure — the common case, so it stays
+    /// the default rather than being spelled at every call site.
+    static let defaultTitle = "Something went wrong"
+
     let id = UUID()
+    let title: String
     let message: String
 
-    init(message: String) {
+    init(title: String = AppError.defaultTitle, message: String) {
+        self.title = title
         self.message = message
     }
 
     /// Prefer a domain error's `errorDescription` over the opaque `localizedDescription`.
     init(_ error: Error) {
-        message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        self.init(message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
     }
 }
 
@@ -394,11 +405,6 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
-    func removeProfile(_ profile: Profile, purgeProfile: Bool) async {
-        _ = await perform { store in try store.remove(profile, purgeProfile: purgeProfile) }
-        await refresh()
-    }
-
     /// Bring the app that owns `pid` to the front, returning whether it was activated.
     /// `false` means no running app owns `pid` (just quit / not yet registered) or the
     /// activation request was refused — either way the caller falls back to a launch.
@@ -420,8 +426,10 @@ final class AppModel: ObservableObject {
     func stop(_ profile: Profile, force: Bool) async {
         let outcome = await perform { store in await store.stop(profile, force: force) }
         if case let .stillRunning(pid)? = outcome {
-            currentError =
-                AppError(message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop.")
+            currentError = AppError(
+                title: "Profile is still running",
+                message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop."
+            )
         }
         await refresh()
     }

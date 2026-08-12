@@ -54,12 +54,6 @@ public struct UpdateResult: Sendable {
     public let liveRewrite: LiveRewrite?
 }
 
-public struct RemovalResult: Sendable {
-    public let trashedAppURL: URL?
-    public let profilePath: String
-    public let purgedProfileData: Bool
-}
-
 public enum StopOutcome: Sendable, Equatable {
     case notRunning
     case stopped
@@ -352,50 +346,6 @@ public struct ProfileStore {
             profile: updated,
             dockRefreshPending: dockRefreshPending,
             liveRewrite: liveRewrite(for: updated, presentationChanged: presentationChanged)
-        )
-    }
-
-    /// Move the launcher to Trash (and optionally delete the profile data).
-    @discardableResult
-    public func remove(_ profile: Profile, purgeProfile: Bool) throws -> RemovalResult {
-        guard fileManager.fileExists(atPath: profile.appPath) else {
-            // Consistent domain error instead of a raw CocoaError from trashItem.
-            throw ClaudeManagerError.launcherNotFound(name: profile.name)
-        }
-        if let pid = runningPID(for: profile) {
-            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
-        }
-        let trashed = try bundle.moveToTrash(appURL: profile.appURL)
-        var purged = false
-        if purgeProfile {
-            // Never delete data another launcher still points at (the launcher we
-            // just trashed is already gone from the scan).
-            let survivors = bundle.scan(installDirectory: configuration.installDirectory)
-            let sharedByAnother = survivors.contains { $0.marker.profile == profile.profilePath }
-            if !sharedByAnother {
-                if fileManager.fileExists(atPath: profile.profilePath) {
-                    try fileManager.removeItem(at: profile.profileURL)
-                    purged = true
-                }
-                // Purge the `<profilePath>-3p` overlay sibling too — it is created
-                // independently of the data dir, so remove it even if the data dir is
-                // already gone (removeOverlay no-ops when absent). Guard a name collision:
-                // if another launcher's user-data dir *is* that `-3p` path, it's that
-                // profile's data, not our overlay — leave it alone.
-                let overlayPath = ManagedConfigWriter
-                    .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
-                let overlayIsAnothersData = survivors.contains {
-                    URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path == overlayPath
-                }
-                if !overlayIsAnothersData {
-                    try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
-                }
-            }
-        }
-        return RemovalResult(
-            trashedAppURL: trashed,
-            profilePath: profile.profilePath,
-            purgedProfileData: purged
         )
     }
 

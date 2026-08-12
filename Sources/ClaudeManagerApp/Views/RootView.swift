@@ -63,8 +63,11 @@ struct RootView: View {
                 .environmentObject(launchAtLogin)
         }
         .modifier(DeepLinkResidencyNudge())
+        // The heading comes from the message, not from this call site: the same channel
+        // carries outcomes that are not failures (see `AppError`). The fallback covers only
+        // the instant between dismissal and teardown, when there is no message left to ask.
         .alert(
-            "Something went wrong",
+            model.currentError?.title ?? AppError.defaultTitle,
             isPresented: errorBinding,
             presenting: model.currentError
         ) { _ in
