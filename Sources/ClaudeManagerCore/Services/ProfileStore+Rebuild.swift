@@ -1,9 +1,24 @@
 import Foundation
 
-/// Outcome of `rebuildAll`: which launchers were regenerated, which were skipped
-/// because they were running (a live bundle can't be rewritten), and which failed
-/// (e.g. an icon-pipeline error, or a bundle removed mid-batch) — a single bad
-/// launcher never aborts the rest.
+/// Outcome of one launcher's rebuild.
+public struct RebuildResult: Sendable {
+    /// True when the badge this rebuild wrote differs from the one installed — see
+    /// `AddResult.dockRefreshPending`, whose contract this feeds.
+    public let iconChanged: Bool
+    /// Set when the launcher was rebuilt under a live instance — see `LiveRewrite`.
+    public let liveRewrite: LiveRewrite?
+
+    public init(iconChanged: Bool, liveRewrite: LiveRewrite?) {
+        self.iconChanged = iconChanged
+        self.liveRewrite = liveRewrite
+    }
+}
+
+/// Outcome of `rebuildAll`: which launchers were regenerated, which of them were rewritten
+/// under a live instance and so need a restart to show it, and which failed (e.g. an
+/// icon-pipeline error, or a bundle removed mid-batch) — a single bad launcher never aborts
+/// the rest. Nothing is skipped for running any more: a running launcher is rebuilt like
+/// every other and simply reported in `liveRewrites`.
 public struct RebuildAllResult: Sendable {
     /// A launcher the batch could not rebuild, together with **why** — the reason is
     /// carried, not dropped: a signing failure (the one that makes a launcher
@@ -20,7 +35,9 @@ public struct RebuildAllResult: Sendable {
     }
 
     public let rebuilt: [Profile]
-    public let skippedRunning: [Profile]
+    /// The subset of `rebuilt` whose instance was live at the time — each needs a restart
+    /// before the regenerated name and badge reach the running window.
+    public let liveRewrites: [LiveRewrite]
     public let failed: [Failure]
     /// True when at least one rebuilt launcher's icon actually changed, so a pinned Dock
     /// tile could be stale and the app may offer an opt-in "Refresh Dock now". A batch that
@@ -35,20 +52,25 @@ public extension ProfileStore {
     /// script (freshly stamped with the real-binary path and `currentWrapperVersion`),
     /// its Info.plist marker, and its badge icon (rendered with the current style).
     /// This is how a stale launcher is brought up to date and how the user forces a
-    /// fresh regenerate. Refuses while the profile is running: rewriting the bundle
-    /// under a live instance is unsafe (the same reason `update` refuses). Returns whether
-    /// the icon actually changed — `rebuild` is always in-place, so a changed icon means a
-    /// pinned Dock tile could be stale (the app offers an opt-in refresh); an unchanged one
-    /// (a wrapper-format bump, the common case) needs no refresh and never flashes.
+    /// fresh regenerate.
+    ///
+    /// Runs while the profile is running, reporting it through `RebuildResult.liveRewrite`
+    /// instead of refusing — the reasoning is `LiveRewrite`'s. Refusing here would be worse
+    /// than merely inconvenient: a wrapper-version bump makes *every* launcher stale at
+    /// once, and the rebuild is how the new format reaches them, so a guard would put the
+    /// fix out of reach of exactly the profiles someone keeps open all day.
+    ///
+    /// Reports whether the icon actually changed — `rebuild` is always in-place, so a
+    /// changed icon means a pinned Dock tile could be stale (the app offers an opt-in
+    /// refresh); an unchanged one (a wrapper-format bump, the common case) needs no refresh
+    /// and never flashes.
     @discardableResult
-    func rebuild(_ profile: Profile) throws -> Bool {
+    func rebuild(_ profile: Profile) throws -> RebuildResult {
         try ensureRealBinaryPresent()
         guard fileManager.fileExists(atPath: profile.appPath) else {
             throw ClaudeManagerError.launcherNotFound(name: profile.name)
         }
-        if let pid = runningPID(for: profile) {
-            throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
-        }
+        let livePID = runningPID(for: profile)
         let icns = try iconPipeline.makeBadgeICNS(
             realClaude: realClaude,
             label: profile.label,
@@ -62,34 +84,33 @@ public extension ProfileStore {
         // screen (see `IconCache`).
         iconCache.register(appURL: profile.appURL)
         // Re-seed the overlay alongside the wrapper refresh (best-effort — a config
-        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too.
+        // hiccup must not fail the rebuild). Covers `rebuildAll`'s rebuilt launchers too,
+        // and is harmless under a live instance: the clone reads it at next launch.
         try? reconcileManagedConfig(for: profile)
-        return iconChanged
+        return RebuildResult(
+            iconChanged: iconChanged,
+            liveRewrite: livePID.map { LiveRewrite(profile: profile, pid: $0) }
+        )
     }
 
-    /// Rebuild every launcher (see `rebuild`). A running launcher is *skipped*, not failed
-    /// — a live bundle can't be rewritten — and returned so the caller can report it. Never
-    /// restarts the Dock: the batch reports whether any icon changed (`dockRefreshPending`)
-    /// so the app can offer a single opt-in refresh instead of flashing the screen.
+    /// Rebuild every launcher (see `rebuild`). Running ones are rebuilt too and reported in
+    /// `liveRewrites` so the app can nudge each for a restart — skipping them would leave a
+    /// wrapper bump undelivered to whichever profiles the user keeps open. Never restarts
+    /// the Dock: the batch reports whether any icon changed (`dockRefreshPending`) so the
+    /// app can offer a single opt-in refresh instead of flashing the screen.
     @discardableResult
     func rebuildAll() throws -> RebuildAllResult {
         try ensureRealBinaryPresent()
         var rebuilt: [Profile] = []
-        var skippedRunning: [Profile] = []
+        var liveRewrites: [LiveRewrite] = []
         var failed: [RebuildAllResult.Failure] = []
         var dockRefreshPending = false
         for managed in list() {
-            if managed.isRunning {
-                skippedRunning.append(managed.profile)
-                continue
-            }
             do {
-                let iconChanged = try rebuild(managed.profile)
+                let result = try rebuild(managed.profile)
                 rebuilt.append(managed.profile)
-                if iconChanged { dockRefreshPending = true }
-            } catch ClaudeManagerError.profileRunning {
-                // Started between the scan and the rebuild — skip it too.
-                skippedRunning.append(managed.profile)
+                if let live = result.liveRewrite { liveRewrites.append(live) }
+                if result.iconChanged { dockRefreshPending = true }
             } catch {
                 // A single launcher's failure (icon pipeline, signing, bundle vanished
                 // mid-batch, …) must not abort the rest — record it *with its reason*
@@ -103,13 +124,8 @@ public extension ProfileStore {
         // No automatic Dock restart — a rebuild never flashes the screen. When an icon
         // actually changed, the app surfaces an opt-in "Refresh Dock now"; when none did,
         // no pinned tile can be showing anything but the icon already installed.
-        // `rebuild` already seeded each rebuilt clone; seed the skipped-running ones too
-        // (harmless while live — read at next launch). No extra scan: reuse the sets.
-        for profile in skippedRunning {
-            try? reconcileManagedConfig(for: profile)
-        }
         return RebuildAllResult(
-            rebuilt: rebuilt, skippedRunning: skippedRunning, failed: failed,
+            rebuilt: rebuilt, liveRewrites: liveRewrites, failed: failed,
             dockRefreshPending: dockRefreshPending
         )
     }

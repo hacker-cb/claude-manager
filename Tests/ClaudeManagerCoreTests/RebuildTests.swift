@@ -35,8 +35,9 @@ struct LauncherRebuildTests {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let pending = try env.store.rebuild(profile)
-        #expect(pending == false)
+        let result = try env.store.rebuild(profile)
+        #expect(!result.iconChanged)
+        #expect(result.liveRewrite == nil) // stopped profile — nothing to restart
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
     }
 
@@ -78,24 +79,38 @@ struct LauncherRebuildTests {
             == [["iconservicesagent"], ["Dock"]])
     }
 
+    /// A running profile is rebuilt, not refused. The launcher is a script that `exec`s the
+    /// real binary, so the live process holds nothing in the bundle — and refusing here
+    /// would put a wrapper bump out of reach of any profile the user keeps open. What the
+    /// rebuild cannot reach is the running window, so it reports the pid instead.
     @Test
-    func rebuildRefusesWhileRunning() throws {
+    func rebuildRunsUnderALiveInstanceAndReportsIt() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let system = SystemCommandRunner()
         env.runner.setHandler { executable, args in
+            if executable == CoreConstants.iconutilPath {
+                return (try? system.run(executable, args))
+                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
+            }
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
             return idleStub(executable, args)
         }
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.rebuild(profile)
-        }
+        let result = try env.store.rebuild(profile)
+        #expect(result.liveRewrite == LiveRewrite(profile: profile, pid: 888))
+        // The bundle really was rewritten, not skipped.
+        #expect(LauncherBundle().readMarker(at: profile.appURL)?.wrapperVersion
+            == CoreConstants.currentWrapperVersion)
     }
 
+    /// The batch no longer skips a running launcher: skipping is what left an always-open
+    /// profile behind on every wrapper bump. Both are rebuilt; the live one is reported so
+    /// the app can nudge just that profile for a restart.
     @Test
-    func rebuildAllSkipsRunningRebuildsRest() throws {
+    func rebuildAllRebuildsRunningLaunchersAndReportsThem() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let running = try env.store.add(AddProfileRequest(name: env.name("running"))).profile
@@ -119,8 +134,9 @@ struct LauncherRebuildTests {
             return idleStub(executable, args)
         }
         let result = try env.store.rebuildAll()
-        #expect(result.rebuilt.map(\.name) == [env.name("stopped")])
-        #expect(result.skippedRunning.map(\.name) == [running.name])
+        #expect(Set(result.rebuilt.map(\.name)) == [env.name("running"), env.name("stopped")])
+        #expect(result.liveRewrites.map(\.profile.name) == [running.name])
+        #expect(result.liveRewrites.map(\.pid) == [777])
         #expect(result.failed.isEmpty)
     }
 
@@ -143,7 +159,7 @@ struct LauncherRebuildTests {
         }
         let result = try env.store.rebuildAll()
         #expect(result.rebuilt.isEmpty)
-        #expect(result.skippedRunning.isEmpty)
+        #expect(result.liveRewrites.isEmpty)
         #expect(Set(result.failed.map(\.profile.name)) == [env.name("one"), env.name("two")])
         // Nothing rebuilt → no batch Dock restart.
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)

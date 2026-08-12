@@ -79,16 +79,24 @@ struct ProfileStoreMutationEdgeTests {
         }
     }
 
+    /// An edit applies while the profile is running, and says so. A launcher `exec`s the
+    /// real Claude binary, so a live instance is not executing out of the bundle and the
+    /// rewrite is safe; what it cannot reach is the running window, which keeps the name and
+    /// badge it launched with. Refusing the edit was the wrong remedy for that.
     @Test
-    func updateRefusedWhileProfileRunning() throws {
+    func updateAppliesUnderALiveInstanceAndReportsIt() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        // Now report the profile as running; an edit must be refused before any write.
+        let system = SystemCommandRunner()
         env.runner.setHandler { executable, args in
+            if executable == CoreConstants.iconutilPath {
+                return (try? system.run(executable, args))
+                    ?? CommandOutput(exitCode: 1, standardOutput: "", standardError: "delegate failed")
+            }
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
@@ -96,8 +104,32 @@ struct ProfileStoreMutationEdgeTests {
         }
         var edited = work
         edited.label = "ZZ"
+        let result = try env.store.update(original: work, to: edited)
+
+        #expect(result.liveRewrite?.pid == 888)
+        #expect(result.liveRewrite?.profile.label == "ZZ")
+        // The write really landed: the bundle's marker carries the new label.
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// Removal is the one mutation a live instance still blocks: trashing the bundle out
+    /// from under a profile the user may relaunch is a different act from rewriting it.
+    @Test
+    func removeIsStillRefusedWhileProfileRunning() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: work, to: edited)
+            try env.store.remove(work, purgeProfile: false)
         }
     }
 

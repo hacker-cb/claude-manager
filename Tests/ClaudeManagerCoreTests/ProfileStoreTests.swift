@@ -376,7 +376,7 @@ struct ProfileStoreTests {
         _ = try env.store.add(AddProfileRequest(name: env.name("home")))
         let result = try env.store.rebuildAll()
         #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
-        #expect(result.skippedRunning.isEmpty)
+        #expect(result.liveRewrites.isEmpty)
         #expect(result.failed.isEmpty)
         // Rebuilding unchanged launchers regenerates byte-identical badges, so nothing is
         // pending and the screen-flashing Dock restart is never issued (opt-in only).

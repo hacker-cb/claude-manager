@@ -17,6 +17,7 @@ struct ProfileDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 if managed.claudeUpdateAvailable { restartBanner }
+                if model.needsRestartToApply(managed) { applyEditsBanner }
                 if managed.needsRebuild { rebuildBanner }
                 Divider()
                 actions
@@ -111,7 +112,6 @@ struct ProfileDetailView: View {
                     Button("Restart") { Task { await model.restart(profile) } }
                 }
                 Button("Rebuild Launcher") { Task { await model.rebuild(profile) } }
-                    .disabled(managed.isRunning)
                 Button("Reveal Profile Data in Finder") { model.revealProfileData(profile) }
                 Button("Reveal Launcher in Finder") { model.revealLauncher(profile) }
                 Divider()
@@ -146,8 +146,34 @@ struct ProfileDetailView: View {
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    /// Shown when the launcher was built by an older wrapper — offers a one-click
-    /// rebuild. Disabled while running (the core refuses to rewrite a live bundle).
+    /// Shown when this profile's launcher was rewritten — edited or rebuilt — while the
+    /// instance now running was already up. The rewrite landed on disk; what it cannot
+    /// reach is a live process, which keeps the name and Dock tile it launched with. So the
+    /// nudge asks for the one thing that does apply it, and the banner retires itself once
+    /// the pid changes (see `AppModel.needsRestartToApply`).
+    private var applyEditsBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(.blue)
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Restart to apply").font(.callout).bold()
+                Text("This launcher changed while the profile was open. The running window keeps "
+                    + "the name and icon it started with until you restart it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Restart") { Task { await model.restart(profile) } }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Shown when the launcher was built by an older wrapper — offers a one-click rebuild.
+    /// Available while running: the live process does not execute out of the bundle, so the
+    /// rebuild lands either way and the profile then shows "Restart to apply". Gating it on
+    /// running is what used to put a wrapper bump out of reach of an always-open profile.
     ///
     /// Two severities behind one banner: a launcher predating ad-hoc signing is refused
     /// execution by macOS, so it gets error styling and "won't launch" wording, while a
@@ -156,7 +182,6 @@ struct ProfileDetailView: View {
     private var rebuildBanner: some View {
         let unrunnable = managed.isUnrunnable
         let tint: Color = unrunnable ? .red : .orange
-        let rebuildPhrase = managed.isRunning ? "Stop it first, then rebuild " : "Rebuild "
         return HStack(spacing: 10) {
             Image(systemName: unrunnable ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath")
                 .foregroundStyle(tint)
@@ -165,15 +190,14 @@ struct ProfileDetailView: View {
                 Text(unrunnable ? "Won't launch" : "Update available").font(.callout).bold()
                 Text(unrunnable
                     ? "This launcher is unsigned, and macOS refuses to run unsigned apps — "
-                    + "it appears in the Dock and quits. " + rebuildPhrase + "to fix it."
+                    + "it appears in the Dock and quits. Rebuild to fix it."
                     : "Built by an older version of Claude Manager. "
-                    + rebuildPhrase + "to apply the latest launcher improvements.")
+                    + "Rebuild to apply the latest launcher improvements.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Rebuild") { Task { await model.rebuild(profile) } }
                 .buttonStyle(.borderedProminent)
-                .disabled(managed.isRunning)
         }
         .padding(12)
         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

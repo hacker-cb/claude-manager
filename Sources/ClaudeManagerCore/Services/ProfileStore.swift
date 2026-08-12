@@ -45,11 +45,35 @@ public struct AddResult: Sendable {
     public let dockRefreshPending: Bool
 }
 
+/// A launcher whose bundle was rewritten while its own instance was live.
+///
+/// The rewrite itself is safe, and that is the whole reason edits are no longer refused: a
+/// launcher is a bash script that `exec`s the real Claude binary, so the running process is
+/// **not** executing out of the bundle and holds nothing in it open — and `LauncherBundle.build`
+/// assembles into a staging directory and swaps it in atomically. What the live process does
+/// keep is the name and the Dock tile it launched with, and no rewrite reaches those. So the
+/// user is told to restart *that instance* to see the change, instead of being told to stop it
+/// before making one.
+public struct LiveRewrite: Sendable, Equatable {
+    public let profile: Profile
+    /// The instance observed at the moment of the write. Carried, not just a flag, so the app
+    /// can retire the nudge on the evidence that the restart happened — this pid gone or
+    /// replaced — rather than on a guess.
+    public let pid: Int32
+
+    public init(profile: Profile, pid: Int32) {
+        self.profile = profile
+        self.pid = pid
+    }
+}
+
 public struct UpdateResult: Sendable {
     public let profile: Profile
     /// See `AddResult.dockRefreshPending`: true when the edit changed the icon at an
     /// in-place path (or a rename onto a trashed twin) whose Dock tile could be stale.
     public let dockRefreshPending: Bool
+    /// Set when the edit was applied under a live instance — see `LiveRewrite`.
+    public let liveRewrite: LiveRewrite?
 }
 
 public struct RemovalResult: Sendable {
@@ -284,12 +308,18 @@ public struct ProfileStore {
     }
 
     /// Apply edits by rebuilding the launcher, trashing the old bundle on rename.
+    ///
+    /// Applies while the profile is running, and reports that through `UpdateResult.liveRewrite`
+    /// rather than refusing: the live process does not execute out of the bundle (see
+    /// `LiveRewrite`), so what a running instance actually costs is a restart before the new
+    /// name and badge reach it — not the right to make the edit. `remove` still refuses,
+    /// because trashing the bundle a user might relaunch from is a different act.
     @discardableResult
     public func update(original: Profile, to updated: Profile) throws -> UpdateResult {
         try ensureRealBinaryPresent()
-        if let pid = runningPID(for: original) {
-            throw ClaudeManagerError.profileRunning(name: original.name, pid: pid)
-        }
+        // Read once, up front: the pid observed *before* the write is what the nudge is
+        // about, and re-reading it afterwards would race the instance quitting mid-edit.
+        let livePID = runningPID(for: original)
         guard Profile.isValidName(updated.name) else {
             throw ClaudeManagerError.invalidProfileName(updated.name)
         }
@@ -337,7 +367,13 @@ public struct ProfileStore {
             iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
         // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
         try? reconcileManagedConfig(for: updated)
-        return UpdateResult(profile: updated, dockRefreshPending: dockRefreshPending)
+        // The nudge names the *edited* profile, so it carries the updated value: after a
+        // rename the old one names a bundle that is already in the Trash.
+        return UpdateResult(
+            profile: updated,
+            dockRefreshPending: dockRefreshPending,
+            liveRewrite: livePID.map { LiveRewrite(profile: updated, pid: $0) }
+        )
     }
 
     /// Move the launcher to Trash (and optionally delete the profile data).
