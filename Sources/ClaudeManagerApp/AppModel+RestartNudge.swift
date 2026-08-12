@@ -16,9 +16,12 @@ extension AppModel {
     /// instance is restarted. Keyed by launcher, not by user-data dir — see
     /// `AppModel.pendingRestart`.
     func noteLiveRewrites(_ rewrites: [LiveRewrite]) {
+        guard !rewrites.isEmpty else { return }
+        var next = pendingRestart
         for rewrite in rewrites {
-            pendingRestart[rewrite.profile.id] = rewrite.pid
+            next[rewrite.profile.id] = rewrite.pid
         }
+        setPendingRestart(next)
     }
 
     /// Whether `managed`'s *running* instance predates the last rewrite of its launcher.
@@ -35,7 +38,9 @@ extension AppModel {
     /// banner (and its sidebar mark) gone mid-session. Not a dead end: Restart stays on the
     /// detail pane and in the sidebar context menu, so the remedy outlives the reminder.
     func dismissRestartNudge(_ profile: Profile) {
-        pendingRestart[profile.id] = nil
+        var next = pendingRestart
+        next[profile.id] = nil
+        setPendingRestart(next)
     }
 
     /// Drop nudges with nothing left to say — the instance was restarted (new pid), stopped
@@ -46,9 +51,12 @@ extension AppModel {
     func prunePendingRestarts() {
         guard !pendingRestart.isEmpty else { return }
         var live: [String: Int32] = [:]
-        for managed in profiles where managed.pid != nil {
-            live[managed.profile.id] = managed.pid
+        for managed in profiles {
+            // Unwrapped rather than assigning the optional straight through: `dict[k] = nil`
+            // would be a removal, so the optional form reads like a type error even where it
+            // is correct.
+            if let pid = managed.pid { live[managed.profile.id] = pid }
         }
-        pendingRestart = pendingRestart.filter { id, pid in live[id] == pid }
+        setPendingRestart(pendingRestart.filter { id, pid in live[id] == pid })
     }
 }

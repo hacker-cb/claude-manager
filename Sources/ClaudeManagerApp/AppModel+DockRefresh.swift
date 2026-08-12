@@ -23,13 +23,13 @@ extension AppModel {
         // unconditionally afterwards: the attempt is best-effort (see `restartDock`), and
         // Settings carries the retry.
         await Task.detached { IconCache(runner: SystemCommandRunner()).restartDock() }.value
-        dockRefreshPending = false
+        setDockRefreshPending(false)
     }
 
     /// Dismiss the Dock-refresh banner without restarting the Dock, leaving pinned tiles on
     /// their old icon. Not a dead end: **Refresh Dock icons** in Settings runs the same
     /// action whenever the user wants it.
     func dismissDockRefresh() {
-        dockRefreshPending = false
+        setDockRefreshPending(false)
     }
 }

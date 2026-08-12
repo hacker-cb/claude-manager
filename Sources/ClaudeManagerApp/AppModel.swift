@@ -57,9 +57,14 @@ final class AppModel: ObservableObject {
     /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile keeps showing
     /// the old icon until the Dock is refreshed. Drives an opt-in "Refresh Dock now"
     /// banner — a Dock restart flashes the whole screen, so it is never done silently.
-    /// Stays set until the user refreshes or dismisses it. Non-private so the
-    /// `AppModel+DockRefresh` extension (another file) can clear it.
-    @Published var dockRefreshPending = false
+    /// Stays set until the user refreshes or dismisses it.
+    @Published private(set) var dockRefreshPending = false
+
+    /// Flip the Dock-refresh banner (`private(set)`, so the extensions drive it via this —
+    /// the same shape `setApplyingStagedUpdate` uses).
+    func setDockRefreshPending(_ value: Bool) {
+        dockRefreshPending = value
+    }
 
     /// Instances that were live when their launcher was rewritten, as
     /// `Profile.id -> pid observed at the write`. A running Claude keeps the name and Dock
@@ -85,9 +90,13 @@ final class AppModel: ObservableObject {
     /// Both want the same thing to go away properly: the launch-time presentation of the
     /// running instance, which nothing here records. Filed as a follow-up.
     ///
-    /// Non-private so the `AppModel+RestartNudge` extension (another file) can drive it, as
-    /// `inflight` is for `AppModel+Perform`.
-    @Published var pendingRestart: [String: Int32] = [:]
+    @Published private(set) var pendingRestart: [String: Int32] = [:]
+
+    /// Replace the restart-nudge map (`private(set)`, so `AppModel+RestartNudge` drives it
+    /// via this rather than every write in the module being able to reach it).
+    func setPendingRestart(_ value: [String: Int32]) {
+        pendingRestart = value
+    }
 
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
     /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
@@ -415,53 +424,6 @@ final class AppModel: ObservableObject {
                 AppError(message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop.")
         }
         await refresh()
-    }
-
-    /// Rebuild one launcher from the current wrapper format (script + Info.plist +
-    /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
-    func rebuild(_ profile: Profile) async {
-        // Refresh even when the rebuild failed — `perform` returning nil means it threw, and
-        // the usual reason is a launcher that is no longer where we think it is. Returning
-        // early would leave that dead row in the sidebar, offering actions against a bundle
-        // that is gone, until the next monitor tick.
-        let result = await perform { store in try store.rebuild(profile) }
-        if result?.iconChanged == true { dockRefreshPending = true }
-        noteLiveRewrites(result?.liveRewrite.map { [$0] } ?? [])
-        await refresh()
-    }
-
-    /// Rebuild every launcher. Per-launcher failures are collected by the core (the batch
-    /// never aborts); surface them as a non-fatal notice via the same channel `stop` uses
-    /// for its running warning.
-    func rebuildAll() async {
-        guard let result = await perform({ store in try store.rebuildAll() }) else { return }
-        if result.dockRefreshPending { dockRefreshPending = true }
-        noteLiveRewrites(result.liveRewrites)
-        if let notice = rebuildAllNotice(for: result) {
-            currentError = AppError(message: notice)
-        }
-        await refresh()
-    }
-
-    /// A non-fatal summary when a batch rebuild didn't touch every launcher, or `nil`
-    /// when all were rebuilt cleanly. Running launchers are no longer a category here:
-    /// they are rebuilt like any other, and each carries its own "Restart to apply" nudge
-    /// rather than a batch-wide warning nobody could act on from this alert.
-    private func rebuildAllNotice(for result: RebuildAllResult) -> String? {
-        var parts: [String] = []
-        if !result.failed.isEmpty {
-            let c = result.failed.count
-            let names = result.failed.map(\.profile.displayName).joined(separator: ", ")
-            parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
-            // Carry the reason through, not just the names: a signing failure leaves the
-            // launcher unable to start, and without this the user has nothing to act on.
-            // Distinct reasons only — a shared cause (the usual case) prints once.
-            let reasons = Set(result.failed.map(\.reason)).sorted()
-            parts.append(reasons.joined(separator: " "))
-        }
-        guard !parts.isEmpty else { return nil }
-        let n = result.rebuilt.count
-        return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
     }
 
     private struct LocateResult {

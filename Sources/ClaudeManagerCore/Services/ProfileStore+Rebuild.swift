@@ -35,8 +35,10 @@ public struct RebuildAllResult: Sendable {
     }
 
     public let rebuilt: [Profile]
-    /// The subset of `rebuilt` whose instance was live at the time — each needs a restart
-    /// before the regenerated name and badge reach the running window.
+    /// The subset of `rebuilt` whose instance was live *and* whose badge actually changed —
+    /// each needs a restart before the new badge reaches the running window. A rebuild
+    /// regenerates from the bundle's own marker, so it can never change the window's name;
+    /// only an edit can.
     public let liveRewrites: [LiveRewrite]
     public let failed: [Failure]
     /// True when at least one rebuilt launcher's icon actually changed, so a pinned Dock
