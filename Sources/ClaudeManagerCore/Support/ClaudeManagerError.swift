@@ -40,10 +40,11 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
         case let .profileDataHoldsAnother(name, others):
-            let list = others.joined(separator: ", ")
-            return "\"\(name)\"'s profile data folder contains \(list)'s, so deleting it would "
-                + "delete their login and chat history too. Remove \(list) first, or use "
-                + "“Move Launcher to Trash (keep login)” to remove only the launcher."
+            let list = Sentences.list(others)
+            return "\"\(name)\"'s profile data folder contains the data for \(list), so "
+                + "deleting it would delete their login and chat history too. Remove \(list) "
+                + "first, or use “Move Launcher to Trash (keep login)” to remove only the "
+                + "launcher."
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):

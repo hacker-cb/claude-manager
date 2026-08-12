@@ -262,22 +262,24 @@ struct ProfileDataOutcomeTests {
         let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
         let notice = try #require(outcome.notice(forRemovalOf: "Work"))
         #expect(notice.title == "Profile data was kept")
-        #expect(notice.message.contains("Deleting Work's profile data would have deleted Personal's"))
+        #expect(notice.message.contains("would have deleted the data for Personal too"))
         #expect(notice.message.contains("Remove that launcher"))
     }
 
     /// Two and three holders differ only in the joining, and both have to read as English —
-    /// the list is dropped straight into a sentence.
+    /// the list is dropped straight into a sentence. Never as a possessive: "Personal and
+    /// Test's" reads as belonging to Test alone.
     @Test
     func severalHoldersAreJoinedAndPluralized() throws {
         let two = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test"])
         let twoNotice = try #require(two.notice(forRemovalOf: "Work"))
-        #expect(twoNotice.message.contains("deleted Personal and Test's too"))
+        #expect(twoNotice.message.contains("the data for Personal and Test too"))
         #expect(twoNotice.message.contains("Remove those launchers"))
+        #expect(!twoNotice.message.contains("Test's"))
 
         let three = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test", "Spare"])
         let threeNotice = try #require(three.notice(forRemovalOf: "Work"))
-        #expect(threeNotice.message.contains("Personal, Test and Spare's too"))
+        #expect(threeNotice.message.contains("the data for Personal, Test and Spare too"))
     }
 
     /// The remedy has to name the *destructive* button. The removal dialog leads with "Move
@@ -300,5 +302,35 @@ struct ProfileDataOutcomeTests {
         #expect(notice.message.contains("Work's launcher is in the Trash"))
         #expect(notice.message.contains("Permission denied."))
         #expect(notice.message.contains("still on disk"))
+    }
+
+    /// The reason comes from Foundation or from an interpolated error, so whether it ends in a
+    /// full stop is not ours to know — and a sentence follows it either way.
+    @Test
+    func aFailedPurgeDoesNotRunTheReasonIntoTheNextSentence() throws {
+        let outcome = ProfileDataOutcome.purgeFailed(reason: "Permission denied")
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.message.contains("Permission denied. The login"))
+    }
+}
+
+struct SentencesTests {
+    @Test
+    func listReadsAsEnglish() {
+        #expect(Sentences.list([]).isEmpty)
+        #expect(Sentences.list(["A"]) == "A")
+        #expect(Sentences.list(["A", "B"]) == "A and B")
+        #expect(Sentences.list(["A", "B", "C"]) == "A, B and C")
+    }
+
+    @Test
+    func terminatedAddsAFullStopOnlyWhereOneIsMissing() {
+        #expect(Sentences.terminated("Denied") == "Denied.")
+        #expect(Sentences.terminated("Denied.") == "Denied.")
+        #expect(Sentences.terminated("Denied!") == "Denied!")
+        #expect(Sentences.terminated("Denied?") == "Denied?")
+        // Trailing whitespace would otherwise put the stop after the gap.
+        #expect(Sentences.terminated("  Denied \n") == "Denied.")
+        #expect(Sentences.terminated("").isEmpty)
     }
 }

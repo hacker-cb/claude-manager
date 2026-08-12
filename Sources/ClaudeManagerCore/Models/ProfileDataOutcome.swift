@@ -61,8 +61,8 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             RemovalNotice(
                 title: "Profile data wasn't deleted",
                 message: "\(displayName)'s launcher is in the Trash, but its profile data "
-                    + "could not be deleted: \(reason) The login and chat history are still "
-                    + "on disk."
+                    + "could not be deleted: \(Sentences.terminated(reason)) The login and "
+                    + "chat history are still on disk."
             )
         }
     }
@@ -73,22 +73,14 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// no launcher left through which the data could ever be deleted.
     private static func sharedNotice(displayName: String, launchers: [String]) -> RemovalNotice? {
         guard !launchers.isEmpty else { return nil }
-        let others = list(launchers)
         let single = launchers.count == 1
         return RemovalNotice(
             title: "Profile data was kept",
-            message: "Deleting \(displayName)'s profile data would have deleted \(others)'s "
-                + "too — the folders overlap — so it was left alone, login and chat history "
-                + "included. Remove \(single ? "that launcher" : "those launchers") with "
-                + "“Move to Trash and Delete Profile Data” to delete it."
+            message: "Deleting \(displayName)'s profile data would have deleted the data for "
+                + "\(Sentences.list(launchers)) too — the folders overlap — so it was left "
+                + "alone, login and chat history included. Remove "
+                + "\(single ? "that launcher" : "those launchers") with “Move to Trash and "
+                + "Delete Profile Data” to delete it."
         )
-    }
-
-    /// Names joined for a sentence — "A", "A and B", "A, B and C". Private because the one
-    /// caller is right here; a second one is what would earn it a home of its own.
-    private static func list(_ names: [String]) -> String {
-        guard let last = names.last else { return "" }
-        guard names.count > 1 else { return last }
-        return names.dropLast().joined(separator: ", ") + " and " + last
     }
 }
