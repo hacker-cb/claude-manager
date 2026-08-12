@@ -99,8 +99,45 @@ struct ProfileStoreRemoveTests {
     /// A launcher whose data sits *inside* the one being purged. `removeItem` is recursive, so
     /// without a containment check this deletes that profile's Anthropic token and chat
     /// history and reports a plain success.
+    ///
+    /// Refused up front rather than half-done: this is the one refusal the user cannot recover
+    /// from afterwards, since purging the inner launcher would leave the outer directory
+    /// behind with no launcher left to offer deleting it.
     @Test
-    func removeKeepsDataHoldingAnotherLaunchersFolder() throws {
+    func removeRefusesToPurgeAFolderHoldingAnotherLaunchersData() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("outer"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("inner"))
+        }
+        let outerPath = env.profilesDir.appendingPathComponent("tree").path
+        let innerPath = URL(fileURLWithPath: outerPath).appendingPathComponent("inner").path
+        let outer = try env.store
+            .add(AddProfileRequest(name: env.name("outer"), profilePath: outerPath)).profile
+        _ = try env.store
+            .add(AddProfileRequest(name: env.name("inner"), profilePath: innerPath)).profile
+        let keep = URL(fileURLWithPath: innerPath).appendingPathComponent("token")
+        try Data("secret".utf8).write(to: keep)
+
+        #expect(throws: ClaudeManagerError.self) {
+            try env.store.remove(outer, purgeProfile: true)
+        }
+        // Nothing happened — the launcher is still here to retry through.
+        #expect(fm.fileExists(atPath: outer.appPath))
+        #expect(fm.fileExists(atPath: keep.path))
+        #expect(fm.fileExists(atPath: outerPath))
+
+        // The non-destructive removal is unaffected: it takes only the launcher.
+        let kept = try env.store.remove(outer, purgeProfile: false)
+        #expect(kept.profileData == .notRequested)
+        #expect(fm.fileExists(atPath: keep.path))
+    }
+
+    /// The mirror case: purging the *inner* launcher is allowed. The outer one survives and
+    /// its own purge can still reach this directory later, so nothing becomes unreachable.
+    @Test
+    func removePurgesAFolderNestedInsideAnothersData() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -113,14 +150,14 @@ struct ProfileStoreRemoveTests {
             .add(AddProfileRequest(name: env.name("outer"), profilePath: outerPath)).profile
         let inner = try env.store
             .add(AddProfileRequest(name: env.name("inner"), profilePath: innerPath)).profile
-        let keep = URL(fileURLWithPath: innerPath).appendingPathComponent("token")
-        try Data("secret".utf8).write(to: keep)
 
-        let result = try env.store.remove(outer, purgeProfile: true)
+        let result = try env.store.remove(inner, purgeProfile: true)
 
-        #expect(result.profileData == .keptSharedWith(launchers: [inner.displayName]))
-        #expect(fm.fileExists(atPath: keep.path))
-        #expect(fm.fileExists(atPath: outerPath))
+        // Declined, because deleting it is the outer profile's business — but reported, and
+        // the outer launcher is still there to do it.
+        #expect(result.profileData == .keptSharedWith(launchers: [outer.displayName]))
+        #expect(fm.fileExists(atPath: innerPath))
+        #expect(fm.fileExists(atPath: outer.appPath))
     }
 
     /// Shared *and* already deleted out of band. The refusal is still right — nothing is

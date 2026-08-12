@@ -82,8 +82,11 @@ struct RootView: View {
             Text(error.message)
         }
         // Latch the heading while there is one to latch. Keyed on `id`, which is fresh per
-        // message, so two alerts carrying the same text still re-arm it.
-        .onChange(of: model.currentError?.id) {
+        // message, so two alerts carrying the same text still re-arm it. `initial: true`
+        // because a menu-bar action (Stop, Restart, Apply update) can set the message with no
+        // window open at all — opening one then finds `currentError` already non-nil, and a
+        // change-only observer never fires for it.
+        .onChange(of: model.currentError?.id, initial: true) {
             if let title = model.currentError?.title { alertTitle = title }
         }
         .confirmationDialog(

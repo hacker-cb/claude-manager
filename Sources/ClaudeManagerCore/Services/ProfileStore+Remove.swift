@@ -34,6 +34,20 @@ public extension ProfileStore {
         if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
+        // Refused *before* the launcher is trashed, unlike every other reason a purge does not
+        // happen. Those leave the data reachable: a launcher on the same directory, or one
+        // whose directory contains it, can still purge it later. This case cannot — purging
+        // the inner launcher deletes only the inner directory, and with the outer launcher in
+        // the Trash nothing in the app can ever offer to delete the rest. So the removal stops
+        // here instead, with both remedies named, and nothing has happened yet to undo.
+        if purgeProfile {
+            let nested = launchersNested(under: profile)
+            guard nested.isEmpty else {
+                throw ClaudeManagerError.profileDataHoldsAnother(
+                    name: profile.displayName, others: nested
+                )
+            }
+        }
         let trashed = try bundle.moveToTrash(appURL: profile.appURL)
         return RemovalResult(
             trashedAppURL: trashed,
@@ -95,6 +109,18 @@ public extension ProfileStore {
         }
     }
 
+    /// Display names of the launchers whose user-data directory sits **strictly inside**
+    /// `profile`'s — the case a purge cannot be talked out of afterwards. This runs before the
+    /// launcher is trashed, so it filters `profile` out of the scan itself rather than relying
+    /// on the removal having already happened.
+    private func launchersNested(under profile: Profile) -> [String] {
+        let ourApp = profile.appURL.standardizedFileURL.path
+        return bundle.scan(installDirectory: configuration.installDirectory)
+            .filter { $0.appURL.standardizedFileURL.path != ourApp }
+            .filter { Self.directoryStrictlyContains(profile.profilePath, $0.marker.profile) }
+            .map(\.profile.displayName)
+    }
+
     /// Whether deleting one of these directories would take the other with it — the same path,
     /// or one nested inside the other.
     ///
@@ -108,9 +134,21 @@ public extension ProfileStore {
     /// Compared by path *component*, never by string prefix: `…/Profiles/work` is not inside
     /// `…/Profiles/wo`, though one string does begin with the other.
     private static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
-        let left = URL(fileURLWithPath: lhs).standardizedFileURL.pathComponents
-        let right = URL(fileURLWithPath: rhs).standardizedFileURL.pathComponents
+        let left = components(lhs)
+        let right = components(rhs)
         let shared = zip(left, right).prefix { $0 == $1 }.count
         return shared == left.count || shared == right.count
+    }
+
+    /// Whether `inner` sits strictly below `outer` — the asymmetric half of the check above.
+    private static func directoryStrictlyContains(_ outer: String, _ inner: String) -> Bool {
+        let outerParts = components(outer)
+        let innerParts = components(inner)
+        guard innerParts.count > outerParts.count else { return false }
+        return Array(innerParts.prefix(outerParts.count)) == outerParts
+    }
+
+    private static func components(_ path: String) -> [String] {
+        URL(fileURLWithPath: path).standardizedFileURL.pathComponents
     }
 }
