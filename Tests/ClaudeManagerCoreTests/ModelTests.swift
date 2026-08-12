@@ -261,9 +261,9 @@ struct ProfileDataOutcomeTests {
     func oneHolderIsNamedInTheSingular() throws {
         let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
         let notice = try #require(outcome.notice(forRemovalOf: "Work"))
-        #expect(notice.contains("Work's profile data was kept"))
-        #expect(notice.contains("Personal still points at"))
-        #expect(notice.contains("Remove it too"))
+        #expect(notice.title == "Profile data was kept")
+        #expect(notice.message.contains("Deleting Work's profile data would have deleted Personal's"))
+        #expect(notice.message.contains("Remove that launcher"))
     }
 
     /// Two and three holders differ only in the joining, and both have to read as English —
@@ -272,11 +272,33 @@ struct ProfileDataOutcomeTests {
     func severalHoldersAreJoinedAndPluralized() throws {
         let two = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test"])
         let twoNotice = try #require(two.notice(forRemovalOf: "Work"))
-        #expect(twoNotice.contains("Personal and Test still point at"))
-        #expect(twoNotice.contains("Remove them too"))
+        #expect(twoNotice.message.contains("deleted Personal and Test's too"))
+        #expect(twoNotice.message.contains("Remove those launchers"))
 
         let three = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test", "Spare"])
         let threeNotice = try #require(three.notice(forRemovalOf: "Work"))
-        #expect(threeNotice.contains("Personal, Test and Spare still point at"))
+        #expect(threeNotice.message.contains("Personal, Test and Spare's too"))
+    }
+
+    /// The remedy has to name the *destructive* button. The removal dialog leads with "Move
+    /// Launcher to Trash (keep login)", and a user who follows a bare "remove it too" into
+    /// that one ends up with no launcher left through which the data could ever be deleted.
+    @Test
+    func theRemedyNamesTheButtonThatActuallyDeletes() throws {
+        let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.message.contains("“Move to Trash and Delete Profile Data”"))
+    }
+
+    /// A failed purge is not a refusal: the launcher is gone and the data is not, so the
+    /// notice has to say both, and carry the reason.
+    @Test
+    func aFailedPurgeReportsWhereThingsStand() throws {
+        let outcome = ProfileDataOutcome.purgeFailed(reason: "Permission denied.")
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.title == "Profile data wasn't deleted")
+        #expect(notice.message.contains("Work's launcher is in the Trash"))
+        #expect(notice.message.contains("Permission denied."))
+        #expect(notice.message.contains("still on disk"))
     }
 }

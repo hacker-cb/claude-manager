@@ -19,9 +19,16 @@ extension AppModel {
         // `nil` means `remove` threw, and `perform` has already surfaced that error; a second
         // alert about the data would only bury it. Every other outcome speaks for itself
         // through `notice`, which is silent unless there is something to act on.
-        if let notice = result?.profileData.notice(forRemovalOf: profile.displayName) {
-            currentError = AppError(title: "Profile data was kept", message: notice)
-        }
+        let notice = result?.profileData.notice(forRemovalOf: profile.displayName)
+        // Refresh *first*. `refresh` runs into `perform`'s own guard without an intervening
+        // suspension, and that guard writes `currentError` when Claude has gone missing — so a
+        // notice set before this call can be overwritten inside the same main-actor turn and
+        // never render at all. Setting it after costs the opposite trade, and the right way
+        // round is this one: the user just pressed a destructive button, and "your login is
+        // still on disk" outranks a locate failure the sidebar reports on its own.
         await refresh()
+        if let notice {
+            currentError = AppError(title: notice.title, message: notice.message)
+        }
     }
 }

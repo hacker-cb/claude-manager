@@ -190,7 +190,7 @@ struct ProfileStoreMutationEdgeTests {
     }
 
     @Test
-    func removePurgeWithMissingDataKeepsPurgedFalse() throws {
+    func removePurgeWithMissingDataReportsAlreadyGone() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)

@@ -15,6 +15,13 @@ struct RootView: View {
     /// Measured height of the app-global banner strip, used to reserve matching top space in the
     /// sidebar's `List` (see `body`). Zero when no banner is showing.
     @State private var bannerHeight: CGFloat = 0
+    /// The alert heading, held here rather than read off `model.currentError` at render time.
+    /// The message survives dismissal because `presenting:` hands the closure a captured
+    /// payload; the title is an ordinary argument and has no such protection, so reading the
+    /// published value directly would drop it to the default the moment OK clears it — leaving
+    /// a "your data was kept" sentence under "Something went wrong" for the closing frames,
+    /// which is the exact pairing `AppError.title` exists to prevent.
+    @State private var alertTitle = AppError.defaultTitle
 
     var body: some View {
         // App-global banners (missing-Claude, staged-update) are a full-width strip at the top of
@@ -64,16 +71,20 @@ struct RootView: View {
         }
         .modifier(DeepLinkResidencyNudge())
         // The heading comes from the message, not from this call site: the same channel
-        // carries outcomes that are not failures (see `AppError`). The fallback covers only
-        // the instant between dismissal and teardown, when there is no message left to ask.
+        // carries outcomes that are not failures (see `AppError`).
         .alert(
-            model.currentError?.title ?? AppError.defaultTitle,
+            alertTitle,
             isPresented: errorBinding,
             presenting: model.currentError
         ) { _ in
             Button("OK", role: .cancel) {}
         } message: { error in
             Text(error.message)
+        }
+        // Latch the heading while there is one to latch. Keyed on `id`, which is fresh per
+        // message, so two alerts carrying the same text still re-arm it.
+        .onChange(of: model.currentError?.id) {
+            if let title = model.currentError?.title { alertTitle = title }
         }
         .confirmationDialog(
             model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all profiles?" }
