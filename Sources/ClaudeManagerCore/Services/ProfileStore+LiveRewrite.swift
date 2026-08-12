@@ -38,7 +38,15 @@ extension ProfileStore {
         guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
             .filter { $0.marker.profile == profile.profilePath }
-        guard sharingThisProfileDir.count <= 1 else { return nil }
+        // Exactly one, and it is the launcher just written. `scan` degrades an unreadable
+        // install directory to an empty list, so "no launcher claims this profile dir" is
+        // "the scan told us nothing", not evidence of uniqueness — and a `<=` here would
+        // read that failure as a clear answer and nudge anyway. Ownership has to be
+        // *observed*, since what rides on it is a Restart that can stop someone's session.
+        guard sharingThisProfileDir.count == 1,
+              sharingThisProfileDir[0].appURL.standardizedFileURL.path
+              == profile.appURL.standardizedFileURL.path
+        else { return nil }
         return LiveRewrite(profile: profile, pid: pid)
     }
 }
