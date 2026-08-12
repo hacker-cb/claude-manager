@@ -432,9 +432,24 @@ deduped against `notified_thresholds` so each threshold fires once per reset win
   and the app surfaces a rebuild (per-launcher **Rebuild**, Settings **Apply to all
   launchers**, and a `Doctor` warning). This is the wrapper/launcher **format**
   version, **not** the app's `MARKETING_VERSION`. `ProfileStore.rebuild` / `rebuildAll`
-  regenerate the whole bundle (script + Info.plist + icon) from the current format; a
-  *running* launcher is skipped, not failed (a live bundle can't be rewritten). The
-  marker reads an absent version as `1`, so pre-versioning launchers are stale.
+  regenerate the whole bundle (script + Info.plist + icon) from the current format,
+  *including* a running launcher (below). The marker reads an absent version as `1`, so
+  pre-versioning launchers are stale.
+- **A running profile does not block rewriting its launcher.** The bundle is a bash script
+  that `exec`s the real Claude binary, so the live process is **not** executing out of it
+  and holds nothing in it open; `LauncherBundle.build` assembles into a staging directory
+  and swaps it in atomically. `update`, `rebuild` and `rebuildAll` therefore run while the
+  profile is up and report it through `LiveRewrite` (the pid observed at the write) instead
+  of refusing. What a rewrite genuinely cannot reach is the **running instance**, which
+  keeps the window name and Dock tile it launched with — so the app shows that profile a
+  *Restart to apply* nudge, retired automatically once the pid changes or the instance
+  stops. `remove` still refuses while running: trashing the bundle out from under a profile
+  the user may relaunch is a different act from rewriting it, and so does `add`, whose
+  refusal is about re-creating a launcher over a user-data dir that already has an instance
+  live. The old blanket refusal was worse than an inconvenience: a wrapper-version bump
+  makes every launcher stale at once, and **Rebuild** is how the new format reaches them —
+  gating it on "not running" put each fix out of reach of exactly the profiles someone
+  keeps open all day.
 - **Name the badge resource after its own bytes, or an edited icon never appears.** A
   launcher rebuild presents the same bundle *identity* every time — same path, same
   `CFBundleIdentifier`, same `CFBundleVersion` (launchers ship a fixed `1`) — so when it

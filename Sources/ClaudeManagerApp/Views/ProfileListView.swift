@@ -129,7 +129,7 @@ struct AttentionGlyph: View {
         switch attention {
         case .unrunnable: "exclamationmark.triangle.fill"
         case .rebuildAvailable: "arrow.triangle.2.circlepath.circle.fill"
-        case .claudeUpdate: "arrow.clockwise.circle.fill"
+        case .claudeUpdate, .restartToApply: "arrow.clockwise.circle.fill"
         }
     }
 
@@ -141,7 +141,7 @@ struct AttentionGlyph: View {
         switch attention {
         case .unrunnable: AnyShapeStyle(Color.red)
         case .rebuildAvailable: AnyShapeStyle(Color.orange)
-        case .claudeUpdate: AnyShapeStyle(.secondary)
+        case .claudeUpdate, .restartToApply: AnyShapeStyle(.secondary)
         }
     }
 
@@ -153,6 +153,7 @@ struct AttentionGlyph: View {
         case .unrunnable: "Won't launch — this launcher is unsigned. Rebuild it to fix."
         case .rebuildAvailable: "Update available — rebuild the launcher"
         case let .claudeUpdate(version): "Claude \(version ?? "update") available — restart to update"
+        case .restartToApply: "Rewritten while open — restart to apply the new name and icon"
         }
     }
 }
@@ -209,7 +210,12 @@ struct ProfileRow: View {
             isRunning: managed.isRunning,
             usage: model.usage(forBinding: managed.profile.id),
             failure: model.usageFailure(forBinding: managed.profile.id),
+            // The restart nudge is app-held state (a pid observed at write time), so it is
+            // appended here rather than decided in `attentions`. Without it the mark lives
+            // only in the detail pane, and after a batch rebuild the user would have to open
+            // every profile in turn to find which ones were rewritten live.
             attentions: managed.attentions
+                + (model.needsRestartToApply(managed) ? [.restartToApply] : [])
         ) {
             BadgeChip(
                 label: managed.profile.label,
@@ -227,7 +233,6 @@ struct ProfileRow: View {
                 Button("Restart") { Task { await model.restart(managed.profile) } }
             }
             Button("Rebuild Launcher") { Task { await model.rebuild(managed.profile) } }
-                .disabled(managed.isRunning)
             Divider()
             Button("Reveal Profile Data in Finder") { model.revealProfileData(managed.profile) }
             Button("Reveal Launcher in Finder") { model.revealLauncher(managed.profile) }

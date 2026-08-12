@@ -50,6 +50,8 @@ public struct UpdateResult: Sendable {
     /// See `AddResult.dockRefreshPending`: true when the edit changed the icon at an
     /// in-place path (or a rename onto a trashed twin) whose Dock tile could be stale.
     public let dockRefreshPending: Bool
+    /// Set when the edit was applied under a live instance — see `LiveRewrite`.
+    public let liveRewrite: LiveRewrite?
 }
 
 public struct RemovalResult: Sendable {
@@ -284,12 +286,15 @@ public struct ProfileStore {
     }
 
     /// Apply edits by rebuilding the launcher, trashing the old bundle on rename.
+    ///
+    /// Applies while the profile is running, and reports that through `UpdateResult.liveRewrite`
+    /// rather than refusing: the live process does not execute out of the bundle (see
+    /// `LiveRewrite`), so what a running instance actually costs is a restart before the new
+    /// name and badge reach it — not the right to make the edit. `remove` still refuses,
+    /// because trashing the bundle a user might relaunch from is a different act.
     @discardableResult
     public func update(original: Profile, to updated: Profile) throws -> UpdateResult {
         try ensureRealBinaryPresent()
-        if let pid = runningPID(for: original) {
-            throw ClaudeManagerError.profileRunning(name: original.name, pid: pid)
-        }
         guard Profile.isValidName(updated.name) else {
             throw ClaudeManagerError.invalidProfileName(updated.name)
         }
@@ -337,7 +342,17 @@ public struct ProfileStore {
             iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
         // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
         try? reconcileManagedConfig(for: updated)
-        return UpdateResult(profile: updated, dockRefreshPending: dockRefreshPending)
+        // The nudge names the *edited* profile, so it carries the updated value: after a
+        // rename the old one names a bundle that is already in the Trash.
+        // A running window shows the launcher's name and its badge, and nothing else this
+        // write touches — so an edit that leaves both alone (a bundle-id change, or Save on
+        // an unmodified form) has nothing for a restart to reveal.
+        let presentationChanged = iconChanged || updated.displayName != original.displayName
+        return UpdateResult(
+            profile: updated,
+            dockRefreshPending: dockRefreshPending,
+            liveRewrite: liveRewrite(for: updated, presentationChanged: presentationChanged)
+        )
     }
 
     /// Move the launcher to Trash (and optionally delete the profile data).
