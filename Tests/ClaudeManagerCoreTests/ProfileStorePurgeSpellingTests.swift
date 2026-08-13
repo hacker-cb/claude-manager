@@ -123,6 +123,76 @@ struct ProfileStorePurgeSpellingTests {
         #expect(result.profileData == .purged)
     }
 
+    /// A sibling whose bundle cannot be read drops out of the scan the same way a third-party
+    /// app does — `readMarker` returns `nil` for both — so an install directory that lists fine
+    /// can still yield an answer that is missing the very launcher that would have stopped the
+    /// deletion.
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
+    func purgeDeclinesWhenASiblingBundleCannotBeRead() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared")
+        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
+        let one = try env.store.add(
+            AddProfileRequest(name: env.name("one"), profilePath: shared.path)
+        ).profile
+        let two = try env.store.add(
+            AddProfileRequest(name: env.name("two"), profilePath: shared.path)
+        ).profile
+        let login = shared.appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+        // The sibling is on disk and still claims the directory — it just cannot be read.
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: two.appPath)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: two.appPath) }
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.remove(one, purgeProfile: true)
+        }
+
+        #expect(fm.fileExists(atPath: one.appPath))
+        #expect(fm.fileExists(atPath: login.path))
+        #expect(try #require(thrown.errorDescription).contains("could not be read"))
+    }
+
+    /// `removeItem` on a symbolic link unlinks the link and walks nothing, so a profile whose
+    /// data path is a link endangers no one — however deeply other profiles' directories sit
+    /// under its target. Canonicalising that into containment would refuse the removal *and*
+    /// tell the user to delete the profile whose data is genuinely at risk if they comply.
+    @Test
+    func aProfileWhoseDataPathIsALinkCanStillBeRemoved() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("inner"))
+        }
+        let real = env.profilesDir.appendingPathComponent("real")
+        let inner = real.appendingPathComponent("inner")
+        try fm.createDirectory(at: inner, withIntermediateDirectories: true)
+        let alias = env.profilesDir.appendingPathComponent("alias")
+        try fm.createSymbolicLink(at: alias, withDestinationURL: real)
+        let login = inner.appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+
+        let aliasProfile = try env.store.add(
+            AddProfileRequest(name: env.name("alias"), profilePath: alias.path)
+        ).profile
+        _ = try env.store.add(
+            AddProfileRequest(name: env.name("inner"), profilePath: inner.path)
+        )
+
+        let result = try env.store.remove(aliasProfile, purgeProfile: true)
+
+        #expect(result.profileData == .purged)
+        // Only the link went; the directory it pointed at, and the profile inside it, remain.
+        #expect(!fm.fileExists(atPath: alias.path))
+        #expect(fm.fileExists(atPath: login.path))
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.
@@ -131,7 +201,7 @@ struct ProfileStorePurgeSpellingTests {
     /// reason: afterwards no profile lists that directory any more, so nothing in the app could
     /// offer to delete it and every message would name a remedy the user cannot follow. Stopping
     /// here leaves "make the folder readable and try again" as the whole fix.
-    @Test
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
     func purgeIsRefusedUpFrontWhenTheLauncherFolderCannotBeRead() throws {
         let env = try makeStoreEnv()
         defer {
@@ -163,7 +233,7 @@ struct ProfileStorePurgeSpellingTests {
     /// The same folder becoming unreadable *after* that pre-flight check — the residue the
     /// guard inside the purge covers. Nothing is deleted there either, and the message stops
     /// short of a remedy through the app, since by then the launcher is already in the Trash.
-    @Test
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
     func aFolderThatBecomesUnreadableMidRemovalStillSparesTheData() throws {
         let env = try makeStoreEnv()
         defer {

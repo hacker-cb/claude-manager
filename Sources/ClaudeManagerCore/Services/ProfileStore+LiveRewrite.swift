@@ -56,6 +56,7 @@ extension ProfileStore {
         // survives to the canonical test is only what a plain comparison already rejected.
         let ourProfileDir = PathUtils.canonicalPath(profile.profilePath)
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
+            .launchers
             .filter {
                 $0.marker.profile == profile.profilePath
                     || PathUtils.canonicalPath($0.marker.profile) == ourProfileDir

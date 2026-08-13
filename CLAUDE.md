@@ -70,13 +70,18 @@ short form:
 - **Never compare two profile directories by string equality.** The path is free text when a
   profile is *created*, so one profile's user-data dir can *be* another's, or sit inside it —
   and `removeItem` is recursive, so purging the outer one takes the inner profile's Anthropic
-  token and chat history with it. `ProfileStore+Remove.directoriesOverlap` compares
-  **canonical** paths (`PathUtils.canonicalPath`) by *component* — never by string prefix
-  (`…/work` is not inside `…/wo`) and never by the recorded spelling, since `…/Profiles/x` and
-  `…/ProfilesLink/x` are one directory, as are `…/x` and `…/X` on a case-insensitive volume.
-  A purge that would reach another launcher's data is declined and reported — and where the
-  launcher folder cannot be *listed*, the answer is unknown rather than "nobody else uses it",
-  so the data is kept (`keptOwnersUnknown`).
+  token and chat history with it. `ProfileStore+Remove.PurgeReach` compares **canonical** paths
+  (`PathUtils.canonicalPath`) by *component* — never by string prefix (`…/work` is not inside
+  `…/wo`) and never by the recorded spelling, since `…/Profiles/x` and `…/ProfilesLink/x` are
+  one directory (and so are `…/x` and `…/X`, wherever the volume says they are — that half is
+  the file system's answer, so it holds only while the directory exists). Two things ride on
+  the same care: a purge that would reach another launcher's data is declined and reported, and
+  a scan that is not **complete** — an unlistable folder, or a bundle in it that cannot be read
+  — never counts as "nobody else uses this" (`LauncherBundle.Scan.isComplete`,
+  `keptOwnersUnknown`). And `removeItem` on a symlinked data path unlinks the link without
+  walking it, so containment there is not containment at all: `PurgeReach` says so, and getting
+  it wrong refuses the removal *and* advises deleting the profile whose data is actually at
+  risk.
 - **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
   twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
   directory handed to it is itself a symlink; the `atPath` overload does neither. Both

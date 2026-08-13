@@ -117,7 +117,8 @@ public extension ProfileStore {
         // full `ps` sweep and per-launcher `pgrep` that `list()` runs to fill in running
         // state and versions would be paid for and thrown away. It was needed while running
         // launchers were skipped; `rebuild` still probes for itself, once, after its swap.
-        for profile in bundle.scan(installDirectory: configuration.installDirectory).map(\.profile) {
+        let installed = bundle.scan(installDirectory: configuration.installDirectory).launchers
+        for profile in installed.map(\.profile) {
             do {
                 let result = try rebuild(profile)
                 rebuilt.append(profile)

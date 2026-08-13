@@ -39,27 +39,35 @@ public extension ProfileStore {
         if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
-        // Refused *before* the launcher is trashed, unlike every other reason a purge does not
-        // happen. Those leave the data reachable: a launcher on the same directory, or one
-        // whose directory contains it, can still purge it later. This case cannot — purging
-        // the inner launcher deletes only the inner directory, and with the outer launcher in
-        // the Trash nothing in the app can ever offer to delete the rest. So the removal stops
-        // here instead, with both remedies named, and nothing has happened yet to undo.
-        if purgeProfile {
-            // Same reasoning, one step earlier: with the launcher folder unlistable there is no
-            // way to tell who else uses this data, and every answer that could be given
-            // afterwards is a dead end — the launcher is in the Trash by then, so no profile
-            // lists the directory any more and nothing in the app can offer to delete it. Stop
-            // while the launcher is still installed, so making the folder readable and trying
-            // again is the whole remedy.
-            guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
-                != nil
-            else {
+        // Two refusals happen *before* the launcher is trashed, unlike every other reason a
+        // purge does not go through. Those others leave the data reachable — a launcher on the
+        // same directory can still purge it later — while these two do not: afterwards no
+        // profile lists the directory at all, so nothing in the app can offer to finish the job
+        // and every message would name a remedy the user cannot follow. Stopping here leaves
+        // nothing to undo.
+        //
+        // Only where something is actually going to be deleted. With the data already gone, or
+        // with it belonging to the default profile, the purge deletes nothing whatever the scan
+        // says — so demanding a readable launcher folder there would refuse a removal that was
+        // never a risk, and leave the launcher installed with no way to retire it.
+        if purgeProfile, purgeHasACandidate(profile) {
+            // Same reasoning as below, one step earlier: with the launcher folder unlistable
+            // there is no way to tell who else uses this data, and every answer that could be
+            // given afterwards is a dead end — the launcher is in the Trash by then, so no
+            // profile lists the directory any more and nothing in the app can offer to delete
+            // it. Stop while the launcher is still installed, so making the folder readable and
+            // trying again is the whole remedy.
+            //
+            // One scan answers both questions, rather than probing readability and then
+            // rescanning: between two listings the folder can change state, and the second
+            // one's emptiness would again read as "nobody claims this".
+            let scan = bundle.scan(installDirectory: configuration.installDirectory)
+            guard scan.isComplete else {
                 throw ClaudeManagerError.launcherFolderUnreadable(
                     path: configuration.installDirectory.path
                 )
             }
-            let nested = launchersNested(under: profile)
+            let nested = launchersNested(under: profile, among: scan.launchers)
             guard nested.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
                     name: profile.displayName, others: nested
@@ -87,20 +95,16 @@ public extension ProfileStore {
         // Never delete data another launcher still points at (the launcher we
         // just trashed is already gone from the scan).
         //
-        // The scan has to be *readable* before its emptiness means anything: `scan` reports an
-        // unlistable install directory as holding no launchers, and reading that as "nobody
-        // else claims this directory" deletes a sibling's login. `remove` refuses up front for
-        // that reason; this is the residue — the folder became unreadable after that check —
-        // and it must not delete anything either. `Doctor` guards the same degradation, and
-        // `scan`'s doc comment warns about it by name.
-        let ownersKnown = (try? fileManager
-            .contentsOfDirectory(atPath: configuration.installDirectory.path)) != nil
-        let survivors = ownersKnown
-            ? bundle.scan(installDirectory: configuration.installDirectory)
-            : []
-        let sharing = survivors.filter {
-            Self.directoriesOverlap($0.marker.profile, profile.profilePath)
-        }
+        // The scan has to be *complete* before its emptiness means anything: an unlistable
+        // folder, or a bundle in it that cannot be read, reports the same "no launchers" an
+        // empty folder does — and reading that as "nobody else claims this directory" deletes
+        // a sibling's login. `remove` refuses up front for that reason; this is the residue,
+        // the folder having changed state since. `Doctor` guards the same degradation.
+        let scan = bundle.scan(installDirectory: configuration.installDirectory)
+        let ownersKnown = scan.isComplete
+        let survivors = scan.launchers
+        let reach = PurgeReach(profile)
+        let sharing = survivors.filter { reach.covers($0.marker.profile) }
         // The default profile owns no launcher, so it appears in no scan and the sharing check
         // cannot see it — yet pointing a clone at its directory to reuse an existing login is
         // a supported thing to do (`AddResult.reusedProfileData` exists for it). Purging there
@@ -109,9 +113,6 @@ public extension ProfileStore {
         // `runningPID` to match.
         let isDefaultProfileData = PathUtils
             .sameDirectory(profile.profilePath, configuration.defaultProfileUserDataPath)
-        // Existence first, so a refusal is only reported where there is something to refuse
-        // over: with the directory already gone, "your login was kept" names credentials that
-        // are not there and sends the user to remove a launcher for nothing.
         // Both of the answers below are known without a scan, so they come first: "there was
         // nothing to delete" and "this is Claude's own directory" stay true however little we
         // could see, and reporting the unknown instead would claim data was left behind that
@@ -152,8 +153,10 @@ public extension ProfileStore {
     private func sweepOverlay(for profile: Profile, survivors: [LauncherBundle.Discovered]) {
         let overlayPath = ManagedConfigWriter
             .localTierURL(forUserDataPath: profile.profilePath).path
+        let canonicalOverlay = PathUtils.canonicalPath(overlayPath)
         let overlayIsAnothersData = survivors.contains {
-            PathUtils.sameDirectory($0.marker.profile, overlayPath)
+            $0.marker.profile == overlayPath
+                || PathUtils.canonicalPath($0.marker.profile) == canonicalOverlay
         }
         if !overlayIsAnothersData {
             try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
@@ -164,11 +167,20 @@ public extension ProfileStore {
     /// `profile`'s — the case a purge cannot be talked out of afterwards. This runs before the
     /// launcher is trashed, so it filters `profile` out of the scan itself rather than relying
     /// on the removal having already happened.
-    private func launchersNested(under profile: Profile) -> [String] {
+    private func launchersNested(
+        under profile: Profile,
+        among launchers: [LauncherBundle.Discovered]
+    ) -> [String] {
+        // A symlinked data path is unlinked, not walked, so nothing under its target is at
+        // risk — `purgeWouldReach` says why in full.
+        guard !Self.isSymbolicLink(profile.profileURL) else { return [] }
         let ourApp = profile.appURL.standardizedFileURL.path
-        return bundle.scan(installDirectory: configuration.installDirectory)
+        let ourData = PathUtils.canonicalPath(profile.profilePath)
+        return launchers
             .filter { $0.appURL.standardizedFileURL.path != ourApp }
-            .filter { Self.directoryStrictlyContains(profile.profilePath, $0.marker.profile) }
+            .filter {
+                Self.directoryStrictlyContains(ourData, PathUtils.canonicalPath($0.marker.profile))
+            }
             .map(\.profile.displayName)
     }
 
@@ -186,7 +198,52 @@ public extension ProfileStore {
     /// `…/ProfilesLink/shared` are one directory, as are `…/work` and `…/Work` on a
     /// case-insensitive volume, and a comparison that misses that deletes the sibling's login
     /// while reporting a clean removal.
-    private static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
+    /// Whether this removal has any data to delete at all: none where the directory is
+    /// already gone, and none where it is the default profile's, which is refused outright.
+    private func purgeHasACandidate(_ profile: Profile) -> Bool {
+        fileManager.fileExists(atPath: profile.profilePath)
+            && !PathUtils.sameDirectory(
+                profile.profilePath, configuration.defaultProfileUserDataPath
+            )
+    }
+
+    /// Whether purging one profile's data would reach the directory another one records.
+    ///
+    /// A value rather than a function because the answer canonicalises paths — which walks the
+    /// file system — and one side of every comparison is the same throughout a removal. Built
+    /// once per removal, it costs one canonicalisation plus one per launcher instead of two
+    /// per launcher; on an install where some profile's data lives on a stale network mount,
+    /// each avoided call is one avoided stall. `liveRewrite` hoists the same way.
+    struct PurgeReach {
+        private let profilePath: String
+        private let canonical: String
+        /// `removeItem` on a symbolic link unlinks the link and touches nothing under its
+        /// target, so a profile whose data path is a link puts no other profile's data at risk
+        /// — however deeply their recorded paths nest once the link is resolved. Treating it
+        /// as containment would refuse the removal outright *and* point the user at a launcher
+        /// whose data is genuinely destroyed if they follow the advice. Only a launcher
+        /// recording that same link is affected.
+        private let isLink: Bool
+
+        init(_ profile: Profile) {
+            profilePath = profile.profilePath
+            canonical = PathUtils.canonicalPath(profile.profilePath)
+            isLink = ProfileStore.isSymbolicLink(profile.profileURL)
+        }
+
+        func covers(_ other: String) -> Bool {
+            // The literal test first: it settles the ordinary case without touching the disk.
+            if other == profilePath { return true }
+            guard !isLink else { return PathUtils.canonicalPath(other) == canonical }
+            return ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
+        }
+    }
+
+    static func isSymbolicLink(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+    }
+
+    static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
         let left = components(lhs)
         let right = components(rhs)
         let shared = zip(left, right).prefix { $0 == $1 }.count
@@ -201,7 +258,9 @@ public extension ProfileStore {
         return Array(innerParts.prefix(outerParts.count)) == outerParts
     }
 
+    /// Components of an **already canonical** path — every caller canonicalises first, so
+    /// doing it again here would pay for the file-system walk twice per comparison.
     private static func components(_ path: String) -> [String] {
-        URL(fileURLWithPath: PathUtils.canonicalPath(path)).pathComponents
+        URL(fileURLWithPath: path).pathComponents
     }
 }

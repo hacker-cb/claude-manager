@@ -53,6 +53,25 @@ public struct LauncherBundle {
         }
     }
 
+    /// What a scan of an install directory found, and whether that is the whole story.
+    public struct Scan: Equatable, Sendable {
+        public let launchers: [Discovered]
+        /// False when the directory could not be listed, or when a bundle in it could not be
+        /// read well enough to tell whether it is one of ours.
+        ///
+        /// **An incomplete scan must never be read as "nobody claims this profile
+        /// directory".** That question decides whether a user-data directory — an Anthropic
+        /// login and a whole chat history — is deleted, and `removeItem` is not a Trash move.
+        /// A folder that was renamed, unmounted, or had its permissions changed answers it
+        /// exactly as an empty one does.
+        public let isComplete: Bool
+
+        public init(launchers: [Discovered], isComplete: Bool) {
+            self.launchers = launchers
+            self.isComplete = isComplete
+        }
+    }
+
     // MARK: - Build
 
     /// The `Contents/Resources` file name carrying `icnsData` — content-addressed, so the
@@ -290,18 +309,42 @@ public struct LauncherBundle {
     /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
     /// two sides equal *by construction*, rather than by both happening to normalize the same
     /// way afterwards.
-    /// Enumerated through `visibleContents(ofDirectoryAt:)`, whose doc comment owns why: one
+    /// Enumerated through `listedContents(ofDirectoryAt:)`, whose doc comment owns why: one
     /// spelling per launcher, and a symlinked install directory that does not read as empty.
     /// The flagged-hidden filter is deliberately *not* asked for — a hidden launcher still runs
     /// and still claims its user-data directory.
     ///
-    /// An unreadable install directory yields no launchers, which callers must not read as
-    /// "nobody claims this profile directory" — `liveRewrite` says what it does about that.
-    public func scan(installDirectory: URL) -> [Discovered] {
-        fileManager.visibleContents(ofDirectoryAt: installDirectory)
-            .filter { $0.pathExtension == "app" }
-            .compactMap { readMarker(at: $0) }
-            .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
+    /// The result carries whether it is **complete**, because callers ask two different
+    /// questions of it. "Show me the launchers" is happy with whatever was found; "does anyone
+    /// else use this profile directory" is not, and answering that from a partial list deletes
+    /// a login. See `Scan.isComplete`.
+    public func scan(installDirectory: URL) -> Scan {
+        guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
+            return Scan(launchers: [], isComplete: false)
+        }
+        let bundles = entries.filter { $0.pathExtension == "app" }
+        let launchers = bundles.compactMap { readMarker(at: $0) }
+        let unreadable = launchers.count == bundles.count
+            ? false
+            : bundles.filter { readMarker(at: $0) == nil }.contains { isUnreadable($0) }
+        return Scan(
+            launchers: launchers
+                .sorted {
+                    $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending
+                },
+            isComplete: !unreadable
+        )
+    }
+
+    /// Whether a bundle that yielded no marker withheld it because it could not be *read*,
+    /// rather than because it is simply not one of ours. An ordinary third-party app in the
+    /// install directory is readable and markerless; a launcher on an ejected volume, or one
+    /// whose permissions changed, is neither — and only the second makes a scan incomplete.
+    private func isUnreadable(_ appURL: URL) -> Bool {
+        guard (try? fileManager.contentsOfDirectory(atPath: appURL.path)) != nil else { return true }
+        let info = appURL.appendingPathComponent("Contents/Info.plist")
+        guard fileManager.fileExists(atPath: info.path) else { return false }
+        return fileManager.contents(atPath: info.path) == nil
     }
 
     // MARK: - Remove

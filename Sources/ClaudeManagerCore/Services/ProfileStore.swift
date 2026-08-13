@@ -197,7 +197,7 @@ public struct ProfileStore {
     private func list(measuringSizes: Bool, mains: [ClaudeInstance]) -> [ManagedProfile] {
         let availableVersion = realClaude.version(fileManager: fileManager)
         let runningVersions = processProbe.runningVersionsByProfilePath(from: mains)
-        return bundle.scan(installDirectory: configuration.installDirectory).map { discovered in
+        return bundle.scan(installDirectory: configuration.installDirectory).launchers.map { discovered in
             let profile = discovered.profile
             let pid = runningPID(for: profile)
             let size = measuringSizes ? diskSize(of: profile.profilePath) : nil
