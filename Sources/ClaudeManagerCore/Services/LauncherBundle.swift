@@ -332,7 +332,7 @@ public struct LauncherBundle {
             return .unreadable
         }
         let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
-        guard let inside = try? fileManager.contentsOfDirectory(atPath: contents.path) else {
+        guard (try? fileManager.contentsOfDirectory(atPath: contents.path)) != nil else {
             // `Contents` absent is an ordinary non-bundle; `Contents` present but unenterable
             // is the case `fileExists` would have reported identically.
             var contentsIsDirectory: ObjCBool = false
@@ -341,9 +341,17 @@ public struct LauncherBundle {
             )
             return present && contentsIsDirectory.boolValue ? .unreadable : .foreign
         }
-        guard inside.contains("Info.plist") else { return .foreign }
-        guard let data = fileManager.contents(atPath: contents.appendingPathComponent("Info.plist").path),
-              let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
+        // Read the plist rather than looking for its name in the listing: on a
+        // case-insensitive volume a bundle storing `info.plist` is perfectly readable through
+        // this path, and a case-sensitive membership test would call that launcher foreign and
+        // drop it from a scan that still reported itself complete.
+        let infoPath = contents.appendingPathComponent("Info.plist").path
+        guard let data = fileManager.contents(atPath: infoPath) else {
+            var probe = stat()
+            // Absent is an ordinary non-bundle; anything else is a plist we could not read.
+            return lstat(infoPath, &probe) != 0 && errno == ENOENT ? .foreign : .unreadable
+        }
+        guard let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let info = parsed as? [String: Any]
         else { return .unreadable }
         // A missing key is an ordinary third-party app. A key that is *present* but not a
