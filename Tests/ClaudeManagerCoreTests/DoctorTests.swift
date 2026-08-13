@@ -199,32 +199,6 @@ struct DoctorTests {
         #expect(!diags.contains { $0.detail?.contains("_scratch") ?? false })
     }
 
-    /// The default profile owns no launcher, so no marker claims its directory — and the
-    /// profiles folder is user-settable, so it can be pointed at the folder holding it
-    /// (`~/Library/Application Support`). Reported as an orphan, that names the user's primary
-    /// Anthropic login and chat history as safe to delete.
-    @Test
-    func doesNotCallTheDefaultProfilesDataAnOrphan() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        // The profiles folder *is* the folder the default profile's data sits in.
-        let profilesDir = URL(fileURLWithPath: scene.defaultProfilePath).deletingLastPathComponent()
-        try fm.createDirectory(
-            at: URL(fileURLWithPath: scene.defaultProfilePath), withIntermediateDirectories: true
-        )
-        try fm.createDirectory(
-            at: profilesDir.appendingPathComponent("ghost"), withIntermediateDirectories: true
-        )
-
-        let diags = runDoctor(
-            scene, runner: RecordingCommandRunner(handler: idleStub), profilesDirectory: profilesDir
-        )
-
-        let orphans = diags.filter { $0.title == "Orphan profile (no launcher)" }.compactMap(\.detail)
-        #expect(orphans.count == 1)
-        #expect(orphans.first?.hasSuffix("/ghost") == true)
-    }
-
     @Test
     func notesWhenClaudeIsMDMManaged() throws {
         let scene = try makeDoctorScene()

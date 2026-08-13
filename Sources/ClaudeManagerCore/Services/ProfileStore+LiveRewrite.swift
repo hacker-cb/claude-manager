@@ -49,11 +49,17 @@ extension ProfileStore {
         // (which `profileMatchingItsLauncher` deliberately tolerates) leaves a launcher whose
         // instance answers our probe while its marker no longer matches our string. That
         // launcher is exactly the rival this guard exists to see.
-        // This profile's side is canonicalised once rather than per launcher: the comparison
-        // reaches the file system, and it runs against every bundle in the install directory.
+        // The literal test runs first, and settles the common case without touching the disk:
+        // canonicalising reaches the file system once per launcher, and this runs on Save and
+        // on every launcher of "Apply to all". A sibling whose data directory sits on a stale
+        // network mount would otherwise stall an edit that has nothing to do with it. What
+        // survives to the canonical test is only what a plain comparison already rejected.
         let ourProfileDir = PathUtils.canonicalPath(profile.profilePath)
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { PathUtils.canonicalPath($0.marker.profile) == ourProfileDir }
+            .filter {
+                $0.marker.profile == profile.profilePath
+                    || PathUtils.canonicalPath($0.marker.profile) == ourProfileDir
+            }
         // Identity: compared as **strings**, and deliberately not canonicalised. `scan` reports
         // launchers under the install directory's own spelling and `profile.appPath` is derived
         // from that same directory, so equality here holds *by construction* — canonicalising

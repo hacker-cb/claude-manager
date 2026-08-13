@@ -315,6 +315,21 @@ public struct Doctor {
     /// Desktop & Documents replaces `~/Documents` with a symlink, and the profiles directory is
     /// user-settable).
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
+        // `known` comes from a scan of the install directory, and `LauncherBundle.scan` reports
+        // an unreadable one as holding no launchers. Reading that as "nobody claims any of
+        // these directories" is the misreading its doc comment warns callers about, and here
+        // it would label every live profile — each holding a login and a chat history — as
+        // safe to delete. A launcher folder that was renamed, unmounted, or had its
+        // permissions changed is exactly that state, so say the check could not run.
+        guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
+            != nil
+        else {
+            return [Diagnostic(
+                severity: .warning,
+                title: "Cannot read the launcher folder — orphan-profile check skipped",
+                detail: PathUtils.abbreviatingHome(configuration.installDirectory.path)
+            )]
+        }
         let dir = configuration.defaultProfilesDirectory
         // The default profile owns no launcher, so it is in no marker and no scan — and the
         // profiles folder is user-settable, so it can be pointed at the directory holding it
