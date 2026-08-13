@@ -46,6 +46,19 @@ public extension ProfileStore {
         // the Trash nothing in the app can ever offer to delete the rest. So the removal stops
         // here instead, with both remedies named, and nothing has happened yet to undo.
         if purgeProfile {
+            // Same reasoning, one step earlier: with the launcher folder unlistable there is no
+            // way to tell who else uses this data, and every answer that could be given
+            // afterwards is a dead end — the launcher is in the Trash by then, so no profile
+            // lists the directory any more and nothing in the app can offer to delete it. Stop
+            // while the launcher is still installed, so making the folder readable and trying
+            // again is the whole remedy.
+            guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
+                != nil
+            else {
+                throw ClaudeManagerError.launcherFolderUnreadable(
+                    path: configuration.installDirectory.path
+                )
+            }
             let nested = launchersNested(under: profile)
             guard nested.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
@@ -75,13 +88,16 @@ public extension ProfileStore {
         // just trashed is already gone from the scan).
         //
         // The scan has to be *readable* before its emptiness means anything: `scan` reports an
-        // unlistable install directory as holding no launchers, and this call site would read
-        // that as "nobody else claims this directory" and delete a sibling's login. `Doctor`
-        // guards the same degradation, and `scan`'s doc comment warns about it by name.
-        guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
-            != nil
-        else { return .keptOwnersUnknown }
-        let survivors = bundle.scan(installDirectory: configuration.installDirectory)
+        // unlistable install directory as holding no launchers, and reading that as "nobody
+        // else claims this directory" deletes a sibling's login. `remove` refuses up front for
+        // that reason; this is the residue — the folder became unreadable after that check —
+        // and it must not delete anything either. `Doctor` guards the same degradation, and
+        // `scan`'s doc comment warns about it by name.
+        let ownersKnown = (try? fileManager
+            .contentsOfDirectory(atPath: configuration.installDirectory.path)) != nil
+        let survivors = ownersKnown
+            ? bundle.scan(installDirectory: configuration.installDirectory)
+            : []
         let sharing = survivors.filter {
             Self.directoriesOverlap($0.marker.profile, profile.profilePath)
         }
@@ -96,16 +112,23 @@ public extension ProfileStore {
         // Existence first, so a refusal is only reported where there is something to refuse
         // over: with the directory already gone, "your login was kept" names credentials that
         // are not there and sends the user to remove a launcher for nothing.
+        // Both of the answers below are known without a scan, so they come first: "there was
+        // nothing to delete" and "this is Claude's own directory" stay true however little we
+        // could see, and reporting the unknown instead would claim data was left behind that
+        // either does not exist or was never a candidate.
         guard fileManager.fileExists(atPath: profile.profilePath) else {
             // The overlay is swept even here — it is created independently of the data dir —
             // but not when the path is shared, where it is the survivor's overlay too, nor
-            // when it is the default profile's, where it is Claude's own config tier.
-            if sharing.isEmpty, !isDefaultProfileData {
+            // when it is the default profile's, where it is Claude's own config tier, nor when
+            // the survivors could not be listed: the sweep's own collision guard reads them,
+            // and an empty list would let it delete a launcher's data as if it were an overlay.
+            if ownersKnown, sharing.isEmpty, !isDefaultProfileData {
                 sweepOverlay(for: profile, survivors: survivors)
             }
             return .alreadyGone
         }
         guard !isDefaultProfileData else { return .keptForDefaultProfile }
+        guard ownersKnown else { return .keptOwnersUnknown }
         guard sharing.isEmpty else {
             return .keptSharedWith(launchers: sharing.map(\.profile.displayName))
         }
