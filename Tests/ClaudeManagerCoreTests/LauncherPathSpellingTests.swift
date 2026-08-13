@@ -199,6 +199,16 @@ struct LauncherPathSpellingTests {
         #expect(
             (try? added.appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
         )
+
+        // A rename installs at a path that does not exist yet, so `build` has no bundle to
+        // take the flag from — `update` carries it across instead.
+        var edits = ProfileEdits(added)
+        edits.displayName = env.display("job")
+        let renamed = try env.store.update(added, applying: edits).profile
+        defer { Fixture.purgeTrash(displayNamePrefix: env.display("job")) }
+        #expect(
+            (try? renamed.appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
+        )
     }
 
     /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever

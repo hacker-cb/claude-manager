@@ -52,6 +52,12 @@ public extension ProfileStore {
         if renaming, fileManager.fileExists(atPath: updated.appPath) {
             throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
         }
+        // A launcher the user put out of sight stays out of sight across an edit. `build`
+        // carries the flag itself, but only for a bundle it *replaces* — a rename installs at
+        // a path that does not exist yet, so the flag has to come from the bundle being
+        // retired, and only this side knows both paths.
+        let wasHidden = (try? original.appURL.resourceValues(forKeys: [.isHiddenKey]))?
+            .isHidden == true
 
         try ensureInstallDirectoryWritable()
         // The directory is the profile's own — an edit cannot point it elsewhere — so this
@@ -97,6 +103,13 @@ public extension ProfileStore {
                     profileDirExisted: profileDirExisted, cause: error
                 )
             }
+        }
+
+        if renaming, wasHidden {
+            var url = updated.appURL
+            var values = URLResourceValues()
+            values.isHidden = true
+            try? url.setResourceValues(values)
         }
 
         // Register so the new icon is picked up on next fetch — never flash the screen. A
