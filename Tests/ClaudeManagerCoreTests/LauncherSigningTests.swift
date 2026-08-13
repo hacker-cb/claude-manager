@@ -78,6 +78,30 @@ struct LauncherSigningTests {
         #expect(!SignatureProbe.isValidAdHoc(appURL))
     }
 
+    /// Restoring a hidden launcher's hidden state is the one thing `build` does *after*
+    /// signing, so it has to be the kind of write the seal does not span. `HiddenFlag` uses
+    /// the `UF_HIDDEN` inode bit for exactly that reason: `URLResourceValues.isHidden` writes
+    /// a `com.apple.FinderInfo` xattr instead, and `codesign --verify --strict` rejects a
+    /// bundle carrying one — which would leave the hidden launcher unrunnable.
+    @Test
+    func rebuildingAHiddenLauncherKeepsItHiddenAndValidlySigned() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let profile = makeProfile(installDir: dir)
+        let bundle = LauncherBundle()
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8))
+        let appURL = URL(fileURLWithPath: profile.appPath)
+        HiddenFlag.set(at: appURL)
+
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i2".utf8))
+
+        #expect(HiddenFlag.isSet(at: appURL))
+        // Through `codesign --verify --strict`, which is what `Doctor` and macOS's own
+        // execution gate use: the Security-framework probe accepts a bundle carrying a
+        // `com.apple.FinderInfo` xattr, and the CLI — the one that matters — does not.
+        #expect(CodeSigner(runner: SystemCommandRunner()).isValidlySigned(bundleURL: appURL))
+    }
+
     /// Signing happens on the staging copy, before the swap — so a signing failure
     /// aborts the build with the previous (working, signed) launcher still in place.
     @Test

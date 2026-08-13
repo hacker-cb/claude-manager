@@ -73,6 +73,21 @@ short form:
   token and chat history with it. `ProfileStore+Remove.directoriesOverlap` compares
   standardized paths by *component* (never by string prefix: `…/work` is not inside
   `…/wo`), and a purge that would reach another launcher's data is declined and reported.
+- **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
+  twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
+  directory handed to it is itself a symlink; the `atPath` overload does neither. Both
+  enumerations — `LauncherBundle.scan` and `Doctor.orphanProfileDiagnostics` — list by path and
+  rebuild each URL from the directory they were handed. This matters because `Profile.id` *is*
+  `appPath` while every other path comes from `ProfileStoreConfiguration`, and a marker records
+  whichever spelling its profile was created with. Put `at:` back and: a launcher under a
+  symlinked install directory carries one id from `scan` and another from `draft` (one bundle
+  under two ids, an ordinary edit refused as a rename onto its own bundle, the "Restart to
+  apply" nudge silently gone); an install directory that *is* a symlink reports no launchers at
+  all (empty sidebar, `rebuildAll` succeeding having rebuilt nothing); and Doctor calls every
+  live profile an orphan, naming the directory that holds the user's login as safe to delete.
+  Comparisons of those paths belong to `PathUtils.sameDirectory` / `canonicalPath`, never `==`
+  — except `liveRewrite`'s bundle-path check, which is `==` on purpose so that drift is caught
+  rather than papered over.
 - **An edit can never reach a profile's identity.** `update` takes `ProfileEdits` — display
   name, label, colour, bundle id — beside the profile, and `Profile.name` / `Profile.profilePath`
   are `let`. A launcher pointed at a different user-data dir does not take the login and chat

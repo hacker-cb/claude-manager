@@ -36,16 +36,41 @@ extension ProfileStore {
     /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
     func liveRewrite(for profile: Profile, presentationChanged: Bool) -> LiveRewrite? {
         guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
+        // The two comparisons below answer different questions, and each is written to fail
+        // *towards withholding the nudge* — because what rides on it is a Restart that stops
+        // someone's live session, while the cost of not offering one is a window showing last
+        // session's badge until it is next reopened.
+        //
+        // Rivals: compared as directories. A literal comparison looks defensible — `mainPID`
+        // anchors its `pgrep` pattern on the recorded spelling at both ends, so a sibling
+        // holding another spelling launches an instance that pattern cannot match — but that
+        // reasoning assumes the sibling's *script* execs what its *marker* records. `build`
+        // writes the two together, and nothing re-checks them afterwards: a hand-edited marker
+        // (which `profileMatchingItsLauncher` deliberately tolerates) leaves a launcher whose
+        // instance answers our probe while its marker no longer matches our string. That
+        // launcher is exactly the rival this guard exists to see.
+        // The literal test runs first, and settles the common case without touching the disk:
+        // canonicalising reaches the file system once per launcher, and this runs on Save and
+        // on every launcher of "Apply to all". A sibling whose data directory sits on a stale
+        // network mount would otherwise stall an edit that has nothing to do with it. What
+        // survives to the canonical test is only what a plain comparison already rejected.
+        let ourProfileDir = PathUtils.canonicalPath(profile.profilePath)
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { $0.marker.profile == profile.profilePath }
-        // Exactly one, and it is the launcher just written. `scan` degrades an unreadable
-        // install directory to an empty list, so "no launcher claims this profile dir" is
-        // "the scan told us nothing", not evidence of uniqueness — and a `<=` here would
-        // read that failure as a clear answer and nudge anyway. Ownership has to be
-        // *observed*, since what rides on it is a Restart that can stop someone's session.
+            .filter {
+                $0.marker.profile == profile.profilePath
+                    || PathUtils.canonicalPath($0.marker.profile) == ourProfileDir
+            }
+        // Identity: compared as **strings**, and deliberately not canonicalised. `scan` reports
+        // launchers under the install directory's own spelling and `profile.appPath` is derived
+        // from that same directory, so equality here holds *by construction* — canonicalising
+        // would paper over the very drift `scan`'s doc comment describes, leaving the lost-nudge
+        // half of that bug undetectable at the site that produces it.
+        //
+        // `scan` also degrades an unreadable install directory to an empty list, so "no launcher
+        // claims this profile dir" is "the scan told us nothing", not evidence of uniqueness —
+        // and a `<=` here would read that failure as a clear answer and nudge anyway.
         guard sharingThisProfileDir.count == 1,
-              sharingThisProfileDir[0].appURL.standardizedFileURL.path
-              == profile.appURL.standardizedFileURL.path
+              sharingThisProfileDir[0].appURL.path == profile.appURL.path
         else { return nil }
         return LiveRewrite(profile: profile, pid: pid)
     }

@@ -136,7 +136,7 @@ public struct ProfileStore {
             return profile
         }
         guard installed.marker.name == profile.name,
-              Self.sameDirectory(installed.marker.profile, profile.profilePath)
+              PathUtils.sameDirectory(installed.marker.profile, profile.profilePath)
         else {
             throw ClaudeManagerError.launcherBelongsToAnotherProfile(
                 appPath: profile.appPath,
@@ -153,21 +153,6 @@ public struct ProfileStore {
             bundleID: profile.bundleID,
             appPath: profile.appPath
         )
-    }
-
-    /// Whether two paths name the same directory. Never compared raw — the profile path is
-    /// free text when a profile is created, so one directory has many spellings.
-    ///
-    /// Symlinks are resolved as well as `.`/`..` folded, because the aliases are not exotic
-    /// here: macOS puts the temporary directory behind `/var → /private/var`, and
-    /// `PathUtils.absolutePath` only strips that prefix for a directory that already exists —
-    /// so the same typed path resolves differently depending on when it was typed. Case is
-    /// *not* folded: a case-insensitive volume makes two spellings the same file, but the
-    /// comparison cannot know the volume, and that gap is tracked separately.
-    /// (Containment is a different question, and `ProfileStore+Remove` owns it.)
-    static func sameDirectory(_ lhs: String, _ rhs: String) -> Bool {
-        URL(fileURLWithPath: lhs).resolvingSymlinksInPath().standardizedFileURL.path
-            == URL(fileURLWithPath: rhs).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     /// Locate the real app and build a store with default locations.
@@ -317,7 +302,7 @@ public struct ProfileStore {
             guard let installed = bundle.readMarker(at: profile.appURL) else {
                 throw ClaudeManagerError.markerMissing(path: profile.appPath)
             }
-            guard Self.sameDirectory(installed.marker.profile, profile.profilePath) else {
+            guard PathUtils.sameDirectory(installed.marker.profile, profile.profilePath) else {
                 throw ClaudeManagerError.launcherHoldsOtherProfileData(
                     appPath: profile.appPath,
                     installed: installed.marker.profile,

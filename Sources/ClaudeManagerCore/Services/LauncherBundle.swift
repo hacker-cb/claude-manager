@@ -109,6 +109,13 @@ public struct LauncherBundle {
         // worst case is a redundant refresh hint, never a spurious silent flash.
         let iconChanged = installedIconDiffers(at: appURL, name: iconFileName, data: icnsData)
 
+        // A launcher the user put out of sight (`chflags hidden`, or Finder) stays out of
+        // sight across a rebuild. `scan` keeps such bundles deliberately — a hidden launcher
+        // still runs and still claims its user-data directory — so `rebuildAll` reaches them,
+        // and the swap below writes a fresh directory that carries none of the old one's
+        // attributes. Read before the swap, restored after it.
+        let wasHidden = HiddenFlag.isSet(at: appURL)
+
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
 
@@ -178,6 +185,10 @@ public struct LauncherBundle {
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
+        // Below the signing call, and allowed to be: `HiddenFlag` writes the inode's own flag
+        // bits, which the seal does not span — its doc says why the obvious API is not usable
+        // here, and that the two are not interchangeable.
+        if wasHidden { HiddenFlag.set(at: appURL) }
         return iconChanged
     }
 
@@ -263,13 +274,31 @@ public struct LauncherBundle {
     }
 
     /// All managed launchers directly inside `installDirectory`, sorted by name.
+    ///
+    /// Each is reported under **`installDirectory`'s own spelling** of the path, rebuilt from
+    /// the directory we were handed rather than taken from what `contentsOfDirectory` returns:
+    /// that call resolves symlinks, so scanning `/tmp/Apps` hands back `/private/tmp/Apps/…`
+    /// and a launcher acquires a second spelling nothing else in the app uses.
+    ///
+    /// That is not cosmetic. `Profile.id` **is** `appPath`, and every other path is derived
+    /// from `ProfileStoreConfiguration.installDirectory` — so a launcher reached through a
+    /// symlinked install directory would carry one identity from `scan` and another from
+    /// `draft`, the same bundle listed under two ids. `update` re-derives the bundle path the
+    /// second way and compares it against the profile's, so an ordinary edit reads as a rename
+    /// onto a path that already exists — its own bundle — and is refused outright; and
+    /// `liveRewrite` matches the scanned launcher against the profile's own path, so the
+    /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
+    /// two sides equal *by construction*, rather than by both happening to normalize the same
+    /// way afterwards.
+    /// Enumerated through `visibleContents(ofDirectoryAt:)`, whose doc comment owns why: one
+    /// spelling per launcher, and a symlinked install directory that does not read as empty.
+    /// The flagged-hidden filter is deliberately *not* asked for — a hidden launcher still runs
+    /// and still claims its user-data directory.
+    ///
+    /// An unreadable install directory yields no launchers, which callers must not read as
+    /// "nobody claims this profile directory" — `liveRewrite` says what it does about that.
     public func scan(installDirectory: URL) -> [Discovered] {
-        let entries = (try? fileManager.contentsOfDirectory(
-            at: installDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return entries
+        fileManager.visibleContents(ofDirectoryAt: installDirectory)
             .filter { $0.pathExtension == "app" }
             .compactMap { readMarker(at: $0) }
             .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
