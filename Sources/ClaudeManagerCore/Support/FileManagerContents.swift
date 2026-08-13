@@ -20,6 +20,14 @@ public extension FileManager {
     ///
     /// An unreadable directory comes back as an empty list rather than an error: both callers
     /// treat "cannot tell" as "nothing to report", and each documents what it does about that.
+    ///
+    /// The hidden test asks the URL rather than the listing that produced it, so unlike
+    /// `.skipsHiddenFiles` it can fail to get an answer — an entry removed between the two
+    /// calls, or a directory listable but not stat-able. It **fails open**, keeping the entry,
+    /// because the two mistakes are not equal: showing a launcher someone hid is cosmetic,
+    /// while dropping one on an unanswered stat takes it out of the sidebar, out of
+    /// `rebuildAll`, and out of every ownership check that asks who claims a profile
+    /// directory.
     func visibleContents(ofDirectoryAt url: URL) -> [URL] {
         let names = (try? contentsOfDirectory(atPath: url.path)) ?? []
         return names

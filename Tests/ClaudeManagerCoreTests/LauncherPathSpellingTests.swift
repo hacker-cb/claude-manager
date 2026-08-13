@@ -32,21 +32,36 @@ struct LauncherPathSpellingTests {
         return LinkedEnv(env: env, installDir: installDir, store: store(in: env, installDir: installDir))
     }
 
-    /// The same fixtures, reached through another spelling of the install directory. Every
-    /// hermetic field `makeStoreEnv` sets is carried over, so this store reads no host state.
+    /// The same fixtures, reached through another spelling of the install directory. Built by
+    /// copying the store's own configuration and replacing that one field, so every hermetic
+    /// path `makeStoreEnv` wires up is carried over — and stays carried over when it wires up
+    /// one more.
     private func store(in env: StoreEnv, installDir: URL) -> ProfileStore {
-        ProfileStore(
+        var configuration = env.store.configuration
+        configuration.installDirectory = installDir
+        return ProfileStore(
             realClaude: env.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: installDir,
-                defaultProfilesDirectory: env.profilesDir,
-                managedPreferencesURLs: env.managedPreferencesURLs,
-                defaultProfileUserDataPath: env.defaultProfileUserDataPath,
-                shipItStatePath: env.shipItStatePath
-            ),
+            configuration: configuration,
             runner: env.runner,
             signalSender: { _, _ in 0 }
         )
+    }
+
+    /// A `pgrep` stub answering only the probe that carries `profilePath` — what the real,
+    /// anchored pattern matches. An unconditional stub would answer a probe aimed at any path,
+    /// leaving the tests below asserting nothing about which one was probed.
+    private func pgrepStub(
+        matching profilePath: String,
+        pid: Int32 = 888
+    ) -> @Sendable (String, [String]) -> CommandOutput {
+        { executable, args in
+            guard executable == CoreConstants.pgrepPath else { return idleStub(executable, args) }
+            let mine = args.last?
+                .contains(PathUtils.regexEscaped(profilePath) + "( |$)") == true
+            return mine
+                ? CommandOutput(exitCode: 0, standardOutput: "\(pid)\n", standardError: "")
+                : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
+        }
     }
 
     /// The launcher `list` reports and the launcher `add` returned must be one profile, not
@@ -78,19 +93,7 @@ struct LauncherPathSpellingTests {
         let (env, store) = (linked.env, linked.store)
         defer { try? fm.removeItem(at: env.root) }
         let added = try store.add(AddProfileRequest(name: env.name("work"))).profile
-        // Gated on the profile's own spelling, the way the real anchored pattern is: an
-        // unconditional stub would answer a probe aimed at *any* path, so the pid assertion
-        // below would survive `liveRewrite` probing with a spelling no launcher ever execs.
-        env.runner.setHandler { executable, args in
-            if executable == CoreConstants.pgrepPath {
-                let mine = args.last?
-                    .contains(PathUtils.regexEscaped(added.profilePath) + "( |$)") == true
-                return mine
-                    ? CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
-                    : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
-            }
-            return idleStub(executable, args)
-        }
+        env.runner.setHandler(pgrepStub(matching: added.profilePath))
         let listed = try #require(store.list().first).profile
         var edits = ProfileEdits(listed)
         edits.label = "ZZ"
@@ -136,20 +139,10 @@ struct LauncherPathSpellingTests {
         ).profile
         #expect(two.profilePath != one.profilePath) // same directory, two spellings
 
-        // The stub answers only the probe carrying `one`'s spelling — all the real, anchored
-        // pattern would match. So `one` is genuinely running, and the nudge is withheld anyway:
-        // the point is that `pgrep` telling the two apart is not the same as ownership being
-        // provable.
-        env.runner.setHandler { executable, args in
-            if executable == CoreConstants.pgrepPath {
-                let mine = args.last?
-                    .contains(PathUtils.regexEscaped(one.profilePath) + "( |$)") == true
-                return mine
-                    ? CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
-                    : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
-            }
-            return idleStub(executable, args)
-        }
+        // `one` is genuinely running — the stub answers its probe and no other — and the nudge
+        // is withheld anyway: `pgrep` telling the two launchers apart is not the same thing as
+        // ownership being provable.
+        env.runner.setHandler(pgrepStub(matching: one.profilePath))
         var edits = ProfileEdits(one)
         edits.label = "ZZ"
         let result = try env.store.update(one, applying: edits)
@@ -214,23 +207,12 @@ struct LauncherPathSpellingTests {
         let profileDir = profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
         try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
-        let runner = RecordingCommandRunner(handler: idleStub)
 
-        let diagnostics = Doctor(
-            realClaude: scene.real,
-            configuration: ProfileStoreConfiguration(
-                installDirectory: scene.installDir,
-                defaultProfilesDirectory: profilesDir,
-                defaultProfileUserDataPath: scene.defaultProfilePath,
-                shipItStatePath: scene.shipItStatePath
-            ),
-            bundle: LauncherBundle(runner: runner),
-            codeSigner: CodeSigner(runner: runner),
-            processProbe: ProcessProbe(runner: runner),
-            managedConfigWriter: ManagedConfigWriter(
-                fileManager: fm, managedPreferencesURLs: scene.noMDM
-            )
-        ).run()
+        let diagnostics = runDoctor(
+            scene,
+            runner: RecordingCommandRunner(handler: idleStub),
+            profilesDirectory: profilesDir
+        )
 
         #expect(!diagnostics.contains { $0.title == "Orphan profile (no launcher)" })
     }
