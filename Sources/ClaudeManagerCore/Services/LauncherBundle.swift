@@ -114,7 +114,7 @@ public struct LauncherBundle {
         // still runs and still claims its user-data directory — so `rebuildAll` reaches them,
         // and the swap below writes a fresh directory that carries none of the old one's
         // attributes. Read before the swap, restored after it.
-        let wasHidden = (try? appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
+        let wasHidden = HiddenFlag.isSet(at: appURL)
 
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -185,16 +185,10 @@ public struct LauncherBundle {
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
-        // Not a write *into* the bundle, so the seal above still covers everything it covered:
-        // this sets the enclosing directory's own hidden attribute, touching no file the
-        // signature spans. Best-effort — a launcher that ends up visible is a nuisance, while
-        // failing the whole rebuild over it would leave the user with no working launcher.
-        if wasHidden {
-            var url = appURL
-            var values = URLResourceValues()
-            values.isHidden = true
-            try? url.setResourceValues(values)
-        }
+        // Below the signing call, and allowed to be: `HiddenFlag` writes the inode's own flag
+        // bits, which the seal does not span — its doc says why the obvious API is not usable
+        // here, and that the two are not interchangeable.
+        if wasHidden { HiddenFlag.set(at: appURL) }
         return iconChanged
     }
 

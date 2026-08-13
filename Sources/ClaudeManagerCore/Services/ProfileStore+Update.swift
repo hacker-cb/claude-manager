@@ -56,8 +56,7 @@ public extension ProfileStore {
         // carries the flag itself, but only for a bundle it *replaces* — a rename installs at
         // a path that does not exist yet, so the flag has to come from the bundle being
         // retired, and only this side knows both paths.
-        let wasHidden = (try? original.appURL.resourceValues(forKeys: [.isHiddenKey]))?
-            .isHidden == true
+        let wasHidden = HiddenFlag.isSet(at: original.appURL)
 
         try ensureInstallDirectoryWritable()
         // The directory is the profile's own — an edit cannot point it elsewhere — so this
@@ -105,12 +104,7 @@ public extension ProfileStore {
             }
         }
 
-        if renaming, wasHidden {
-            var url = updated.appURL
-            var values = URLResourceValues()
-            values.isHidden = true
-            try? url.setResourceValues(values)
-        }
+        if renaming, wasHidden { HiddenFlag.set(at: updated.appURL) }
 
         // Register so the new icon is picked up on next fetch — never flash the screen. A
         // pinned tile can be stale only for an in-place edit (or a rename onto a trashed

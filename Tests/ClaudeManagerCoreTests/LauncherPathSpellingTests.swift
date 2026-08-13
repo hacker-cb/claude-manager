@@ -185,10 +185,11 @@ struct LauncherPathSpellingTests {
         }
         let added = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
 
-        var url = added.appURL
-        var values = URLResourceValues()
-        values.isHidden = true
-        try url.setResourceValues(values)
+        // Hidden the way a user hides one — `chflags hidden`, i.e. the inode flag. Setting
+        // `URLResourceValues.isHidden` instead would write a `com.apple.FinderInfo` xattr and
+        // break the bundle's signature, which is a different bug (see `HiddenFlag`).
+        HiddenFlag.set(at: added.appURL)
+        #expect(HiddenFlag.isSet(at: added.appURL))
 
         #expect(env.store.list().map(\.profile.id) == [added.id])
 
@@ -196,9 +197,7 @@ struct LauncherPathSpellingTests {
         // loop, which every wrapper-version bump prompts for all launchers at once, and the
         // swap writes a fresh directory carrying none of the old one's attributes.
         try env.store.rebuild(added)
-        #expect(
-            (try? added.appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
-        )
+        #expect(HiddenFlag.isSet(at: added.appURL))
 
         // A rename installs at a path that does not exist yet, so `build` has no bundle to
         // take the flag from — `update` carries it across instead.
@@ -206,9 +205,7 @@ struct LauncherPathSpellingTests {
         edits.displayName = env.display("job")
         let renamed = try env.store.update(added, applying: edits).profile
         defer { Fixture.purgeTrash(displayNamePrefix: env.display("job")) }
-        #expect(
-            (try? renamed.appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
-        )
+        #expect(HiddenFlag.isSet(at: renamed.appURL))
     }
 
     /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever
