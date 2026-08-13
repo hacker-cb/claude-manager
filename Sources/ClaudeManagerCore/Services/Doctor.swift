@@ -327,7 +327,7 @@ public struct Doctor {
         guard launchersKnown else {
             return [Diagnostic(
                 severity: .warning,
-                title: "Cannot read the launcher folder — orphan-profile check skipped",
+                title: "Could not read every launcher — orphan-profile check skipped",
                 detail: PathUtils.abbreviatingHome(configuration.installDirectory.path)
             )]
         }

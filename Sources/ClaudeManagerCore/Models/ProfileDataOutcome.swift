@@ -80,7 +80,7 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             RemovalNotice(
                 title: "Profile data was kept",
                 message: "\(displayName)'s launcher is in the Trash, but its profile data was "
-                    + "left alone: the launcher folder stopped being readable mid-removal, so "
+                    + "left alone: a launcher stopped being readable mid-removal, so "
                     + "there was no way to tell whether another profile also uses that data. "
                     + "The login and chat history are still on disk — delete that folder by "
                     + "hand if you are sure nothing else uses it."

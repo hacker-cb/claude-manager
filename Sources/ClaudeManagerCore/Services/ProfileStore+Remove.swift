@@ -63,8 +63,13 @@ public extension ProfileStore {
             // one's emptiness would again read as "nobody claims this".
             let scan = bundle.scan(installDirectory: configuration.installDirectory)
             guard scan.isComplete else {
-                throw ClaudeManagerError.launcherFolderUnreadable(
-                    path: configuration.installDirectory.path
+                // Whatever actually blocked the answer: the bundles that could not be read, or
+                // the folder itself when it could not even be listed. Naming the folder for an
+                // unreadable *bundle* would send the user to fix something that is already fine.
+                throw ClaudeManagerError.launcherOwnersUnknown(
+                    paths: scan.unreadable.isEmpty
+                        ? [configuration.installDirectory.path]
+                        : scan.unreadable.map(\.path)
                 )
             }
             let nested = launchersNested(under: profile, among: scan.launchers)

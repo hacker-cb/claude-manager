@@ -56,19 +56,25 @@ public struct LauncherBundle {
     /// What a scan of an install directory found, and whether that is the whole story.
     public struct Scan: Equatable, Sendable {
         public let launchers: [Discovered]
-        /// False when the directory could not be listed, or when a bundle in it could not be
-        /// read well enough to tell whether it is one of ours.
+        /// Bundles that could not be read well enough to tell whether they are ours — empty
+        /// when the *directory itself* could not be listed, which `isComplete` also covers.
+        /// Carried so a caller can name what actually blocked it: "make the launcher folder
+        /// readable" is the wrong remedy for a folder that listed fine.
+        public let unreadable: [URL]
+        /// Whether the directory listed **and** every bundle in it could be read.
         ///
         /// **An incomplete scan must never be read as "nobody claims this profile
         /// directory".** That question decides whether a user-data directory — an Anthropic
         /// login and a whole chat history — is deleted, and `removeItem` is not a Trash move.
         /// A folder that was renamed, unmounted, or had its permissions changed answers it
-        /// exactly as an empty one does.
+        /// exactly as an empty one does, and so does a single sibling bundle that cannot be
+        /// read.
         public let isComplete: Bool
 
-        public init(launchers: [Discovered], isComplete: Bool) {
+        public init(launchers: [Discovered], unreadable: [URL], listed: Bool = true) {
             self.launchers = launchers
-            self.isComplete = isComplete
+            self.unreadable = unreadable
+            isComplete = listed && unreadable.isEmpty
         }
     }
 
@@ -278,14 +284,71 @@ public struct LauncherBundle {
 
     /// Parse a bundle's marker, or `nil` if it is not one of ours.
     public func readMarker(at appURL: URL) -> Discovered? {
-        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-        guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
-              let markerDict = info[CoreConstants.markerKey] as? [String: Any],
-              let marker = LauncherMarker(dictionary: markerDict)
-        else { return nil }
+        guard case let .launcher(discovered) = read(at: appURL) else { return nil }
+        return discovered
+    }
+
+    /// What one bundle turned out to be, decided by a **single** read of its `Info.plist`.
+    ///
+    /// The three outcomes have to come from one read, because the two that mean "not a launcher
+    /// of ours" are treated very differently: `foreign` lets a scan call itself complete, and a
+    /// complete scan is what licenses deleting a user-data directory. Re-probing after the fact
+    /// lets the two answers disagree — permissions or a mount changing in between — and the
+    /// disagreement always lands the same way, with the launcher missing from the list while
+    /// the scan says it saw everything.
+    ///
+    /// `unreadable` therefore covers every "cannot establish": an unreachable bundle or plist,
+    /// bytes that do not parse, and a marker whose fields are missing or of the wrong type.
+    /// Only a plist that parsed and simply carries no marker is `foreign` — an ordinary
+    /// third-party app sitting in the install directory.
+    func read(at appURL: URL) -> BundleRead {
+        var isDirectory: ObjCBool = false
+        // Not a directory at all — a Finder alias, a stray file, a link whose target is gone.
+        // Not a bundle we failed to read; not a bundle.
+        guard fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return .foreign }
+        // A directory we cannot enter is the hard case, and it resolves against the purge: an
+        // unreadable bundle *might* be one of ours claiming a user-data directory, and the two
+        // mistakes are not equal — a refusal costs a removal the user can retry once they see
+        // which bundle is named, while guessing "not ours" costs a login that is gone.
+        guard (try? fileManager.contentsOfDirectory(atPath: appURL.path)) != nil else {
+            return .unreadable
+        }
+        let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
+        guard let inside = try? fileManager.contentsOfDirectory(atPath: contents.path) else {
+            // `Contents` absent is an ordinary non-bundle; `Contents` present but unenterable
+            // is the case `fileExists` would have reported identically.
+            var contentsIsDirectory: ObjCBool = false
+            let present = fileManager.fileExists(
+                atPath: contents.path, isDirectory: &contentsIsDirectory
+            )
+            return present && contentsIsDirectory.boolValue ? .unreadable : .foreign
+        }
+        guard inside.contains("Info.plist") else { return .foreign }
+        guard let data = fileManager.contents(atPath: contents.appendingPathComponent("Info.plist").path),
+              let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let info = parsed as? [String: Any]
+        else { return .unreadable }
+        guard let markerDict = info[CoreConstants.markerKey] as? [String: Any] else {
+            return .foreign
+        }
+        guard let marker = LauncherMarker(dictionary: markerDict) else { return .unreadable }
         let bundleID = (info["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
         let displayName = (info["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
-        return Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        return .launcher(
+            Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        )
+    }
+
+    /// One entry's verdict — see `read(at:)`.
+    enum BundleRead {
+        case launcher(Discovered)
+        /// Read successfully, and it is not one of ours.
+        case foreign
+        /// Could not be established either way. Never counted as "not ours": that is the answer
+        /// that lets a purge delete a directory this bundle may still claim.
+        case unreadable
     }
 
     public func isManagedLauncher(at appURL: URL) -> Bool {
@@ -320,56 +383,24 @@ public struct LauncherBundle {
     /// a login. See `Scan.isComplete`.
     public func scan(installDirectory: URL) -> Scan {
         guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
-            return Scan(launchers: [], isComplete: false)
+            return Scan(launchers: [], unreadable: [], listed: false)
         }
-        // One read per bundle, and both answers come from it. Reading twice — once to collect
-        // the launchers, once to ask whether a miss was a failure — lets the two disagree when
-        // permissions or a mount change in between, and the disagreement always lands the same
-        // way: the launcher missing from the list while the scan calls itself complete.
-        let reads = entries
-            .filter { $0.pathExtension == "app" }
-            .map { (url: $0, marker: readMarker(at: $0)) }
-        let launchers = reads.compactMap(\.marker)
-        let unreadable = reads.contains { $0.marker == nil && isUnreadable($0.url) }
+        var launchers: [Discovered] = []
+        var unreadable: [URL] = []
+        for url in entries where url.pathExtension == "app" {
+            switch read(at: url) {
+            case let .launcher(discovered): launchers.append(discovered)
+            case .foreign: continue
+            case .unreadable: unreadable.append(url)
+            }
+        }
         return Scan(
             launchers: launchers
                 .sorted {
                     $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending
                 },
-            isComplete: !unreadable
+            unreadable: unreadable
         )
-    }
-
-    /// Whether a bundle that yielded no marker withheld it because it could not be *read*,
-    /// rather than because it is simply not one of ours. An ordinary third-party app in the
-    /// install directory is readable and markerless; a launcher on an ejected volume, or one
-    /// whose permissions changed, is neither — and only the second makes a scan incomplete.
-    ///
-    /// "Absent" has to be told apart from "unreachable" at every level, because `fileExists`
-    /// reports both as false: a bundle whose root lists fine can still have a `Contents` that
-    /// cannot be entered, and reading that as "no Info.plist, so not ours" is what lets a
-    /// purge delete the data of the very launcher it could not see.
-    private func isUnreadable(_ appURL: URL) -> Bool {
-        // A `.app` that is not a directory at all — a Finder alias, a stray file, a symlink
-        // whose target is gone — is not a bundle we failed to read, it is not a bundle. Reading
-        // it as unreadable would mark every scan of `/Applications` incomplete for good: no
-        // profile data could ever be deleted through the app, and Doctor's orphan sweep would
-        // stay switched off, both without naming a culprit.
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory) else {
-            return false
-        }
-        guard isDirectory.boolValue else { return false }
-        guard let entries = try? fileManager.contentsOfDirectory(atPath: appURL.path) else {
-            return true
-        }
-        guard entries.contains("Contents") else { return false } // plainly not a bundle of ours
-        let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
-        guard let inside = try? fileManager.contentsOfDirectory(atPath: contents.path) else {
-            return true
-        }
-        guard inside.contains("Info.plist") else { return false }
-        return fileManager.contents(atPath: contents.appendingPathComponent("Info.plist").path) == nil
     }
 
     // MARK: - Remove

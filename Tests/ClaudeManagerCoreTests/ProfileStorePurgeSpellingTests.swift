@@ -155,7 +155,11 @@ struct ProfileStorePurgeSpellingTests {
 
         #expect(fm.fileExists(atPath: one.appPath))
         #expect(fm.fileExists(atPath: login.path))
-        #expect(try #require(thrown.errorDescription).contains("could not be read"))
+        // Named by what actually blocked it — the sibling's bundle, not the folder, which
+        // lists perfectly well.
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains("could not be read"))
+        #expect(message.contains(URL(fileURLWithPath: two.appPath).lastPathComponent))
     }
 
     /// `removeItem` on a symbolic link unlinks the link and walks nothing, so a profile whose
@@ -356,6 +360,8 @@ struct ProfileStorePurgeSpellingTests {
         let message = try #require(thrown.errorDescription)
         #expect(message.contains("could not be read"))
         #expect(message.contains("Nothing was removed"))
+        // The folder is what blocked it here, so the folder is what gets named.
+        #expect(message.contains(URL(fileURLWithPath: env.installDir.path).lastPathComponent))
     }
 
     /// The same folder becoming unreadable *after* that pre-flight check — the residue the
