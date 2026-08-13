@@ -309,20 +309,16 @@ public struct Doctor {
     ///
     /// Both halves are spelling-sensitive, and getting either wrong tells the user that a
     /// directory holding their Anthropic login and chat history is safe to delete. So the
-    /// listing goes through `atPath` — `contentsOfDirectory(at:)` throws on a profiles
-    /// directory that is itself a symlink, and resolves symlinks in the paths it returns,
-    /// which is a spelling no marker ever holds — and the "is it claimed" test compares
-    /// canonical paths, since a marker records whatever spelling the profile was created
-    /// with (iCloud's Desktop & Documents replaces `~/Documents` with a symlink, and the
-    /// profiles directory is user-settable).
+    /// listing goes through `visibleContents(ofDirectoryAt:)` — whose doc comment explains what
+    /// the URL overload would lose here — and the "is it claimed" test compares canonical
+    /// paths, since a marker records whatever spelling the profile was created with (iCloud's
+    /// Desktop & Documents replaces `~/Documents` with a symlink, and the profiles directory is
+    /// user-settable).
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
         let dir = configuration.defaultProfilesDirectory
-        guard let names = try? fileManager.contentsOfDirectory(atPath: dir.path) else { return [] }
         let claimed = Set(known.map { PathUtils.canonicalPath($0) })
 
-        return names
-            .filter { !$0.hasPrefix(".") }
-            .map { dir.appendingPathComponent($0, isDirectory: true) }
+        return fileManager.visibleContents(ofDirectoryAt: dir)
             .sorted { $0.path < $1.path }
             .filter { entry in
                 var isDirectory: ObjCBool = false

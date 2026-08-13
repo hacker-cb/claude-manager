@@ -279,19 +279,17 @@ public struct LauncherBundle {
     /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
     /// two sides equal *by construction*, rather than by both happening to normalize the same
     /// way afterwards.
-    /// Enumerated **by path**, not by URL. `contentsOfDirectory(at:)` does not follow a
-    /// symlink handed to it as the directory itself — it throws `ENOTDIR` — and the `try?`
-    /// below turns that into "this install directory holds no launchers": an empty sidebar
-    /// with every launcher still on disk, `rebuildAll` reporting success having rebuilt
-    /// nothing, and Doctor calling every live profile an orphan. The `atPath` overload lists
-    /// that same directory fine. Hidden entries are filtered by name, which is what
-    /// `.skipsHiddenFiles` did for us, and it is `build`'s `.<name>.app.build-<uuid>` staging
-    /// directories that make it necessary.
+    /// Enumerated through `visibleContents(ofDirectoryAt:)`, which is what keeps every launcher
+    /// under one spelling and keeps a symlinked install directory from reading as empty — that
+    /// helper's doc comment owns both reasons. Its hidden-entry filter is also what keeps
+    /// `build`'s `.<name>.app.build-<uuid>` staging directories out of the scan.
+    ///
+    /// An unreadable install directory therefore yields no launchers, which callers must not
+    /// read as "nobody claims this profile directory" — `liveRewrite` says what it does about
+    /// that.
     public func scan(installDirectory: URL) -> [Discovered] {
-        let names = (try? fileManager.contentsOfDirectory(atPath: installDirectory.path)) ?? []
-        return names
-            .filter { !$0.hasPrefix(".") && ($0 as NSString).pathExtension == "app" }
-            .map { installDirectory.appendingPathComponent($0, isDirectory: true) }
+        fileManager.visibleContents(ofDirectoryAt: installDirectory)
+            .filter { $0.pathExtension == "app" }
             .compactMap { readMarker(at: $0) }
             .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
     }

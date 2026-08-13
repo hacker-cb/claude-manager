@@ -178,6 +178,27 @@ struct LauncherPathSpellingTests {
         #expect(listed.first?.profile.id == added.id)
     }
 
+    /// Listing by path sees what `.skipsHiddenFiles` used to drop, and the hidden flag leaves
+    /// the name alone — so a name-only filter would newly surface items macOS hides. Asserted
+    /// on the launcher scan; Doctor's enumeration filters through the same helper.
+    @Test
+    func anEntryHiddenByTheFileSystemStaysOutOfTheScan() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let added = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        #expect(env.store.list().count == 1)
+
+        var url = added.appURL
+        var values = URLResourceValues()
+        values.isHidden = true
+        try url.setResourceValues(values)
+
+        #expect(env.store.list().isEmpty)
+    }
+
     /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever
     /// spelling the profile was created with. Through a symlinked parent — iCloud's "Desktop &
     /// Documents" turns `~/Documents` into one, and the profiles folder is user-settable —
