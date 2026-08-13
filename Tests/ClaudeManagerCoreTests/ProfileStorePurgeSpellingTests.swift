@@ -227,6 +227,100 @@ struct ProfileStorePurgeSpellingTests {
         #expect(try #require(thrown.errorDescription).contains(under.displayName))
     }
 
+    /// A sibling can sit under the purged directory only by the path it *recorded* — through a
+    /// symlink inside that directory, the shape a user creates by moving one profile's data to
+    /// an external disk and leaving a link behind. Canonicalising moves it out of containment,
+    /// and the recursive delete then takes the link with the directory: the bytes survive on
+    /// the other disk, the sibling can no longer find them.
+    @Test
+    func purgeSeesASiblingReachedThroughALinkInsideTheDirectory() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("outer"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("moved"))
+        }
+        let outer = env.profilesDir.appendingPathComponent("outer")
+        try fm.createDirectory(at: outer, withIntermediateDirectories: true)
+        // "Moved to another disk, link left behind."
+        let elsewhere = env.root.appendingPathComponent("elsewhere")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let insideLink = outer.appendingPathComponent("moved")
+        try fm.createSymbolicLink(at: insideLink, withDestinationURL: elsewhere)
+
+        let outerProfile = try env.store.add(
+            AddProfileRequest(name: env.name("outer"), profilePath: outer.path)
+        ).profile
+        let moved = try env.store.add(
+            AddProfileRequest(name: env.name("moved"), profilePath: insideLink.path)
+        ).profile
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.remove(outerProfile, purgeProfile: true)
+        }
+
+        #expect(fm.fileExists(atPath: outer.path))
+        #expect(try #require(thrown.errorDescription).contains(moved.displayName))
+    }
+
+    /// The same link, recorded by two profiles under different spellings of its parent. The
+    /// unlink strands the sibling, so it has to be recognised — and recognised as the *link*,
+    /// which is what tells it apart from a profile living under the link's target.
+    @Test
+    func purgeSeesASiblingRecordingTheSameLinkUnderAnotherSpelling() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("twin"))
+        }
+        let real = env.profilesDir.appendingPathComponent("real")
+        try fm.createDirectory(at: real, withIntermediateDirectories: true)
+        let alias = env.profilesDir.appendingPathComponent("alias")
+        try fm.createSymbolicLink(at: alias, withDestinationURL: real)
+        let aliasByLink = try linkedProfilesDir(env).appendingPathComponent("alias")
+
+        let aliasProfile = try env.store.add(
+            AddProfileRequest(name: env.name("alias"), profilePath: alias.path)
+        ).profile
+        let twin = try env.store.add(
+            AddProfileRequest(name: env.name("twin"), profilePath: aliasByLink.path)
+        ).profile
+
+        let result = try env.store.remove(aliasProfile, purgeProfile: true)
+
+        #expect(result.profileData == .keptSharedWith(launchers: [twin.displayName]))
+        #expect(fm.fileExists(atPath: alias.path))
+    }
+
+    /// The overlay sweep deletes its path recursively too, so a launcher whose data sits
+    /// *inside* the `-3p` path is as exposed as one whose data is that path.
+    @Test
+    func purgeSparesALauncherLivingInsideThe3pPath() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("inside"))
+        }
+        let work = env.profilesDir.appendingPathComponent("work")
+        let inside = URL(fileURLWithPath: work.path + "-3p").appendingPathComponent("inner")
+        try fm.createDirectory(at: inside, withIntermediateDirectories: true)
+
+        let workProfile = try env.store.add(
+            AddProfileRequest(name: env.name("work"), profilePath: work.path)
+        ).profile
+        _ = try env.store.add(
+            AddProfileRequest(name: env.name("inside"), profilePath: inside.path)
+        )
+        let login = inside.appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+
+        _ = try env.store.remove(workProfile, purgeProfile: true)
+
+        #expect(fm.fileExists(atPath: login.path))
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.

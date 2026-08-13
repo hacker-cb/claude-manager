@@ -129,10 +129,14 @@ public extension ProfileStore {
             return .alreadyGone
         }
         guard !isDefaultProfileData else { return .keptForDefaultProfile }
-        guard ownersKnown else { return .keptOwnersUnknown }
+        // A sharer that *was* seen is named, even where the scan is otherwise incomplete: the
+        // unknown is the weaker answer of the two, and reporting it instead would replace a
+        // launcher's name with "delete the folder by hand if you are sure nothing else uses
+        // it" — advice that destroys the very login this refusal exists to keep.
         guard sharing.isEmpty else {
             return .keptSharedWith(launchers: sharing.map(\.profile.displayName))
         }
+        guard ownersKnown else { return .keptOwnersUnknown }
         do {
             try fileManager.removeItem(at: profile.profileURL)
         } catch {
@@ -153,11 +157,12 @@ public extension ProfileStore {
     private func sweepOverlay(for profile: Profile, survivors: [LauncherBundle.Discovered]) {
         let overlayPath = ManagedConfigWriter
             .localTierURL(forUserDataPath: profile.profilePath).path
-        let canonicalOverlay = PathUtils.canonicalPath(overlayPath)
-        let overlayIsAnothersData = survivors.contains {
-            $0.marker.profile == overlayPath
-                || PathUtils.canonicalPath($0.marker.profile) == canonicalOverlay
-        }
+        // Asked exactly as the purge itself is asked, because `removeOverlay` deletes this
+        // path the same recursive way: a launcher whose data sits *inside* the `-3p` path is
+        // reached as surely as one whose data is that path, and an overlay path that is itself
+        // a link would only be unlinked. Equality alone missed both.
+        let reach = PurgeReach(path: overlayPath, url: URL(fileURLWithPath: overlayPath))
+        let overlayIsAnothersData = survivors.contains { reach.covers($0.marker.profile) }
         if !overlayIsAnothersData {
             try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
         }
@@ -172,21 +177,23 @@ public extension ProfileStore {
         among launchers: [LauncherBundle.Discovered]
     ) -> [String] {
         let ourApp = profile.appURL.standardizedFileURL.path
-        // A symlinked data path is unlinked, not walked: nothing under its *target* is
-        // destroyed, so containment there is not containment — see `PurgeReach`. What the
-        // unlink does strand is a sibling that spelled its own path through this link, and
-        // that one is compared unresolved.
+        // Strictly *inside*, asked both ways for the reasons `PurgeReach` sets out: a sibling
+        // can sit under this directory by canonical path (another spelling of it) or only by
+        // the path it recorded (through a symlink inside it). A link-valued path of our own
+        // contains nothing — unlinking it walks nowhere — so only the literal question applies.
         let isLink = Self.isSymbolicLink(profile.profileURL)
-        let ourData = isLink
-            ? URL(fileURLWithPath: profile.profilePath).standardizedFileURL.path
-            : PathUtils.canonicalPath(profile.profilePath)
+        let ourLiteral = PurgeReach.literalPath(profile.profilePath)
+        let ourCanonical = PathUtils.canonicalPath(profile.profilePath)
         return launchers
             .filter { $0.appURL.standardizedFileURL.path != ourApp }
             .filter {
-                let theirs = isLink
-                    ? URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path
-                    : PathUtils.canonicalPath($0.marker.profile)
-                return Self.directoryStrictlyContains(ourData, theirs)
+                let literal = Self.directoryStrictlyContains(
+                    ourLiteral, PurgeReach.literalPath($0.marker.profile)
+                )
+                guard !isLink else { return literal }
+                return literal || Self.directoryStrictlyContains(
+                    ourCanonical, PathUtils.canonicalPath($0.marker.profile)
+                )
             }
             .map(\.profile.displayName)
     }
@@ -216,42 +223,61 @@ public extension ProfileStore {
 
     /// Whether purging one profile's data would reach the directory another one records.
     ///
-    /// A value rather than a function because the answer canonicalises paths — which walks the
+    /// A value rather than a function because the answers canonicalise paths — which walks the
     /// file system — and one side of every comparison is the same throughout a removal. Built
-    /// once per removal, it costs one canonicalisation plus one per launcher instead of two
-    /// per launcher; on an install where some profile's data lives on a stale network mount,
-    /// each avoided call is one avoided stall. `liveRewrite` hoists the same way.
+    /// once per removal, it costs a fixed handful of canonicalisations plus one per launcher;
+    /// on an install where some profile's data lives on a stale mount, each avoided call is an
+    /// avoided stall. `liveRewrite` hoists the same way.
+    ///
+    /// "Reach" is not one question, and answering it with one comparison is what every bug
+    /// here has been:
+    ///
+    /// - **Recursive delete of a directory** takes everything physically under it, so a
+    ///   sibling recording another spelling of that directory (`…/ProfilesLink/x`) is reached —
+    ///   a *canonical* comparison.
+    /// - It also takes any **symlink sitting inside** it, stranding a sibling that recorded its
+    ///   path through that link even though the bytes survive — a *literal* comparison. Neither
+    ///   test subsumes the other, so both are asked.
+    /// - **Unlinking a link** (when the purged path is itself one) deletes nothing under the
+    ///   target, so containment there is not containment at all. What it reaches is whatever
+    ///   was spelled through the link — literal again — plus any spelling of *that same link*,
+    ///   which is the link's parent resolved with its own name left alone.
     struct PurgeReach {
-        private let profilePath: String
+        private let literal: String
         private let canonical: String
-        /// `removeItem` on a symbolic link unlinks the link and touches nothing under its
-        /// target, so a profile whose data path is a link destroys no other profile's data —
-        /// however deeply their recorded paths nest once the link is resolved. Treating that
-        /// as containment would refuse the removal outright *and* point the user at a launcher
-        /// whose data is genuinely destroyed if they follow the advice.
-        ///
-        /// What the unlink *does* reach is every launcher whose recorded path runs **through**
-        /// the link — `…/alias` itself, and `…/alias/inner` — since afterwards those paths lead
-        /// nowhere. Their data survives under the target, but they can no longer find it, so
-        /// they are still what this removal affects. Compared unresolved for exactly that
-        /// reason: a sibling recording `…/real/inner` names the same bytes and is untouched.
-        private let isLink: Bool
+        private let linkIdentity: String?
 
         init(_ profile: Profile) {
-            profilePath = profile.profilePath
-            canonical = PathUtils.canonicalPath(profile.profilePath)
-            isLink = ProfileStore.isSymbolicLink(profile.profileURL)
+            self.init(path: profile.profilePath, url: profile.profileURL)
+        }
+
+        init(path: String, url: URL) {
+            literal = Self.literalPath(path)
+            canonical = PathUtils.canonicalPath(path)
+            linkIdentity = ProfileStore.isSymbolicLink(url) ? Self.linkIdentityPath(path) : nil
         }
 
         func covers(_ other: String) -> Bool {
-            // The literal test first: it settles the ordinary case without touching the disk.
-            if other == profilePath { return true }
-            guard !isLink else {
-                // Unresolved on both sides — the question is whether the recorded path runs
-                // through this link, not whether it lands on the same bytes.
-                return ProfileStore.directoriesOverlapLiterally(profilePath, other)
+            guard linkIdentity == nil else {
+                return ProfileStore.directoriesOverlap(literal, Self.literalPath(other))
+                    || linkIdentity == Self.linkIdentityPath(other)
             }
-            return ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
+            return ProfileStore.directoriesOverlap(literal, Self.literalPath(other))
+                || ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
+        }
+
+        /// The path as recorded, `.`/`..` folded and nothing resolved.
+        static func literalPath(_ path: String) -> String {
+            URL(fileURLWithPath: path).standardizedFileURL.path
+        }
+
+        /// What identifies a **link itself**: its parent resolved, its own name untouched. Two
+        /// spellings of one link agree here, while the link's target — a different thing, and
+        /// one this removal does not delete — does not pass for it.
+        static func linkIdentityPath(_ path: String) -> String {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            return PathUtils.canonicalPath(url.deletingLastPathComponent().path)
+                + "/" + url.lastPathComponent
         }
     }
 

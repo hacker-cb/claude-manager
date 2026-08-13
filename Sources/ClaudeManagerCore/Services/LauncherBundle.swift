@@ -350,6 +350,16 @@ public struct LauncherBundle {
     /// cannot be entered, and reading that as "no Info.plist, so not ours" is what lets a
     /// purge delete the data of the very launcher it could not see.
     private func isUnreadable(_ appURL: URL) -> Bool {
+        // A `.app` that is not a directory at all — a Finder alias, a stray file, a symlink
+        // whose target is gone — is not a bundle we failed to read, it is not a bundle. Reading
+        // it as unreadable would mark every scan of `/Applications` incomplete for good: no
+        // profile data could ever be deleted through the app, and Doctor's orphan sweep would
+        // stay switched off, both without naming a culprit.
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory) else {
+            return false
+        }
+        guard isDirectory.boolValue else { return false }
         guard let entries = try? fileManager.contentsOfDirectory(atPath: appURL.path) else {
             return true
         }
