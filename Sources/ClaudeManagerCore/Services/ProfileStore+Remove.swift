@@ -125,10 +125,13 @@ public extension ProfileStore {
         guard fileManager.fileExists(atPath: profile.profilePath) else {
             // The overlay is swept even here — it is created independently of the data dir —
             // but not when the path is shared, where it is the survivor's overlay too, nor
-            // when it is the default profile's, where it is Claude's own config tier, nor when
-            // the survivors could not be listed: the sweep's own collision guard reads them,
-            // and an empty list would let it delete a launcher's data as if it were an overlay.
-            if ownersKnown, sharing.isEmpty, !isDefaultProfileData {
+            // when it is the default profile's, where it is Claude's own config tier. It runs
+            // even where the scan came back incomplete: the alternative is a `-3p` tier stranded
+            // for good — this branch reports `.alreadyGone`, which says nothing, the launcher is
+            // in the Trash so no profile lists the path, and Doctor's orphan sweep skips managed
+            // tiers by design. The sweep's own guard still refuses a path a surviving launcher
+            // claims; an unread sibling narrows that guard but does not remove it.
+            if sharing.isEmpty, !isDefaultProfileData {
                 sweepOverlay(for: profile, survivors: survivors)
             }
             return .alreadyGone
@@ -189,11 +192,14 @@ public extension ProfileStore {
         let isLink = Self.isSymbolicLink(profile.profileURL)
         let ourLiteral = PurgeReach.literalPath(profile.profilePath)
         let ourCanonical = PathUtils.canonicalPath(profile.profilePath)
+        let ignoringCase = Self.volumeIgnoresCase(at: profile.profileURL)
         return launchers
             .filter { $0.appURL.standardizedFileURL.path != ourApp }
             .filter {
                 let literal = Self.directoryStrictlyContains(
-                    ourLiteral, PurgeReach.literalPath($0.marker.profile)
+                    ourLiteral,
+                    PurgeReach.literalPath($0.marker.profile),
+                    ignoringCase: ignoringCase
                 )
                 guard !isLink else { return literal }
                 return literal || Self.directoryStrictlyContains(
@@ -251,6 +257,7 @@ public extension ProfileStore {
         private let literal: String
         private let canonical: String
         private let linkIdentity: String?
+        private let ignoringCase: Bool
 
         init(_ profile: Profile) {
             self.init(path: profile.profilePath, url: profile.profileURL)
@@ -260,15 +267,28 @@ public extension ProfileStore {
             literal = Self.literalPath(path)
             canonical = PathUtils.canonicalPath(path)
             linkIdentity = ProfileStore.isSymbolicLink(url) ? Self.linkIdentityPath(path) : nil
+            ignoringCase = ProfileStore.volumeIgnoresCase(at: url)
         }
 
         func covers(_ other: String) -> Bool {
-            guard linkIdentity == nil else {
-                return ProfileStore.directoriesOverlap(literal, Self.literalPath(other))
-                    || linkIdentity == Self.linkIdentityPath(other)
+            if let linkIdentity {
+                // Anything spelled through this link is stranded by the unlink. "Through it"
+                // has to be asked of every prefix of the sibling's path, not just of the path
+                // itself: `…/ProfilesLink/alias/inner` runs through `…/Profiles/alias` while
+                // resolving to something else entirely, and comparing only the whole path
+                // resolves the link away before the comparison can see it.
+                var probe = URL(fileURLWithPath: other).standardizedFileURL
+                while probe.pathComponents.count > 1 {
+                    if Self.linkIdentityPath(probe.path) == linkIdentity { return true }
+                    probe = probe.deletingLastPathComponent()
+                }
+                return ProfileStore.directoriesOverlap(
+                    literal, Self.literalPath(other), ignoringCase: ignoringCase
+                )
             }
-            return ProfileStore.directoriesOverlap(literal, Self.literalPath(other))
-                || ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
+            return ProfileStore.directoriesOverlap(
+                literal, Self.literalPath(other), ignoringCase: ignoringCase
+            ) || ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
         }
 
         /// The path as recorded, `.`/`..` folded and nothing resolved.
@@ -286,6 +306,15 @@ public extension ProfileStore {
         }
     }
 
+    /// Whether the volume holding `url` treats names case-insensitively — the default on
+    /// macOS. Unknown answers assume it does, since folding too eagerly costs a refusal while
+    /// not folding costs a deletion.
+    static func volumeIgnoresCase(at url: URL) -> Bool {
+        let sensitive = (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames
+        return sensitive != true
+    }
+
     static func isSymbolicLink(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
     }
@@ -300,19 +329,36 @@ public extension ProfileStore {
         )
     }
 
-    static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
+    static func directoriesOverlap(
+        _ lhs: String,
+        _ rhs: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
         let left = components(lhs)
         let right = components(rhs)
-        let shared = zip(left, right).prefix { $0 == $1 }.count
+        let shared = zip(left, right).prefix { same($0, $1, ignoringCase: ignoringCase) }.count
         return shared == left.count || shared == right.count
     }
 
+    /// Component equality, folded the way the volume folds it. The canonical comparison gets
+    /// this from the file system for free — an existing path resolves to the name actually
+    /// stored — but the *literal* one cannot, and on a case-insensitive volume that leaves
+    /// `…/Outer/alias/inner` and `…/outer/Alias/inner` looking unrelated while both name one
+    /// directory reached through one link.
+    private static func same(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
+        ignoringCase ? lhs.caseInsensitiveCompare(rhs) == .orderedSame : lhs == rhs
+    }
+
     /// Whether `inner` sits strictly below `outer` — the asymmetric half of the check above.
-    private static func directoryStrictlyContains(_ outer: String, _ inner: String) -> Bool {
+    private static func directoryStrictlyContains(
+        _ outer: String,
+        _ inner: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
         let outerParts = components(outer)
         let innerParts = components(inner)
         guard innerParts.count > outerParts.count else { return false }
-        return Array(innerParts.prefix(outerParts.count)) == outerParts
+        return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
     /// Components of an **already canonical** path — every caller canonicalises first, so

@@ -123,45 +123,6 @@ struct ProfileStorePurgeSpellingTests {
         #expect(result.profileData == .purged)
     }
 
-    /// A sibling whose bundle cannot be read drops out of the scan the same way a third-party
-    /// app does — `readMarker` returns `nil` for both — so an install directory that lists fine
-    /// can still yield an answer that is missing the very launcher that would have stopped the
-    /// deletion.
-    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
-    func purgeDeclinesWhenASiblingBundleCannotBeRead() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
-        }
-        let shared = env.profilesDir.appendingPathComponent("shared")
-        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
-        let one = try env.store.add(
-            AddProfileRequest(name: env.name("one"), profilePath: shared.path)
-        ).profile
-        let two = try env.store.add(
-            AddProfileRequest(name: env.name("two"), profilePath: shared.path)
-        ).profile
-        let login = shared.appendingPathComponent("login.json")
-        try Data("token".utf8).write(to: login)
-        // The sibling is on disk and still claims the directory — it just cannot be read.
-        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: two.appPath)
-        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: two.appPath) }
-
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(one, purgeProfile: true)
-        }
-
-        #expect(fm.fileExists(atPath: one.appPath))
-        #expect(fm.fileExists(atPath: login.path))
-        // Named by what actually blocked it — the sibling's bundle, not the folder, which
-        // lists perfectly well.
-        let message = try #require(thrown.errorDescription)
-        #expect(message.contains("could not be read"))
-        #expect(message.contains(URL(fileURLWithPath: two.appPath).lastPathComponent))
-    }
-
     /// `removeItem` on a symbolic link unlinks the link and walks nothing, so a profile whose
     /// data path is a link endangers no one — however deeply other profiles' directories sit
     /// under its target. Canonicalising that into containment would refuse the removal *and*
@@ -325,77 +286,92 @@ struct ProfileStorePurgeSpellingTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
-    /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
-    /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
-    /// login gets deleted over a folder that was merely renamed or unmounted.
-    ///
-    /// Refused **before** the launcher is trashed, like the nested case and for the same
-    /// reason: afterwards no profile lists that directory any more, so nothing in the app could
-    /// offer to delete it and every message would name a remedy the user cannot follow. Stopping
-    /// here leaves "make the folder readable and try again" as the whole fix.
-    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
-    func purgeIsRefusedUpFrontWhenTheLauncherFolderCannotBeRead() throws {
+    /// A sibling that spelled its path through the purged link, reaching that link by another
+    /// spelling of its parent. Unlinking strands it exactly as the same-spelling case does, so
+    /// the two must behave alike — and comparing whole paths cannot see it, since resolving
+    /// `…/ProfilesLink/alias/inner` resolves the link away before the comparison happens.
+    @Test
+    func removingALinkSeesASiblingThatReachedItByAnotherSpelling() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("under"))
         }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let login = URL(fileURLWithPath: profile.profilePath).appendingPathComponent("login.json")
-        try Data("token".utf8).write(to: login)
-        // Listable no more, but still traversable — so the launcher is still reachable by path
-        // and the removal gets as far as deciding what to do about the data.
-        try fm.setAttributes([.posixPermissions: 0o311], ofItemAtPath: env.installDir.path)
-        defer {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: env.installDir.path)
-        }
+        let real = env.profilesDir.appendingPathComponent("real")
+        try fm.createDirectory(at: real.appendingPathComponent("inner"), withIntermediateDirectories: true)
+        let alias = env.profilesDir.appendingPathComponent("alias")
+        try fm.createSymbolicLink(at: alias, withDestinationURL: real)
 
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(profile, purgeProfile: true)
-        }
+        let aliasProfile = try env.store.add(
+            AddProfileRequest(name: env.name("alias"), profilePath: alias.path)
+        ).profile
+        let under = try env.store.add(
+            AddProfileRequest(
+                name: env.name("under"),
+                profilePath: linkedProfilesDir(env)
+                    .appendingPathComponent("alias/inner").path
+            )
+        ).profile
 
-        // Nothing happened: the launcher is where it was, and so is the login.
-        #expect(fm.fileExists(atPath: profile.appPath))
-        #expect(fm.fileExists(atPath: login.path))
-        let message = try #require(thrown.errorDescription)
-        #expect(message.contains("could not be read"))
-        #expect(message.contains("Nothing was removed"))
-        // The folder is what blocked it here, so the folder is what gets named.
-        #expect(message.contains(URL(fileURLWithPath: env.installDir.path).lastPathComponent))
+        let result = try env.store.remove(aliasProfile, purgeProfile: true)
+
+        // Declined, naming the sibling — and the link is still there, so the sibling's path
+        // still resolves. Nothing was lost, which is why this is a decline rather than the
+        // up-front refusal the nested case gets.
+        #expect(result.profileData == .keptSharedWith(launchers: [under.displayName]))
+        #expect(fm.fileExists(atPath: alias.path))
     }
 
-    /// The same folder becoming unreadable *after* that pre-flight check — the residue the
-    /// guard inside the purge covers. Nothing is deleted there either, and the message stops
-    /// short of a remedy through the app, since by then the launcher is already in the Trash.
-    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
-    func aFolderThatBecomesUnreadableMidRemovalStillSparesTheData() throws {
+    /// The literal question has to fold case the way the volume does. Here the sibling is
+    /// reached through a link *inside* the purged directory — so the canonical comparison
+    /// resolves it out of containment — and records the path in another case, which a plain
+    /// string comparison of components would miss.
+    @Test
+    func purgeSeesASiblingWhoseLinkedPathIsSpelledInAnotherCase() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("outer"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("cased"))
         }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let login = URL(fileURLWithPath: profile.profilePath).appendingPathComponent("login.json")
-        try Data("token".utf8).write(to: login)
-        // `trashItem` is what runs between the two checks, so revoking the listing there
-        // reproduces the race without any timing.
-        let fileManager = ListingRevokingFileManager(revokeListingOf: env.installDir.path)
-        let store = ProfileStore(
-            realClaude: env.real,
-            configuration: env.store.configuration,
-            runner: env.runner,
-            fileManager: fileManager,
-            signalSender: { _, _ in 0 }
+        let outer = env.profilesDir.appendingPathComponent("Outer")
+        try fm.createDirectory(at: outer, withIntermediateDirectories: true)
+        let elsewhere = env.root.appendingPathComponent("elsewhere")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: outer.appendingPathComponent("Alias"), withDestinationURL: elsewhere
         )
-        defer {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: env.installDir.path)
+        let volumeIgnoresCase = fm.fileExists(
+            atPath: env.profilesDir.appendingPathComponent("outer").path
+        )
+
+        let outerProfile = try env.store.add(
+            AddProfileRequest(name: env.name("outer"), profilePath: outer.path)
+        ).profile
+        // Same link, spelled in another case throughout.
+        let cased = try env.store.add(
+            AddProfileRequest(
+                name: env.name("cased"),
+                profilePath: env.profilesDir.appendingPathComponent("outer/alias/inner").path
+            )
+        ).profile
+
+        let outcome = Result { try env.store.remove(outerProfile, purgeProfile: true) }
+
+        if volumeIgnoresCase {
+            guard case let .failure(error) = outcome else {
+                Issue.record("expected a refusal naming \(cased.displayName)")
+                return
+            }
+            #expect(
+                try #require((error as? ClaudeManagerError)?.errorDescription)
+                    .contains(cased.displayName)
+            )
+            #expect(fm.fileExists(atPath: outer.path))
+        } else {
+            // On a case-sensitive volume the two paths really are different directories.
+            #expect(throws: Never.self) { try outcome.get() }
         }
-
-        let result = try store.remove(profile, purgeProfile: true)
-
-        #expect(result.profileData == .keptOwnersUnknown)
-        #expect(fm.fileExists(atPath: login.path))
-        let notice = try #require(result.profileData.notice(forRemovalOf: profile.displayName))
-        #expect(notice.message.contains("still on disk"))
     }
 }

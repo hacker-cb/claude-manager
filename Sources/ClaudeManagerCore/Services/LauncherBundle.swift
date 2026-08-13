@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// Creates, reads, and removes the thin launcher `.app` bundles. The bundle's
@@ -302,12 +303,18 @@ public struct LauncherBundle {
     /// Only a plist that parsed and simply carries no marker is `foreign` — an ordinary
     /// third-party app sitting in the install directory.
     func read(at appURL: URL) -> BundleRead {
-        var isDirectory: ObjCBool = false
-        // Not a directory at all — a Finder alias, a stray file, a link whose target is gone.
-        // Not a bundle we failed to read; not a bundle.
-        guard fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else { return .foreign }
+        // `lstat`, not `fileExists`, because the two failures have to be told apart: an entry
+        // that is *gone* is harmless, while one that cannot be statted — the install directory
+        // losing traversal between the listing and this read — is unknown, and calling it
+        // foreign is what licenses deleting the data it may still claim. A symlink is reported
+        // as itself here, so a dangling one is a plain non-bundle rather than an absence.
+        var info = stat()
+        guard lstat(appURL.path, &info) == 0 else {
+            return errno == ENOENT ? .foreign : .unreadable
+        }
+        // Not a directory at all — a Finder alias, a stray file, a link. Not a bundle we failed
+        // to read; not a bundle.
+        guard info.st_mode & S_IFMT == S_IFDIR else { return .foreign }
         // A directory we cannot enter is the hard case, and it resolves against the purge: an
         // unreadable bundle *might* be one of ours claiming a user-data directory, and the two
         // mistakes are not equal — a refusal costs a removal the user can retry once they see
@@ -330,10 +337,13 @@ public struct LauncherBundle {
               let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let info = parsed as? [String: Any]
         else { return .unreadable }
-        guard let markerDict = info[CoreConstants.markerKey] as? [String: Any] else {
-            return .foreign
-        }
-        guard let marker = LauncherMarker(dictionary: markerDict) else { return .unreadable }
+        // A missing key is an ordinary third-party app. A key that is *present* but not a
+        // dictionary is a launcher of ours with damaged metadata — unreadable, so a purge does
+        // not take it for a stranger and delete the data it still claims.
+        guard let markerValue = info[CoreConstants.markerKey] else { return .foreign }
+        guard let markerDict = markerValue as? [String: Any],
+              let marker = LauncherMarker(dictionary: markerDict)
+        else { return .unreadable }
         let bundleID = (info["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
         let displayName = (info["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
         return .launcher(
