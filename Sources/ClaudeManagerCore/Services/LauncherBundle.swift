@@ -263,6 +263,22 @@ public struct LauncherBundle {
     }
 
     /// All managed launchers directly inside `installDirectory`, sorted by name.
+    ///
+    /// Each is reported under **`installDirectory`'s own spelling** of the path, rebuilt from
+    /// the directory we were handed rather than taken from what `contentsOfDirectory` returns:
+    /// that call resolves symlinks, so scanning `/tmp/Apps` hands back `/private/tmp/Apps/…`
+    /// and a launcher acquires a second spelling nothing else in the app uses.
+    ///
+    /// That is not cosmetic. `Profile.id` **is** `appPath`, and every other path is derived
+    /// from `ProfileStoreConfiguration.installDirectory` — so a launcher reached through a
+    /// symlinked install directory would carry one identity from `scan` and another from
+    /// `draft`, the same bundle listed under two ids. `update` re-derives the bundle path the
+    /// second way and compares it against the profile's, so an ordinary edit reads as a rename
+    /// onto a path that already exists — its own bundle — and is refused outright; and
+    /// `liveRewrite` matches the scanned launcher against the profile's own path, so the
+    /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
+    /// two sides equal *by construction*, rather than by both happening to normalize the same
+    /// way afterwards.
     public func scan(installDirectory: URL) -> [Discovered] {
         let entries = (try? fileManager.contentsOfDirectory(
             at: installDirectory,
@@ -271,6 +287,7 @@ public struct LauncherBundle {
         )) ?? []
         return entries
             .filter { $0.pathExtension == "app" }
+            .map { installDirectory.appendingPathComponent($0.lastPathComponent) }
             .compactMap { readMarker(at: $0) }
             .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
     }

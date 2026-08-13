@@ -36,16 +36,20 @@ extension ProfileStore {
     /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
     func liveRewrite(for profile: Profile, presentationChanged: Bool) -> LiveRewrite? {
         guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
+        // Compared as directories, never as strings. The user-data path is free text when a
+        // profile is created, so a sibling launcher can hold another spelling of this very
+        // directory — and a string comparison that misses it reports *one* launcher on the
+        // profile dir, which is precisely the ambiguity this guard exists to detect. The
+        // Restart it would then offer stops the sibling's live session.
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { $0.marker.profile == profile.profilePath }
+            .filter { Self.sameDirectory($0.marker.profile, profile.profilePath) }
         // Exactly one, and it is the launcher just written. `scan` degrades an unreadable
         // install directory to an empty list, so "no launcher claims this profile dir" is
         // "the scan told us nothing", not evidence of uniqueness — and a `<=` here would
         // read that failure as a clear answer and nudge anyway. Ownership has to be
         // *observed*, since what rides on it is a Restart that can stop someone's session.
         guard sharingThisProfileDir.count == 1,
-              sharingThisProfileDir[0].appURL.standardizedFileURL.path
-              == profile.appURL.standardizedFileURL.path
+              Self.sameDirectory(sharingThisProfileDir[0].appURL.path, profile.appURL.path)
         else { return nil }
         return LiveRewrite(profile: profile, pid: pid)
     }

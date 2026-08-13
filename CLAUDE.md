@@ -73,6 +73,14 @@ short form:
   token and chat history with it. `ProfileStore+Remove.directoriesOverlap` compares
   standardized paths by *component* (never by string prefix: `…/work` is not inside
   `…/wo`), and a purge that would reach another launcher's data is declined and reported.
+- **A launcher has one spelling of its path, and `LauncherBundle.scan` is what holds it.**
+  `Profile.id` *is* `appPath`, while every other path is derived from
+  `ProfileStoreConfiguration.installDirectory` — and `contentsOfDirectory(at:)` resolves
+  symlinks, so `scan` rebuilds each `appURL` from the install directory it was handed rather
+  than returning what Foundation hands back. Take that out and a launcher under a symlinked
+  install directory carries one id from `scan` and another from `draft`: the same bundle listed
+  under two ids, an ordinary edit refused as a rename onto its own bundle, and the "Restart to
+  apply" nudge silently gone.
 - **An edit can never reach a profile's identity.** `update` takes `ProfileEdits` — display
   name, label, colour, bundle id — beside the profile, and `Profile.name` / `Profile.profilePath`
   are `let`. A launcher pointed at a different user-data dir does not take the login and chat
