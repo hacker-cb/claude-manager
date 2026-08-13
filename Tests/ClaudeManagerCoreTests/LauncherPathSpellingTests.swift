@@ -191,6 +191,14 @@ struct LauncherPathSpellingTests {
         try url.setResourceValues(values)
 
         #expect(env.store.list().map(\.profile.id) == [added.id])
+
+        // And staying in the scan must not cost it the flag: it is now inside `rebuildAll`'s
+        // loop, which every wrapper-version bump prompts for all launchers at once, and the
+        // swap writes a fresh directory carrying none of the old one's attributes.
+        try env.store.rebuild(added)
+        #expect(
+            (try? added.appURL.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
+        )
     }
 
     /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever

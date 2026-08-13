@@ -1,7 +1,8 @@
 import Foundation
 
-/// Small path/string helpers used across services. Pure and side-effect free so
-/// they are trivially unit-testable.
+/// Small path/string helpers used across services. All but `canonicalPath` (and the
+/// `sameDirectory` built on it) are pure; those two have to ask the file system, since a
+/// symlink and a volume's case sensitivity are facts about the disk and not about the string.
 public enum PathUtils {
     /// Collapse a leading `$HOME` to `~` for display. Storage always keeps
     /// absolute paths — this is presentation only.
@@ -45,14 +46,19 @@ public enum PathUtils {
     /// directory, and a purge that missed it would delete a sibling's login. Where nothing
     /// exists at the path there is nobody to ask, and the spelling is kept as given.
     ///
-    /// The answer must not depend on whether the path exists, which is why the resolution is
-    /// done on the deepest ancestor that *does*. `resolvingSymlinksInPath` folds
-    /// `/private/tmp/x` to `/tmp/x` only while `x` is on disk, and gives the two spellings
-    /// different answers once it is not — measured, not assumed. `sameDirectory` gates every
-    /// `update`, `rebuild` and `remove` (`profileMatchingItsLauncher`, `add(force:)`), so a
-    /// launcher recording one side of that alias while the profile is presented spelling the
-    /// other would pass every gate until the user deleted the data directory by hand, and then
-    /// be neither editable nor removable from the app.
+    /// **Symlink** folding is made independent of whether the path exists, by resolving the
+    /// deepest ancestor that *does*: `resolvingSymlinksInPath` folds `/private/tmp/x` to
+    /// `/tmp/x` only while `x` is on disk, and answers the two spellings differently once it
+    /// is not — measured, not assumed. `sameDirectory` gates every `update`, `rebuild` and
+    /// `remove` (`profileMatchingItsLauncher`, `add(force:)`), so a launcher recording one side
+    /// of that alias would pass every gate until the user deleted the data directory by hand,
+    /// and then be neither editable nor removable from the app.
+    ///
+    /// **Case** folding cannot be made independent the same way, and is not claimed to be: the
+    /// volume is the only authority on it and can only be asked about a component that exists.
+    /// Two spellings differing in case therefore stop comparing equal once the directory is
+    /// gone. That residue is deliberate — inventing an answer would mean guessing the volume's
+    /// case sensitivity, and guessing it wrong merges two real directories.
     public static func canonicalPath(_ path: String) -> String {
         var missing: [String] = []
         var probe = URL(fileURLWithPath: path).standardizedFileURL

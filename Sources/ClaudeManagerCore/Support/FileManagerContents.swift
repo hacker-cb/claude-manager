@@ -4,8 +4,11 @@ public extension FileManager {
     /// A directory's visible entries, listed **by path** and rebuilt as URLs under the very
     /// `url` that was passed in.
     ///
-    /// The one way this app enumerates a directory, because `contentsOfDirectory(at:)` loses a
-    /// path's spelling twice over and both losses reach the user:
+    /// How this app enumerates a directory whenever the entries' **paths** matter — the
+    /// launcher scan and Doctor's orphan sweep. (`directoryHasContents` and `hasTrashedTwin`
+    /// ask only about names, and list by path themselves.) `contentsOfDirectory(at:)` is not
+    /// used anywhere, because it loses a path's spelling twice over and both losses reach the
+    /// user:
     ///
     /// - It **resolves symlinks** in the URLs it hands back, so scanning `/tmp/Apps` returns
     ///   `/private/tmp/Apps/…` — a spelling nothing else in the app derives, while `Profile.id`
