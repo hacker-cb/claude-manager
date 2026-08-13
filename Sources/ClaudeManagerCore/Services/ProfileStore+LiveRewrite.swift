@@ -36,13 +36,17 @@ extension ProfileStore {
     /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
     func liveRewrite(for profile: Profile, presentationChanged: Bool) -> LiveRewrite? {
         guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
-        // Compared as directories, never as strings. The user-data path is free text when a
-        // profile is created, so a sibling launcher can hold another spelling of this very
-        // directory — and a string comparison that misses it reports *one* launcher on the
-        // profile dir, which is precisely the ambiguity this guard exists to detect. The
-        // Restart it would then offer stops the sibling's live session.
+        // Compared as **strings**, deliberately — the one comparison in this file that is not
+        // a `sameDirectory`. The question here is not "is this the same directory" but "could
+        // this launcher own the pid we just found", and `ProcessProbe.mainPID` answers that
+        // literally: its `pgrep` pattern anchors `--user-data-dir=<path>` on the recorded
+        // spelling at both ends, and a launcher bakes its own marker's spelling into the
+        // script it execs. So a sibling holding another spelling of this same directory
+        // launches an instance our pattern cannot match, and cannot be the owner. Canonicalise
+        // here and that sibling counts as a rival, withholding a nudge whose ownership is in
+        // fact unambiguous — a running window left stale after an edit.
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { Self.sameDirectory($0.marker.profile, profile.profilePath) }
+            .filter { $0.marker.profile == profile.profilePath }
         // Exactly one, and it is the launcher just written. `scan` degrades an unreadable
         // install directory to an empty list, so "no launcher claims this profile dir" is
         // "the scan told us nothing", not evidence of uniqueness — and a `<=` here would

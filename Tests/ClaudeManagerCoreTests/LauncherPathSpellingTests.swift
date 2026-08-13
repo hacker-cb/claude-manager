@@ -93,13 +93,15 @@ struct LauncherPathSpellingTests {
         #expect(result.liveRewrite?.pid == 888)
     }
 
-    /// Two launchers may share a user-data directory, and the second one's path is free text,
-    /// so it can hold another spelling of the first one's. `runningPID` matches on that
-    /// directory, so a pid found while rewriting one launcher may be the other's — and a
-    /// string comparison that misses the sibling reports sole ownership and offers a Restart
-    /// that stops the sibling's live session.
+    /// The restart nudge is withheld when two launchers share a user-data directory, because
+    /// the pid could be either one's. A sibling holding *another spelling* of that directory
+    /// is not that case, and this is why `liveRewrite` compares those paths as strings while
+    /// everything else here compares them as directories: `ProcessProbe.mainPID` anchors its
+    /// `pgrep` pattern on the recorded spelling at both ends, and a launcher execs Claude with
+    /// the spelling in its own marker — so the sibling's instance cannot answer this profile's
+    /// probe, and a pid that does answer it is unambiguously this launcher's.
     @Test
-    func aSiblingSpellingTheProfileDirDifferentlyStillBlocksTheNudge() throws {
+    func aSiblingSpellingTheProfileDirDifferentlyDoesNotBlockTheNudge() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -121,9 +123,16 @@ struct LauncherPathSpellingTests {
         ).profile
         #expect(two.profilePath != one.profilePath) // same directory, two spellings
 
+        // The stub answers only the probe carrying `one`'s spelling — which is all the real,
+        // anchored pattern would match. Answering every probe would model a `pgrep` that
+        // cannot tell the two launchers apart, and this test would then assert nothing.
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.pgrepPath {
-                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+                let mine = args.last?
+                    .contains(PathUtils.regexEscaped(one.profilePath) + "( |$)") == true
+                return mine
+                    ? CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+                    : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
             }
             return idleStub(executable, args)
         }
@@ -131,8 +140,7 @@ struct LauncherPathSpellingTests {
         edits.label = "ZZ"
         let result = try env.store.update(one, applying: edits)
 
-        // The edit lands; only the nudge is withheld, because pid 888 may be the sibling's.
-        #expect(result.liveRewrite == nil)
+        #expect(result.liveRewrite?.pid == 888)
         #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
     }
 }
