@@ -279,15 +279,19 @@ public struct LauncherBundle {
     /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
     /// two sides equal *by construction*, rather than by both happening to normalize the same
     /// way afterwards.
+    /// Enumerated **by path**, not by URL. `contentsOfDirectory(at:)` does not follow a
+    /// symlink handed to it as the directory itself — it throws `ENOTDIR` — and the `try?`
+    /// below turns that into "this install directory holds no launchers": an empty sidebar
+    /// with every launcher still on disk, `rebuildAll` reporting success having rebuilt
+    /// nothing, and Doctor calling every live profile an orphan. The `atPath` overload lists
+    /// that same directory fine. Hidden entries are filtered by name, which is what
+    /// `.skipsHiddenFiles` did for us, and it is `build`'s `.<name>.app.build-<uuid>` staging
+    /// directories that make it necessary.
     public func scan(installDirectory: URL) -> [Discovered] {
-        let entries = (try? fileManager.contentsOfDirectory(
-            at: installDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return entries
-            .filter { $0.pathExtension == "app" }
-            .map { installDirectory.appendingPathComponent($0.lastPathComponent) }
+        let names = (try? fileManager.contentsOfDirectory(atPath: installDirectory.path)) ?? []
+        return names
+            .filter { !$0.hasPrefix(".") && ($0 as NSString).pathExtension == "app" }
+            .map { installDirectory.appendingPathComponent($0, isDirectory: true) }
             .compactMap { readMarker(at: $0) }
             .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
     }

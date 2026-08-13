@@ -29,7 +29,13 @@ struct LauncherPathSpellingTests {
         let link = env.root.appendingPathComponent("root-link")
         try fm.createSymbolicLink(at: link, withDestinationURL: env.root)
         let installDir = link.appendingPathComponent(env.installDir.lastPathComponent)
-        let store = ProfileStore(
+        return LinkedEnv(env: env, installDir: installDir, store: store(in: env, installDir: installDir))
+    }
+
+    /// The same fixtures, reached through another spelling of the install directory. Every
+    /// hermetic field `makeStoreEnv` sets is carried over, so this store reads no host state.
+    private func store(in env: StoreEnv, installDir: URL) -> ProfileStore {
+        ProfileStore(
             realClaude: env.real,
             configuration: ProfileStoreConfiguration(
                 installDirectory: installDir,
@@ -41,7 +47,6 @@ struct LauncherPathSpellingTests {
             runner: env.runner,
             signalSender: { _, _ in 0 }
         )
-        return LinkedEnv(env: env, installDir: installDir, store: store)
     }
 
     /// The launcher `list` reports and the launcher `add` returned must be one profile, not
@@ -72,10 +77,17 @@ struct LauncherPathSpellingTests {
         let linked = try makeLinkedEnv()
         let (env, store) = (linked.env, linked.store)
         defer { try? fm.removeItem(at: env.root) }
-        _ = try store.add(AddProfileRequest(name: env.name("work")))
+        let added = try store.add(AddProfileRequest(name: env.name("work"))).profile
+        // Gated on the profile's own spelling, the way the real anchored pattern is: an
+        // unconditional stub would answer a probe aimed at *any* path, so the pid assertion
+        // below would survive `liveRewrite` probing with a spelling no launcher ever execs.
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.pgrepPath {
-                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+                let mine = args.last?
+                    .contains(PathUtils.regexEscaped(added.profilePath) + "( |$)") == true
+                return mine
+                    ? CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+                    : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
             }
             return idleStub(executable, args)
         }
@@ -94,14 +106,15 @@ struct LauncherPathSpellingTests {
     }
 
     /// The restart nudge is withheld when two launchers share a user-data directory, because
-    /// the pid could be either one's. A sibling holding *another spelling* of that directory
-    /// is not that case, and this is why `liveRewrite` compares those paths as strings while
-    /// everything else here compares them as directories: `ProcessProbe.mainPID` anchors its
-    /// `pgrep` pattern on the recorded spelling at both ends, and a launcher execs Claude with
-    /// the spelling in its own marker — so the sibling's instance cannot answer this profile's
-    /// probe, and a pid that does answer it is unambiguously this launcher's.
+    /// the pid could be either one's — and a sibling holding *another spelling* of that
+    /// directory counts, even though `mainPID`'s anchored pattern would not have matched an
+    /// instance launched from it. That pattern only settles ownership while a launcher's
+    /// script and its marker agree, and nothing re-checks them after `build` writes the two:
+    /// a hand-edited marker leaves an instance that answers this probe behind a marker that
+    /// no longer matches this string. Withholding costs a badge that stays stale until the
+    /// window is reopened; getting it wrong costs someone's live session to a Restart.
     @Test
-    func aSiblingSpellingTheProfileDirDifferentlyDoesNotBlockTheNudge() throws {
+    func aSiblingSpellingTheProfileDirDifferentlyBlocksTheNudge() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -123,9 +136,10 @@ struct LauncherPathSpellingTests {
         ).profile
         #expect(two.profilePath != one.profilePath) // same directory, two spellings
 
-        // The stub answers only the probe carrying `one`'s spelling — which is all the real,
-        // anchored pattern would match. Answering every probe would model a `pgrep` that
-        // cannot tell the two launchers apart, and this test would then assert nothing.
+        // The stub answers only the probe carrying `one`'s spelling — all the real, anchored
+        // pattern would match. So `one` is genuinely running, and the nudge is withheld anyway:
+        // the point is that `pgrep` telling the two apart is not the same as ownership being
+        // provable.
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.pgrepPath {
                 let mine = args.last?
@@ -140,7 +154,63 @@ struct LauncherPathSpellingTests {
         edits.label = "ZZ"
         let result = try env.store.update(one, applying: edits)
 
-        #expect(result.liveRewrite?.pid == 888)
+        // The edit lands; only the nudge is withheld.
+        #expect(result.liveRewrite == nil)
         #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// An install directory that *is* a symlink — Settings → Launcher folder pointed at one,
+    /// or a Claude.app living in one. `contentsOfDirectory(at:)` throws `ENOTDIR` on it and
+    /// `scan` swallows that as "no launchers", which reaches the user as an empty sidebar
+    /// while every launcher still sits on disk and still opens.
+    @Test
+    func launchersAreFoundWhenTheInstallDirectoryIsItselfASymlink() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let link = env.root.appendingPathComponent("apps-link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: env.installDir)
+        let linkedStore = store(in: env, installDir: link)
+
+        let added = try linkedStore.add(AddProfileRequest(name: env.name("work"))).profile
+
+        let listed = linkedStore.list()
+        #expect(listed.count == 1)
+        #expect(listed.first?.profile.id == added.id)
+    }
+
+    /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever
+    /// spelling the profile was created with. Through a symlinked parent — iCloud's "Desktop &
+    /// Documents" turns `~/Documents` into one, and the profiles folder is user-settable —
+    /// Foundation's resolved entry paths matched no marker at all, so every live profile was
+    /// reported as an orphan: a directory holding the user's login, named as safe to delete.
+    @Test
+    func doctorDoesNotCallALiveProfileAnOrphanUnderASymlinkedProfilesDir() throws {
+        let scene = try makeDoctorScene()
+        defer { try? fm.removeItem(at: scene.root) }
+        let link = scene.root.appendingPathComponent("root-link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: scene.root)
+        let profilesDir = link.appendingPathComponent(scene.profilesDir.lastPathComponent)
+        let profileDir = profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
+        let runner = RecordingCommandRunner(handler: idleStub)
+
+        let diagnostics = Doctor(
+            realClaude: scene.real,
+            configuration: ProfileStoreConfiguration(
+                installDirectory: scene.installDir,
+                defaultProfilesDirectory: profilesDir,
+                defaultProfileUserDataPath: scene.defaultProfilePath,
+                shipItStatePath: scene.shipItStatePath
+            ),
+            bundle: LauncherBundle(runner: runner),
+            codeSigner: CodeSigner(runner: runner),
+            processProbe: ProcessProbe(runner: runner),
+            managedConfigWriter: ManagedConfigWriter(
+                fileManager: fm, managedPreferencesURLs: scene.noMDM
+            )
+        ).run()
+
+        #expect(!diagnostics.contains { $0.title == "Orphan profile (no launcher)" })
     }
 }

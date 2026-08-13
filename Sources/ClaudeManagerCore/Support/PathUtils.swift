@@ -29,6 +29,26 @@ public enum PathUtils {
         return base.appendingPathComponent(expanded).standardizedFileURL.path
     }
 
+    /// The single spelling of a path, used whenever two of them are compared for being the
+    /// same place on disk.
+    ///
+    /// Symlinks are resolved as well as `.`/`..` folded, because the aliases are not exotic:
+    /// macOS puts the temporary directory behind `/var → /private/var`, iCloud's "Desktop &
+    /// Documents" replaces `~/Documents` with a symlink, and `absolutePath` above only folds
+    /// what `standardizingPath` folds — which is *not* symlinks. Case is deliberately **not**
+    /// folded: a case-insensitive volume makes two spellings one file, but this function
+    /// cannot know the volume, and a caller that needs that answer must ask the file system.
+    public static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Whether two paths name the same directory. Never compare them raw — a profile's
+    /// user-data path is free text when the profile is created, so one directory has many
+    /// spellings. (Containment is a different question, and `ProfileStore+Remove` owns it.)
+    public static func sameDirectory(_ lhs: String, _ rhs: String) -> Bool {
+        canonicalPath(lhs) == canonicalPath(rhs)
+    }
+
     /// Escape a literal string so it can be embedded in an extended regular
     /// expression (as consumed by `pgrep -f`) and match itself verbatim. Without
     /// this a `.` in a path would match any character and a `(` would open a group.

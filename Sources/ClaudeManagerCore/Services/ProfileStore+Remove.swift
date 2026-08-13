@@ -83,7 +83,7 @@ public extension ProfileStore {
         // would take the user's primary Anthropic login and every chat in it, and even the
         // running check cannot object: Claude's own process carries no `--user-data-dir` for
         // `runningPID` to match.
-        let isDefaultProfileData = Self
+        let isDefaultProfileData = PathUtils
             .sameDirectory(profile.profilePath, configuration.defaultProfileUserDataPath)
         // Existence first, so a refusal is only reported where there is something to refuse
         // over: with the directory already gone, "your login was kept" names credentials that

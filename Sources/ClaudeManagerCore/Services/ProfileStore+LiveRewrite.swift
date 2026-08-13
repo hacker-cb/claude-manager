@@ -36,24 +36,32 @@ extension ProfileStore {
     /// Non-private so `ProfileStore+Rebuild` (another file) samples it the same way.
     func liveRewrite(for profile: Profile, presentationChanged: Bool) -> LiveRewrite? {
         guard presentationChanged, let pid = runningPID(for: profile) else { return nil }
-        // Compared as **strings**, deliberately — the one comparison in this file that is not
-        // a `sameDirectory`. The question here is not "is this the same directory" but "could
-        // this launcher own the pid we just found", and `ProcessProbe.mainPID` answers that
-        // literally: its `pgrep` pattern anchors `--user-data-dir=<path>` on the recorded
-        // spelling at both ends, and a launcher bakes its own marker's spelling into the
-        // script it execs. So a sibling holding another spelling of this same directory
-        // launches an instance our pattern cannot match, and cannot be the owner. Canonicalise
-        // here and that sibling counts as a rival, withholding a nudge whose ownership is in
-        // fact unambiguous — a running window left stale after an edit.
+        // The two comparisons below answer different questions, and each is written to fail
+        // *towards withholding the nudge* — because what rides on it is a Restart that stops
+        // someone's live session, while the cost of not offering one is a window showing last
+        // session's badge until it is next reopened.
+        //
+        // Rivals: compared as directories. A literal comparison looks defensible — `mainPID`
+        // anchors its `pgrep` pattern on the recorded spelling at both ends, so a sibling
+        // holding another spelling launches an instance that pattern cannot match — but that
+        // reasoning assumes the sibling's *script* execs what its *marker* records. `build`
+        // writes the two together, and nothing re-checks them afterwards: a hand-edited marker
+        // (which `profileMatchingItsLauncher` deliberately tolerates) leaves a launcher whose
+        // instance answers our probe while its marker no longer matches our string. That
+        // launcher is exactly the rival this guard exists to see.
         let sharingThisProfileDir = bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { $0.marker.profile == profile.profilePath }
-        // Exactly one, and it is the launcher just written. `scan` degrades an unreadable
-        // install directory to an empty list, so "no launcher claims this profile dir" is
-        // "the scan told us nothing", not evidence of uniqueness — and a `<=` here would
-        // read that failure as a clear answer and nudge anyway. Ownership has to be
-        // *observed*, since what rides on it is a Restart that can stop someone's session.
+            .filter { PathUtils.sameDirectory($0.marker.profile, profile.profilePath) }
+        // Identity: compared as **strings**, and deliberately not canonicalised. `scan` reports
+        // launchers under the install directory's own spelling and `profile.appPath` is derived
+        // from that same directory, so equality here holds *by construction* — canonicalising
+        // would paper over the very drift `scan`'s doc comment describes, leaving the lost-nudge
+        // half of that bug undetectable at the site that produces it.
+        //
+        // `scan` also degrades an unreadable install directory to an empty list, so "no launcher
+        // claims this profile dir" is "the scan told us nothing", not evidence of uniqueness —
+        // and a `<=` here would read that failure as a clear answer and nudge anyway.
         guard sharingThisProfileDir.count == 1,
-              Self.sameDirectory(sharingThisProfileDir[0].appURL.path, profile.appURL.path)
+              sharingThisProfileDir[0].appURL.path == profile.appURL.path
         else { return nil }
         return LiveRewrite(profile: profile, pid: pid)
     }
