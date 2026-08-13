@@ -305,18 +305,16 @@ public struct LauncherBundle {
     func read(at appURL: URL) -> BundleRead {
         // `lstat`, not `fileExists`, because the two failures have to be told apart: an entry
         // that is *gone* is harmless, while one that cannot be statted — the install directory
-        // losing traversal between the listing and this read — is unknown, and calling it
-        // foreign is what licenses deleting the data it may still claim. A symlink is reported
-        // as itself here, so a dangling one is a plain non-bundle rather than an absence.
+        // losing traversal, a volume going away — is unknown, and calling it foreign is what
+        // licenses deleting the data it may still claim.
         var info = stat()
         guard lstat(appURL.path, &info) == 0 else {
             return errno == ENOENT ? .foreign : .unreadable
         }
         if info.st_mode & S_IFMT == S_IFLNK {
-            // A link *to* a launcher is a launcher — following it is what `fileExists` used to
-            // do, and dropping it as "foreign" would leave a managed launcher out of a scan
-            // that still called itself complete. A link into an unmounted volume is the case
-            // this whole signal exists for, so only a dangling one (ENOENT) is harmless.
+            // A link *to* a launcher is a launcher. Only a dangling one is the harmless
+            // non-bundle it looks like; a link into an unmounted volume is precisely the case
+            // this signal exists for.
             guard stat(appURL.path, &info) == 0 else {
                 return errno == ENOENT ? .foreign : .unreadable
             }
@@ -324,45 +322,30 @@ public struct LauncherBundle {
         // Not a directory at all — a Finder alias, a stray file. Not a bundle we failed to
         // read; not a bundle.
         guard info.st_mode & S_IFMT == S_IFDIR else { return .foreign }
-        // A directory we cannot enter is the hard case, and it resolves against the purge: an
-        // unreadable bundle *might* be one of ours claiming a user-data directory, and the two
-        // mistakes are not equal — a refusal costs a removal the user can retry once they see
-        // which bundle is named, while guessing "not ours" costs a login that is gone.
-        guard (try? fileManager.contentsOfDirectory(atPath: appURL.path)) != nil else {
-            return .unreadable
-        }
-        let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
-        guard (try? fileManager.contentsOfDirectory(atPath: contents.path)) != nil else {
-            // `Contents` absent is an ordinary non-bundle; `Contents` present but unenterable
-            // is the case `fileExists` would have reported identically.
-            var contentsIsDirectory: ObjCBool = false
-            let present = fileManager.fileExists(
-                atPath: contents.path, isDirectory: &contentsIsDirectory
-            )
-            return present && contentsIsDirectory.boolValue ? .unreadable : .foreign
-        }
-        // Read the plist rather than looking for its name in the listing: on a
-        // case-insensitive volume a bundle storing `info.plist` is perfectly readable through
-        // this path, and a case-sensitive membership test would call that launcher foreign and
-        // drop it from a scan that still reported itself complete.
-        let infoPath = contents.appendingPathComponent("Info.plist").path
+
+        // Everything below is decided by *reading the plist at its known path*, never by
+        // enumerating a directory to see whether it is there. A bundle whose directories grant
+        // traversal but not listing (mode `0311`) reads perfectly well, and requiring a listing
+        // would hide a working launcher from the app entirely while marking every scan
+        // incomplete — including the checks that then refuse to delete any profile data.
+        let infoPath = appURL.appendingPathComponent("Contents/Info.plist").path
         guard let data = fileManager.contents(atPath: infoPath) else {
+            // Absent is an ordinary non-bundle; unreachable is an answer we do not have.
             var probe = stat()
-            // Absent is an ordinary non-bundle; anything else is a plist we could not read.
             return lstat(infoPath, &probe) != 0 && errno == ENOENT ? .foreign : .unreadable
         }
         guard let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
-              let info = parsed as? [String: Any]
+              let plist = parsed as? [String: Any]
         else { return .unreadable }
         // A missing key is an ordinary third-party app. A key that is *present* but not a
         // dictionary is a launcher of ours with damaged metadata — unreadable, so a purge does
         // not take it for a stranger and delete the data it still claims.
-        guard let markerValue = info[CoreConstants.markerKey] else { return .foreign }
+        guard let markerValue = plist[CoreConstants.markerKey] else { return .foreign }
         guard let markerDict = markerValue as? [String: Any],
               let marker = LauncherMarker(dictionary: markerDict)
         else { return .unreadable }
-        let bundleID = (info["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
-        let displayName = (info["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
+        let bundleID = (plist["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
+        let displayName = (plist["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
         return .launcher(
             Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
         )
