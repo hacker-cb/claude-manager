@@ -171,15 +171,22 @@ public extension ProfileStore {
         under profile: Profile,
         among launchers: [LauncherBundle.Discovered]
     ) -> [String] {
-        // A symlinked data path is unlinked, not walked, so nothing under its target is at
-        // risk — `purgeWouldReach` says why in full.
-        guard !Self.isSymbolicLink(profile.profileURL) else { return [] }
         let ourApp = profile.appURL.standardizedFileURL.path
-        let ourData = PathUtils.canonicalPath(profile.profilePath)
+        // A symlinked data path is unlinked, not walked: nothing under its *target* is
+        // destroyed, so containment there is not containment — see `PurgeReach`. What the
+        // unlink does strand is a sibling that spelled its own path through this link, and
+        // that one is compared unresolved.
+        let isLink = Self.isSymbolicLink(profile.profileURL)
+        let ourData = isLink
+            ? URL(fileURLWithPath: profile.profilePath).standardizedFileURL.path
+            : PathUtils.canonicalPath(profile.profilePath)
         return launchers
             .filter { $0.appURL.standardizedFileURL.path != ourApp }
             .filter {
-                Self.directoryStrictlyContains(ourData, PathUtils.canonicalPath($0.marker.profile))
+                let theirs = isLink
+                    ? URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path
+                    : PathUtils.canonicalPath($0.marker.profile)
+                return Self.directoryStrictlyContains(ourData, theirs)
             }
             .map(\.profile.displayName)
     }
@@ -218,11 +225,16 @@ public extension ProfileStore {
         private let profilePath: String
         private let canonical: String
         /// `removeItem` on a symbolic link unlinks the link and touches nothing under its
-        /// target, so a profile whose data path is a link puts no other profile's data at risk
-        /// — however deeply their recorded paths nest once the link is resolved. Treating it
+        /// target, so a profile whose data path is a link destroys no other profile's data —
+        /// however deeply their recorded paths nest once the link is resolved. Treating that
         /// as containment would refuse the removal outright *and* point the user at a launcher
-        /// whose data is genuinely destroyed if they follow the advice. Only a launcher
-        /// recording that same link is affected.
+        /// whose data is genuinely destroyed if they follow the advice.
+        ///
+        /// What the unlink *does* reach is every launcher whose recorded path runs **through**
+        /// the link — `…/alias` itself, and `…/alias/inner` — since afterwards those paths lead
+        /// nowhere. Their data survives under the target, but they can no longer find it, so
+        /// they are still what this removal affects. Compared unresolved for exactly that
+        /// reason: a sibling recording `…/real/inner` names the same bytes and is untouched.
         private let isLink: Bool
 
         init(_ profile: Profile) {
@@ -234,13 +246,27 @@ public extension ProfileStore {
         func covers(_ other: String) -> Bool {
             // The literal test first: it settles the ordinary case without touching the disk.
             if other == profilePath { return true }
-            guard !isLink else { return PathUtils.canonicalPath(other) == canonical }
+            guard !isLink else {
+                // Unresolved on both sides — the question is whether the recorded path runs
+                // through this link, not whether it lands on the same bytes.
+                return ProfileStore.directoriesOverlapLiterally(profilePath, other)
+            }
             return ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
         }
     }
 
     static func isSymbolicLink(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+    }
+
+    /// The same overlap question asked of the paths **as recorded**, with no symlink
+    /// resolution — what `PurgeReach` needs for a link, whose unlink reaches whatever was
+    /// spelled through it and nothing else.
+    static func directoriesOverlapLiterally(_ lhs: String, _ rhs: String) -> Bool {
+        directoriesOverlap(
+            URL(fileURLWithPath: lhs).standardizedFileURL.path,
+            URL(fileURLWithPath: rhs).standardizedFileURL.path
+        )
     }
 
     static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {

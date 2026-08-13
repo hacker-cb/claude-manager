@@ -193,6 +193,40 @@ struct ProfileStorePurgeSpellingTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
+    /// Unlinking a link strands whatever was spelled *through* it. The sibling's bytes survive
+    /// under the target, but its recorded path leads nowhere afterwards — so it is still what
+    /// this removal affects, and the refusal has to see it even though nothing is destroyed.
+    @Test
+    func removingALinkIsRefusedWhenASiblingSpelledItsPathThroughIt() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("under"))
+        }
+        let real = env.profilesDir.appendingPathComponent("real")
+        try fm.createDirectory(at: real.appendingPathComponent("inner"), withIntermediateDirectories: true)
+        let alias = env.profilesDir.appendingPathComponent("alias")
+        try fm.createSymbolicLink(at: alias, withDestinationURL: real)
+
+        let aliasProfile = try env.store.add(
+            AddProfileRequest(name: env.name("alias"), profilePath: alias.path)
+        ).profile
+        // Spelled through the link, so the unlink takes its path away.
+        let under = try env.store.add(
+            AddProfileRequest(
+                name: env.name("under"), profilePath: alias.appendingPathComponent("inner").path
+            )
+        ).profile
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.remove(aliasProfile, purgeProfile: true)
+        }
+
+        #expect(fm.fileExists(atPath: alias.path))
+        #expect(try #require(thrown.errorDescription).contains(under.displayName))
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.

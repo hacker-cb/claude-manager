@@ -322,11 +322,15 @@ public struct LauncherBundle {
         guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
             return Scan(launchers: [], isComplete: false)
         }
-        let bundles = entries.filter { $0.pathExtension == "app" }
-        let launchers = bundles.compactMap { readMarker(at: $0) }
-        let unreadable = launchers.count == bundles.count
-            ? false
-            : bundles.filter { readMarker(at: $0) == nil }.contains { isUnreadable($0) }
+        // One read per bundle, and both answers come from it. Reading twice — once to collect
+        // the launchers, once to ask whether a miss was a failure — lets the two disagree when
+        // permissions or a mount change in between, and the disagreement always lands the same
+        // way: the launcher missing from the list while the scan calls itself complete.
+        let reads = entries
+            .filter { $0.pathExtension == "app" }
+            .map { (url: $0, marker: readMarker(at: $0)) }
+        let launchers = reads.compactMap(\.marker)
+        let unreadable = reads.contains { $0.marker == nil && isUnreadable($0.url) }
         return Scan(
             launchers: launchers
                 .sorted {
@@ -340,11 +344,22 @@ public struct LauncherBundle {
     /// rather than because it is simply not one of ours. An ordinary third-party app in the
     /// install directory is readable and markerless; a launcher on an ejected volume, or one
     /// whose permissions changed, is neither — and only the second makes a scan incomplete.
+    ///
+    /// "Absent" has to be told apart from "unreachable" at every level, because `fileExists`
+    /// reports both as false: a bundle whose root lists fine can still have a `Contents` that
+    /// cannot be entered, and reading that as "no Info.plist, so not ours" is what lets a
+    /// purge delete the data of the very launcher it could not see.
     private func isUnreadable(_ appURL: URL) -> Bool {
-        guard (try? fileManager.contentsOfDirectory(atPath: appURL.path)) != nil else { return true }
-        let info = appURL.appendingPathComponent("Contents/Info.plist")
-        guard fileManager.fileExists(atPath: info.path) else { return false }
-        return fileManager.contents(atPath: info.path) == nil
+        guard let entries = try? fileManager.contentsOfDirectory(atPath: appURL.path) else {
+            return true
+        }
+        guard entries.contains("Contents") else { return false } // plainly not a bundle of ours
+        let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
+        guard let inside = try? fileManager.contentsOfDirectory(atPath: contents.path) else {
+            return true
+        }
+        guard inside.contains("Info.plist") else { return false }
+        return fileManager.contents(atPath: contents.appendingPathComponent("Info.plist").path) == nil
     }
 
     // MARK: - Remove
