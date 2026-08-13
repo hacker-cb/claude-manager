@@ -39,39 +39,23 @@ public extension ProfileStore {
         if let pid = runningPID(for: profile) {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
-        // Two refusals happen *before* the launcher is trashed, unlike every other reason a
-        // purge does not go through. Those others leave the data reachable — a launcher on the
-        // same directory can still purge it later — while these two do not: afterwards no
-        // profile lists the directory at all, so nothing in the app can offer to finish the job
-        // and every message would name a remedy the user cannot follow. Stopping here leaves
-        // nothing to undo.
+        // Refused *before* the launcher is trashed, unlike every other reason a purge does not
+        // go through. The others leave the data reachable — a launcher on the same directory
+        // can still purge it later — while this one does not: afterwards no profile lists the
+        // directory at all, so nothing in the app can offer to finish the job. Stopping here
+        // leaves nothing to undo.
         //
-        // Only where something is actually going to be deleted. With the data already gone, or
-        // with it belonging to the default profile, the purge deletes nothing whatever the scan
-        // says — so demanding a readable launcher folder there would refuse a removal that was
-        // never a risk, and leave the launcher installed with no way to retire it.
+        // Only where something is actually going to be deleted: with the data already gone, or
+        // with it belonging to the default profile, nothing is at stake whatever the scan says.
+        //
+        // An *incomplete* scan is deliberately not refused here. It is computed over every
+        // `.app` in the install directory — which is the real Claude.app's own folder, normally
+        // `/Applications` — so one unreadable stranger there (installed by another account, an
+        // MDM package, an evicted cloud placeholder) would block "delete profile data" for
+        // every profile, forever, naming an app that has nothing to do with any of them. The
+        // data is protected further down instead, where the answer is only ever "keep it".
         if purgeProfile, purgeHasACandidate(profile) {
-            // Same reasoning as below, one step earlier: with the launcher folder unlistable
-            // there is no way to tell who else uses this data, and every answer that could be
-            // given afterwards is a dead end — the launcher is in the Trash by then, so no
-            // profile lists the directory any more and nothing in the app can offer to delete
-            // it. Stop while the launcher is still installed, so making the folder readable and
-            // trying again is the whole remedy.
-            //
-            // One scan answers both questions, rather than probing readability and then
-            // rescanning: between two listings the folder can change state, and the second
-            // one's emptiness would again read as "nobody claims this".
             let scan = bundle.scan(installDirectory: configuration.installDirectory)
-            guard scan.isComplete else {
-                // Whatever actually blocked the answer: the bundles that could not be read, or
-                // the folder itself when it could not even be listed. Naming the folder for an
-                // unreadable *bundle* would send the user to fix something that is already fine.
-                throw ClaudeManagerError.launcherOwnersUnknown(
-                    paths: scan.unreadable.isEmpty
-                        ? [configuration.installDirectory.path]
-                        : scan.unreadable.map(\.path)
-                )
-            }
             let nested = launchersNested(under: profile, among: scan.launchers)
             guard nested.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
@@ -125,13 +109,12 @@ public extension ProfileStore {
         guard fileManager.fileExists(atPath: profile.profilePath) else {
             // The overlay is swept even here — it is created independently of the data dir —
             // but not when the path is shared, where it is the survivor's overlay too, nor
-            // when it is the default profile's, where it is Claude's own config tier. It runs
-            // even where the scan came back incomplete: the alternative is a `-3p` tier stranded
-            // for good — this branch reports `.alreadyGone`, which says nothing, the launcher is
-            // in the Trash so no profile lists the path, and Doctor's orphan sweep skips managed
-            // tiers by design. The sweep's own guard still refuses a path a surviving launcher
-            // claims; an unread sibling narrows that guard but does not remove it.
-            if sharing.isEmpty, !isDefaultProfileData {
+            // when it is the default profile's, where it is Claude's own config tier, nor when
+            // the scan was incomplete: `removeOverlay` deletes that path recursively, and its
+            // collision guard reads the very survivor list the scan could not complete. A `-3p`
+            // tier left behind is recoverable; a sibling whose user-data directory *is* that
+            // path is not.
+            if ownersKnown, sharing.isEmpty, !isDefaultProfileData {
                 sweepOverlay(for: profile, survivors: survivors)
             }
             return .alreadyGone
@@ -279,7 +262,9 @@ public extension ProfileStore {
                 // resolves the link away before the comparison can see it.
                 var probe = URL(fileURLWithPath: other).standardizedFileURL
                 while probe.pathComponents.count > 1 {
-                    if Self.linkIdentityPath(probe.path) == linkIdentity { return true }
+                    if ProfileStore.samePath(
+                        Self.linkIdentityPath(probe.path), linkIdentity, ignoringCase: ignoringCase
+                    ) { return true }
                     probe = probe.deletingLastPathComponent()
                 }
                 return ProfileStore.directoriesOverlap(
@@ -347,6 +332,12 @@ public extension ProfileStore {
     /// directory reached through one link.
     private static func same(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
         ignoringCase ? lhs.caseInsensitiveCompare(rhs) == .orderedSame : lhs == rhs
+    }
+
+    /// Whole-path equality, folded the way the volume folds names — the same question `same`
+    /// answers per component.
+    static func samePath(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
+        same(lhs, rhs, ignoringCase: ignoringCase)
     }
 
     /// Whether `inner` sits strictly below `outer` — the asymmetric half of the check above.

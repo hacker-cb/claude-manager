@@ -312,12 +312,11 @@ public struct LauncherBundle {
             return errno == ENOENT ? .foreign : .unreadable
         }
         if info.st_mode & S_IFMT == S_IFLNK {
-            // A link *to* a launcher is a launcher. Only a dangling one is the harmless
-            // non-bundle it looks like; a link into an unmounted volume is precisely the case
-            // this signal exists for.
-            guard stat(appURL.path, &info) == 0 else {
-                return errno == ENOENT ? .foreign : .unreadable
-            }
+            // A link *to* a launcher is a launcher, so follow it. A link that leads nowhere is
+            // **not** treated as a plain non-bundle: an unmounted volume answers `ENOENT`
+            // exactly as a dangling link does, and that is the case this whole signal exists
+            // for — a launcher on a detached disk still claims its user-data directory.
+            guard stat(appURL.path, &info) == 0 else { return .unreadable }
         }
         // Not a directory at all — a Finder alias, a stray file. Not a bundle we failed to
         // read; not a bundle.

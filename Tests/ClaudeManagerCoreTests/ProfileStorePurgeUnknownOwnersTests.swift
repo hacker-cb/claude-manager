@@ -72,29 +72,28 @@ struct ProfileStorePurgeUnknownOwnersTests {
         try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: two.appPath)
         defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: two.appPath) }
 
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(one, purgeProfile: true)
-        }
+        let result = try env.store.remove(one, purgeProfile: true)
 
-        #expect(fm.fileExists(atPath: one.appPath))
+        // The launcher goes; the data stays, because whether the sibling still claims it could
+        // not be established. Refusing the whole removal instead would punish every profile for
+        // one unreadable bundle in a folder that is normally `/Applications`.
+        #expect(result.profileData == .keptOwnersUnknown)
         #expect(fm.fileExists(atPath: login.path))
-        // Named by what actually blocked it — the sibling's bundle, not the folder, which
-        // lists perfectly well.
-        let message = try #require(thrown.errorDescription)
-        #expect(message.contains("could not be read"))
-        #expect(message.contains(URL(fileURLWithPath: two.appPath).lastPathComponent))
+        let notice = try #require(result.profileData.notice(forRemovalOf: one.displayName))
+        #expect(notice.message.contains("still on disk"))
+        _ = two
     }
 
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.
     ///
-    /// Refused **before** the launcher is trashed, like the nested case and for the same
-    /// reason: afterwards no profile lists that directory any more, so nothing in the app could
-    /// offer to delete it and every message would name a remedy the user cannot follow. Stopping
-    /// here leaves "make the folder readable and try again" as the whole fix.
+    /// The data is kept and the user is told. The removal itself is *not* refused: the scan
+    /// covers every `.app` in the install directory — the real Claude.app's own folder, normally
+    /// `/Applications` — so one unreadable stranger there would otherwise block removing any
+    /// profile's data at all, naming an app unrelated to it.
     @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
-    func purgeIsRefusedUpFrontWhenTheLauncherFolderCannotBeRead() throws {
+    func purgeKeepsTheDataWhenTheLauncherFolderCannotBeRead() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -110,18 +109,14 @@ struct ProfileStorePurgeUnknownOwnersTests {
             try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: env.installDir.path)
         }
 
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(profile, purgeProfile: true)
-        }
+        let result = try env.store.remove(profile, purgeProfile: true)
 
-        // Nothing happened: the launcher is where it was, and so is the login.
-        #expect(fm.fileExists(atPath: profile.appPath))
+        // The data survives, and the notice says so — an unlistable folder is "cannot tell",
+        // and "cannot tell" never deletes.
+        #expect(result.profileData == .keptOwnersUnknown)
         #expect(fm.fileExists(atPath: login.path))
-        let message = try #require(thrown.errorDescription)
-        #expect(message.contains("could not be read"))
-        #expect(message.contains("Nothing was removed"))
-        // The folder is what blocked it here, so the folder is what gets named.
-        #expect(message.contains(URL(fileURLWithPath: env.installDir.path).lastPathComponent))
+        let notice = try #require(result.profileData.notice(forRemovalOf: profile.displayName))
+        #expect(notice.message.contains("still on disk"))
     }
 
     /// The same folder becoming unreadable *after* that pre-flight check — the residue the
