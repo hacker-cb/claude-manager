@@ -71,8 +71,12 @@ short form:
   profile is *created*, so one profile's user-data dir can *be* another's, or sit inside it —
   and `removeItem` is recursive, so purging the outer one takes the inner profile's Anthropic
   token and chat history with it. `ProfileStore+Remove.directoriesOverlap` compares
-  standardized paths by *component* (never by string prefix: `…/work` is not inside
-  `…/wo`), and a purge that would reach another launcher's data is declined and reported.
+  **canonical** paths (`PathUtils.canonicalPath`) by *component* — never by string prefix
+  (`…/work` is not inside `…/wo`) and never by the recorded spelling, since `…/Profiles/x` and
+  `…/ProfilesLink/x` are one directory, as are `…/x` and `…/X` on a case-insensitive volume.
+  A purge that would reach another launcher's data is declined and reported — and where the
+  launcher folder cannot be *listed*, the answer is unknown rather than "nobody else uses it",
+  so the data is kept (`keptOwnersUnknown`).
 - **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
   twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
   directory handed to it is itself a symlink; the `atPath` overload does neither. Both

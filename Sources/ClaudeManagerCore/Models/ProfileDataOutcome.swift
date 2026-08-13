@@ -37,6 +37,12 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// `keptSharedWith` cannot name it; pointing a clone at it to reuse an existing login is
     /// a supported thing to do, and purging from there would sign the user out of Claude.
     case keptForDefaultProfile
+    /// Deletion was asked for and declined because **whether anyone else uses this directory
+    /// could not be established**: the launcher folder could not be listed, and that is where
+    /// the answer lives. An empty scan is what an unreadable folder and an empty one look like
+    /// from the inside, so treating it as "nobody else claims this" deletes a sibling's login
+    /// on a folder that was merely renamed, unmounted, or had its permissions changed.
+    case keptOwnersUnknown
     /// Deletion was asked for and there was nothing at the path.
     case alreadyGone
     /// Deletion was not asked for — "Move Launcher to Trash (keep login)".
@@ -69,6 +75,15 @@ public enum ProfileDataOutcome: Sendable, Equatable {
                     + "and chat history are Claude's own — deleting them from here would sign "
                     + "you out of Claude itself. The launcher is in the Trash; the data is "
                     + "untouched."
+            )
+        case .keptOwnersUnknown:
+            RemovalNotice(
+                title: "Profile data was kept",
+                message: "\(displayName)'s launcher is in the Trash, but its profile data was "
+                    + "left alone: the launcher folder could not be read, so there was no way "
+                    + "to tell whether another profile still uses that data. Once the folder "
+                    + "is reachable again, remove the launcher's data from any profile that "
+                    + "still lists it."
             )
         case let .purgeFailed(reason):
             RemovalNotice(

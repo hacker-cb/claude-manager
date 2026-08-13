@@ -73,6 +73,14 @@ public extension ProfileStore {
     private func purgeProfileData(for profile: Profile) -> ProfileDataOutcome {
         // Never delete data another launcher still points at (the launcher we
         // just trashed is already gone from the scan).
+        //
+        // The scan has to be *readable* before its emptiness means anything: `scan` reports an
+        // unlistable install directory as holding no launchers, and this call site would read
+        // that as "nobody else claims this directory" and delete a sibling's login. `Doctor`
+        // guards the same degradation, and `scan`'s doc comment warns about it by name.
+        guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
+            != nil
+        else { return .keptOwnersUnknown }
         let survivors = bundle.scan(installDirectory: configuration.installDirectory)
         let sharing = survivors.filter {
             Self.directoriesOverlap($0.marker.profile, profile.profilePath)
@@ -114,12 +122,15 @@ public extension ProfileStore {
 
     /// Remove the `<profilePath>-3p` overlay sibling. Guards a name collision: if another
     /// launcher's user-data dir *is* that `-3p` path, it's that profile's data, not our
-    /// overlay — leave it alone. Best-effort (`removeOverlay` no-ops when absent).
+    /// overlay — leave it alone. `removeOverlay` deletes that directory whole, so missing the
+    /// collision costs the sibling its login and chat history; the paths are therefore
+    /// compared as directories, since the sibling records whichever spelling it was created
+    /// with. Best-effort (`removeOverlay` no-ops when absent).
     private func sweepOverlay(for profile: Profile, survivors: [LauncherBundle.Discovered]) {
         let overlayPath = ManagedConfigWriter
-            .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
+            .localTierURL(forUserDataPath: profile.profilePath).path
         let overlayIsAnothersData = survivors.contains {
-            URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path == overlayPath
+            PathUtils.sameDirectory($0.marker.profile, overlayPath)
         }
         if !overlayIsAnothersData {
             try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
@@ -141,15 +152,17 @@ public extension ProfileStore {
     /// Whether deleting one of these directories would take the other with it — the same path,
     /// or one nested inside the other.
     ///
-    /// Raw string equality is not enough on either count. The profile path is free text in the
-    /// editor and only normalized (`PathUtils.absolutePath`), so one launcher's data can sit
-    /// *inside* another's: `removeItem` on the outer one is recursive and takes the inner
-    /// profile's Anthropic token and chat history with it, silently, since a scan filtered on
-    /// equality reports nobody sharing. Two spellings of one directory miss each other the
-    /// same way, which is why `sweepOverlay`'s own guard already standardizes both sides.
+    /// Raw string equality is not enough on either count. The profile path is free text when a
+    /// profile is created, so one launcher's data can sit *inside* another's: `removeItem` on
+    /// the outer one is recursive and takes the inner profile's Anthropic token and chat
+    /// history with it, silently, since a scan filtered on equality reports nobody sharing.
     ///
     /// Compared by path *component*, never by string prefix: `…/Profiles/work` is not inside
-    /// `…/Profiles/wo`, though one string does begin with the other.
+    /// `…/Profiles/wo`, though one string does begin with the other. And the components come
+    /// from `PathUtils.canonicalPath`, not from the recorded spelling: `…/Profiles/shared` and
+    /// `…/ProfilesLink/shared` are one directory, as are `…/work` and `…/Work` on a
+    /// case-insensitive volume, and a comparison that misses that deletes the sibling's login
+    /// while reporting a clean removal.
     private static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
         let left = components(lhs)
         let right = components(rhs)
@@ -166,6 +179,6 @@ public extension ProfileStore {
     }
 
     private static func components(_ path: String) -> [String] {
-        URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        URL(fileURLWithPath: PathUtils.canonicalPath(path)).pathComponents
     }
 }
