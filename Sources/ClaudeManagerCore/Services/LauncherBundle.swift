@@ -312,8 +312,17 @@ public struct LauncherBundle {
         guard lstat(appURL.path, &info) == 0 else {
             return errno == ENOENT ? .foreign : .unreadable
         }
-        // Not a directory at all — a Finder alias, a stray file, a link. Not a bundle we failed
-        // to read; not a bundle.
+        if info.st_mode & S_IFMT == S_IFLNK {
+            // A link *to* a launcher is a launcher — following it is what `fileExists` used to
+            // do, and dropping it as "foreign" would leave a managed launcher out of a scan
+            // that still called itself complete. A link into an unmounted volume is the case
+            // this whole signal exists for, so only a dangling one (ENOENT) is harmless.
+            guard stat(appURL.path, &info) == 0 else {
+                return errno == ENOENT ? .foreign : .unreadable
+            }
+        }
+        // Not a directory at all — a Finder alias, a stray file. Not a bundle we failed to
+        // read; not a bundle.
         guard info.st_mode & S_IFMT == S_IFDIR else { return .foreign }
         // A directory we cannot enter is the hard case, and it resolves against the purge: an
         // unreadable bundle *might* be one of ours claiming a user-data directory, and the two

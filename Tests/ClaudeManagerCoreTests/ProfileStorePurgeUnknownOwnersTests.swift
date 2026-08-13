@@ -11,6 +11,41 @@ import Testing
 struct ProfileStorePurgeUnknownOwnersTests {
     let fm = FileManager.default
 
+    /// A launcher reached through a symlink in the install directory is still a launcher, and
+    /// still claims its user-data directory. Dropping it as "not one of ours" would leave it
+    /// out of a scan that nonetheless called itself complete — and the purge would then delete
+    /// the data it shares.
+    @Test
+    func aLauncherReachedThroughASymlinkStillClaimsItsData() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared")
+        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
+        let one = try env.store.add(
+            AddProfileRequest(name: env.name("one"), profilePath: shared.path)
+        ).profile
+        let two = try env.store.add(
+            AddProfileRequest(name: env.name("two"), profilePath: shared.path)
+        ).profile
+        let login = shared.appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+        // The sibling now lives outside the install directory, reached by a link inside it.
+        let moved = env.root.appendingPathComponent("moved.app")
+        try fm.moveItem(atPath: two.appPath, toPath: moved.path)
+        try fm.createSymbolicLink(
+            at: URL(fileURLWithPath: two.appPath), withDestinationURL: moved
+        )
+
+        let result = try env.store.remove(one, purgeProfile: true)
+
+        #expect(result.profileData == .keptSharedWith(launchers: [two.displayName]))
+        #expect(fm.fileExists(atPath: login.path))
+    }
+
     /// A sibling whose bundle cannot be read drops out of the scan the same way a third-party
     /// app does — `readMarker` returns `nil` for both — so an install directory that lists fine
     /// can still yield an answer that is missing the very launcher that would have stopped the
