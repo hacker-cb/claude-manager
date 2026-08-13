@@ -14,25 +14,35 @@ public extension FileManager {
     /// - It **throws `ENOTDIR`** when the directory handed to it is itself a symlink (only the
     ///   final component is not followed), which a `try?` turns into "this directory is empty".
     ///
-    /// Hidden entries are dropped, which is what `.skipsHiddenFiles` did for the URL overload:
-    /// by name, and by the file system's own hidden flag — `chflags hidden` leaves the name
-    /// alone, so the name test cannot see it.
+    /// Dot-names are always dropped — `.skipsHiddenFiles` did that for the URL overload, and it
+    /// is what keeps `LauncherBundle.build`'s `.<name>.app.build-<uuid>` staging directories
+    /// out of a scan.
+    ///
+    /// `skippingFlaggedHidden` covers the *other* half of `.skipsHiddenFiles`: the file
+    /// system's own hidden flag, which `chflags hidden` sets without touching the name. It is
+    /// off by default, and the two callers differ on purpose. A hidden **launcher** still runs
+    /// and still claims its user-data directory, so `scan` must see it: dropped, it vanishes
+    /// from the sidebar, from `rebuildAll`, and from the ownership checks that decide whether
+    /// deleting a profile's data would take a sibling's login with it. A hidden **profile
+    /// directory** is something the user put out of the way, so `Doctor` skips it rather than
+    /// reporting it as an orphan.
     ///
     /// An unreadable directory comes back as an empty list rather than an error: both callers
     /// treat "cannot tell" as "nothing to report", and each documents what it does about that.
     ///
-    /// The hidden test asks the URL rather than the listing that produced it, so unlike
+    /// The flag is read from the URL rather than from the listing that produced it, so unlike
     /// `.skipsHiddenFiles` it can fail to get an answer — an entry removed between the two
-    /// calls, or a directory listable but not stat-able. It **fails open**, keeping the entry,
-    /// because the two mistakes are not equal: showing a launcher someone hid is cosmetic,
-    /// while dropping one on an unanswered stat takes it out of the sidebar, out of
-    /// `rebuildAll`, and out of every ownership check that asks who claims a profile
-    /// directory.
-    func visibleContents(ofDirectoryAt url: URL) -> [URL] {
+    /// calls, or a directory listable but not stat-able. It keeps the entry in that case, which
+    /// for the caller that asks is the harmless direction: one diagnostic too many, rather than
+    /// a profile directory silently unexamined.
+    func visibleContents(ofDirectoryAt url: URL, skippingFlaggedHidden: Bool = false) -> [URL] {
         let names = (try? contentsOfDirectory(atPath: url.path)) ?? []
         return names
             .filter { !$0.hasPrefix(".") }
             .map { url.appendingPathComponent($0, isDirectory: true) }
-            .filter { (try? $0.resourceValues(forKeys: [.isHiddenKey]))?.isHidden != true }
+            .filter {
+                guard skippingFlaggedHidden else { return true }
+                return (try? $0.resourceValues(forKeys: [.isHiddenKey]))?.isHidden != true
+            }
     }
 }

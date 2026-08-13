@@ -35,11 +35,36 @@ public enum PathUtils {
     /// Symlinks are resolved as well as `.`/`..` folded, because the aliases are not exotic:
     /// macOS puts the temporary directory behind `/var → /private/var`, iCloud's "Desktop &
     /// Documents" replaces `~/Documents` with a symlink, and `absolutePath` above only folds
-    /// what `standardizingPath` folds — which is *not* symlinks. Case is deliberately **not**
-    /// folded: a case-insensitive volume makes two spellings one file, but this function
-    /// cannot know the volume, and a caller that needs that answer must ask the file system.
+    /// what `standardizingPath` folds — which is *not* symlinks.
+    ///
+    /// Case is folded exactly as far as the **volume** folds it, because the answer comes from
+    /// the file system rather than from a rule stated here: an existing directory resolves to
+    /// the name the volume actually stores, so on a case-insensitive one `…/Work` and `…/work`
+    /// come back identical, and on a case-sensitive one they stay apart. That is the right
+    /// answer for what this is used for — two spellings that open one directory *are* one
+    /// directory, and a purge that missed it would delete a sibling's login. Where nothing
+    /// exists at the path there is nobody to ask, and the spelling is kept as given.
+    ///
+    /// The answer must not depend on whether the path exists, which is why the resolution is
+    /// done on the deepest ancestor that *does*. `resolvingSymlinksInPath` folds
+    /// `/private/tmp/x` to `/tmp/x` only while `x` is on disk, and gives the two spellings
+    /// different answers once it is not — measured, not assumed. `sameDirectory` gates every
+    /// `update`, `rebuild` and `remove` (`profileMatchingItsLauncher`, `add(force:)`), so a
+    /// launcher recording one side of that alias while the profile is presented spelling the
+    /// other would pass every gate until the user deleted the data directory by hand, and then
+    /// be neither editable nor removable from the app.
     public static func canonicalPath(_ path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        var missing: [String] = []
+        var probe = URL(fileURLWithPath: path).standardizedFileURL
+        while !FileManager.default.fileExists(atPath: probe.path), probe.pathComponents.count > 1 {
+            missing.append(probe.lastPathComponent)
+            probe = probe.deletingLastPathComponent()
+        }
+        var resolved = probe.resolvingSymlinksInPath()
+        for component in missing.reversed() {
+            resolved.appendPathComponent(component)
+        }
+        return resolved.standardizedFileURL.path
     }
 
     /// Whether two paths name the same directory. Never compare them raw — a profile's

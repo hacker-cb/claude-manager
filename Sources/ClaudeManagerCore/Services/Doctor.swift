@@ -316,9 +316,17 @@ public struct Doctor {
     /// user-settable).
     private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
         let dir = configuration.defaultProfilesDirectory
-        let claimed = Set(known.map { PathUtils.canonicalPath($0) })
+        // The default profile owns no launcher, so it is in no marker and no scan — and the
+        // profiles folder is user-settable, so it can be pointed at the directory holding it
+        // (`~/Library/Application Support`). Without this it is reported as an orphan: the
+        // user's primary Anthropic login and chat history, named as safe to delete.
+        // `purgeProfileData` guards the same blind spot with `keptForDefaultProfile`.
+        let claimed = Set(
+            known.union([configuration.defaultProfileUserDataPath])
+                .map { PathUtils.canonicalPath($0) }
+        )
 
-        return fileManager.visibleContents(ofDirectoryAt: dir)
+        return fileManager.visibleContents(ofDirectoryAt: dir, skippingFlaggedHidden: true)
             .sorted { $0.path < $1.path }
             .filter { entry in
                 var isDirectory: ObjCBool = false

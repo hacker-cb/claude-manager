@@ -171,25 +171,26 @@ struct LauncherPathSpellingTests {
         #expect(listed.first?.profile.id == added.id)
     }
 
-    /// Listing by path sees what `.skipsHiddenFiles` used to drop, and the hidden flag leaves
-    /// the name alone — so a name-only filter would newly surface items macOS hides. Asserted
-    /// on the launcher scan; Doctor's enumeration filters through the same helper.
+    /// A launcher carrying the file system's hidden flag (`chflags hidden`, which leaves the
+    /// name alone) stays in the scan. `.skipsHiddenFiles` used to drop it, and dropping it is
+    /// the dangerous direction: the bundle still runs and still claims its user-data
+    /// directory, so out of the scan it is also out of the checks that decide whether deleting
+    /// one profile's data would take a sibling's login with it.
     @Test
-    func anEntryHiddenByTheFileSystemStaysOutOfTheScan() throws {
+    func aLauncherHiddenByTheFileSystemStaysInTheScan() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let added = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        #expect(env.store.list().count == 1)
 
         var url = added.appURL
         var values = URLResourceValues()
         values.isHidden = true
         try url.setResourceValues(values)
 
-        #expect(env.store.list().isEmpty)
+        #expect(env.store.list().map(\.profile.id) == [added.id])
     }
 
     /// Doctor enumerates the *profiles* directory the same way, and a marker records whichever
@@ -207,6 +208,11 @@ struct LauncherPathSpellingTests {
         let profileDir = profilesDir.appendingPathComponent("work")
         try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
         try buildDoctorLauncher(in: scene, name: "work", profileDir: profileDir)
+        // A genuine orphan beside it, so "no orphan reported" cannot pass by the enumeration
+        // coming back empty — which is the other half of the same bug.
+        try fm.createDirectory(
+            at: profilesDir.appendingPathComponent("ghost"), withIntermediateDirectories: true
+        )
 
         let diagnostics = runDoctor(
             scene,
@@ -214,6 +220,10 @@ struct LauncherPathSpellingTests {
             profilesDirectory: profilesDir
         )
 
-        #expect(!diagnostics.contains { $0.title == "Orphan profile (no launcher)" })
+        let orphans = diagnostics
+            .filter { $0.title == "Orphan profile (no launcher)" }
+            .compactMap(\.detail)
+        #expect(orphans.count == 1)
+        #expect(orphans.first?.hasSuffix("/ghost") == true)
     }
 }

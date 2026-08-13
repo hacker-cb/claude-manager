@@ -217,8 +217,10 @@ enum Fixture {
     /// trashed launchers from accumulating in the developer's Trash.
     static func purgeTrash(displayNamePrefix prefix: String, fileManager: FileManager = .default) {
         let trash = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
-        guard let entries = try? fileManager.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
-        else { return }
+        // Through `visibleContents`, like every other enumeration here: the URL overload
+        // throws on a home directory reached via a symlink, which would silently purge
+        // nothing and leave this suite's launchers in the developer's real Trash.
+        let entries = fileManager.visibleContents(ofDirectoryAt: trash)
         let bundle = LauncherBundle(fileManager: fileManager)
         // Only ever delete our own managed launcher bundles — never an unrelated
         // user file in ~/.Trash that happens to share the prefix.

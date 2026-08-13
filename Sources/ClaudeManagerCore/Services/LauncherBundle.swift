@@ -279,14 +279,13 @@ public struct LauncherBundle {
     /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
     /// two sides equal *by construction*, rather than by both happening to normalize the same
     /// way afterwards.
-    /// Enumerated through `visibleContents(ofDirectoryAt:)`, which is what keeps every launcher
-    /// under one spelling and keeps a symlinked install directory from reading as empty — that
-    /// helper's doc comment owns both reasons. Its hidden-entry filter is also what keeps
-    /// `build`'s `.<name>.app.build-<uuid>` staging directories out of the scan.
+    /// Enumerated through `visibleContents(ofDirectoryAt:)`, whose doc comment owns why: one
+    /// spelling per launcher, and a symlinked install directory that does not read as empty.
+    /// The flagged-hidden filter is deliberately *not* asked for — a hidden launcher still runs
+    /// and still claims its user-data directory.
     ///
-    /// An unreadable install directory therefore yields no launchers, which callers must not
-    /// read as "nobody claims this profile directory" — `liveRewrite` says what it does about
-    /// that.
+    /// An unreadable install directory yields no launchers, which callers must not read as
+    /// "nobody claims this profile directory" — `liveRewrite` says what it does about that.
     public func scan(installDirectory: URL) -> [Discovered] {
         fileManager.visibleContents(ofDirectoryAt: installDirectory)
             .filter { $0.pathExtension == "app" }
