@@ -293,14 +293,6 @@ public struct LauncherBundle {
         return discovered
     }
 
-    /// Whether the bundle at `appURL` could not be read well enough to tell whether it is one
-    /// of ours. Not part of `Scan.isComplete` — see the reasoning there — but the distinction
-    /// the classifier draws is worth keeping reachable.
-    func isUnreadable(at appURL: URL) -> Bool {
-        if case .unreadable = read(at: appURL) { return true }
-        return false
-    }
-
     /// What one bundle turned out to be, decided by a **single** read of its `Info.plist`.
     ///
     /// The three outcomes have to come from one read, because the two that mean "not a launcher
@@ -367,8 +359,12 @@ public struct LauncherBundle {
         case launcher(Discovered)
         /// Read successfully, and it is not one of ours.
         case foreign
-        /// Could not be established either way. Never counted as "not ours": that is the answer
-        /// that lets a purge delete a directory this bundle may still claim.
+        /// Could not be established either way — and, today, treated exactly as `foreign` by
+        /// the only caller: `readMarker` maps both to `nil`, and `Scan.isComplete` reports the
+        /// *listing* alone. Kept as a distinct verdict because the difference is real and the
+        /// classifier is where it can be drawn; wiring it into ownership without switching off
+        /// half the app over one unreadable stranger in `/Applications` is a separate problem
+        /// (see `Scan.isComplete`).
         case unreadable
     }
 

@@ -12,6 +12,10 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     /// A purge was asked for over a directory that *contains* another launcher's user-data
     /// dir. Refused before anything is touched — see `remove`.
     case profileDataHoldsAnother(name: String, others: [String])
+    /// An operation needed to know what is installed and the launcher folder could not be
+    /// listed. Reported rather than treated as "nothing is installed", which would be a
+    /// successful-looking no-op — see `rebuildAll`.
+    case launcherFolderUnreadable(path: String)
     /// A forced create would have rebuilt an existing launcher onto a *different* user-data
     /// directory, abandoning the one it has — see `add`.
     case launcherHoldsOtherProfileData(appPath: String, installed: String, requested: String)
@@ -55,6 +59,10 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
                 + "Finder first."
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
+        case let .launcherFolderUnreadable(path):
+            return "The launcher folder \(PathUtils.abbreviatingHome(path)) could not be read, "
+                + "so there is no way to tell which launchers are installed. Nothing was "
+                + "changed. Check that the folder exists and is readable, then try again."
         case let .launcherHoldsOtherProfileData(appPath, installed, requested):
             return "\(PathUtils.abbreviatingHome(appPath)) already exists and uses "
                 + "\(PathUtils.abbreviatingHome(installed)) for its profile data. Rebuilding "

@@ -54,7 +54,12 @@ public extension ProfileStore {
         // MDM package, an evicted cloud placeholder) would block "delete profile data" for
         // every profile, forever, naming an app that has nothing to do with any of them. The
         // data is protected further down instead, where the answer is only ever "keep it".
-        if purgeProfile, purgeHasACandidate(profile) {
+        // Asked whenever a purge was requested, without first checking that the directory is
+        // there: `fileExists` answers "unreachable" — an unmounted volume, a parent that lost
+        // traversal — exactly as it answers "deleted", and skipping the check on that reading
+        // trashes the launcher, reports `.alreadyGone` (which says nothing), and leaves the
+        // nested profile's data undeletable through the app once the volume is back.
+        if purgeProfile {
             let scan = bundle.scan(installDirectory: configuration.installDirectory)
             let nested = launchersNested(under: profile, among: scan.launchers)
             guard nested.isEmpty else {
@@ -192,7 +197,9 @@ public extension ProfileStore {
                     PurgeReach.literalPath($0.marker.profile),
                     ignoringCase: ignoringCase
                 ) || Self.directoryStrictlyContains(
-                    ourCanonical, PathUtils.canonicalPath($0.marker.profile)
+                    ourCanonical,
+                    PathUtils.canonicalPath($0.marker.profile),
+                    ignoringCase: ignoringCase
                 )
             }
             .map(\.profile.displayName)
@@ -212,13 +219,6 @@ public extension ProfileStore {
     /// `…/ProfilesLink/shared` are one directory, as are `…/work` and `…/Work` on a
     /// case-insensitive volume, and a comparison that misses that deletes the sibling's login
     /// while reporting a clean removal.
-    /// Whether this removal has any data to delete at all: none where the directory is
-    /// already gone, and none where it is the default profile's, which is refused outright.
-    private func purgeHasACandidate(_ profile: Profile) -> Bool {
-        fileManager.fileExists(atPath: profile.profilePath)
-            && !PurgeReach(profile).reaches(configuration.defaultProfileUserDataPath)
-    }
-
     /// Whether purging one profile's data would reach the directory another one records.
     ///
     /// A value rather than a function because the answers canonicalise paths — which walks the
@@ -310,7 +310,9 @@ public extension ProfileStore {
             }
             return ProfileStore.directoriesOverlap(
                 literal, Self.literalPath(other), ignoringCase: ignoringCase
-            ) || ProfileStore.directoriesOverlap(canonical, PathUtils.canonicalPath(other))
+            ) || ProfileStore.directoriesOverlap(
+                canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
+            )
         }
 
         /// The path as recorded, `.`/`..` folded and nothing resolved.

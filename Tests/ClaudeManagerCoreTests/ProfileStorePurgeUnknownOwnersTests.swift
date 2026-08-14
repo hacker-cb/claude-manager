@@ -46,6 +46,38 @@ struct ProfileStorePurgeUnknownOwnersTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
+    /// "The data is not there" and "the data cannot be reached" answer `fileExists` the same
+    /// way, and only one of them means nothing is at stake. Skipping the nested refusal on an
+    /// unmounted volume trashes the launcher, reports `.alreadyGone` — which says nothing —
+    /// and leaves the inner profile's data undeletable through the app once it is back.
+    @Test
+    func nestedProfilesAreRefusedEvenWhenTheDataDirectoryIsUnreachable() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("outer"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("inner"))
+        }
+        let outer = env.profilesDir.appendingPathComponent("outer")
+        let inner = outer.appendingPathComponent("inner")
+        try fm.createDirectory(at: inner, withIntermediateDirectories: true)
+        let outerProfile = try env.store.add(
+            AddProfileRequest(name: env.name("outer"), profilePath: outer.path)
+        ).profile
+        let innerProfile = try env.store.add(
+            AddProfileRequest(name: env.name("inner"), profilePath: inner.path)
+        ).profile
+        // Gone from the app's reach — what an unmounted volume looks like from here.
+        try fm.removeItem(at: outer)
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.remove(outerProfile, purgeProfile: true)
+        }
+
+        #expect(fm.fileExists(atPath: outerProfile.appPath))
+        #expect(try #require(thrown.errorDescription).contains(innerProfile.displayName))
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.
