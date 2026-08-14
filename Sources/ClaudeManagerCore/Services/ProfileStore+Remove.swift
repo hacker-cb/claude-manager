@@ -293,20 +293,6 @@ public extension ProfileStore {
         return (destroyed.map(\.profile.displayName), stranded.map(\.profile.displayName))
     }
 
-    /// Whether deleting one of these directories would take the other with it — the same path,
-    /// or one nested inside the other.
-    ///
-    /// Raw string equality is not enough on either count. The profile path is free text when a
-    /// profile is created, so one launcher's data can sit *inside* another's: `removeItem` on
-    /// the outer one is recursive and takes the inner profile's Anthropic token and chat
-    /// history with it, silently, since a scan filtered on equality reports nobody sharing.
-    ///
-    /// Compared by path *component*, never by string prefix: `…/Profiles/work` is not inside
-    /// `…/Profiles/wo`, though one string does begin with the other. And the components come
-    /// from `PathUtils.canonicalPath`, not from the recorded spelling: `…/Profiles/shared` and
-    /// `…/ProfilesLink/shared` are one directory, as are `…/work` and `…/Work` on a
-    /// case-insensitive volume, and a comparison that misses that deletes the sibling's login
-    /// while reporting a clean removal.
     /// Whether the volume holding `url` treats names case-insensitively — the default on macOS.
     ///
     /// An unknown answer folds **nothing**. The volume can only be asked about a path that
@@ -360,6 +346,22 @@ public extension ProfileStore {
         return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
+    /// Whether deleting one of these directories would take the other with it — the same path,
+    /// or one nested inside the other. The asymmetric half is `directoryContains`.
+    ///
+    /// Raw string equality is not enough on either count. The profile path is free text when a
+    /// profile is created, so one launcher's data can sit *inside* another's: `removeItem` on
+    /// the outer one is recursive and takes the inner profile's Anthropic token and chat
+    /// history with it, silently, since a scan filtered on equality reports nobody sharing.
+    ///
+    /// Compared by path *component*, never by string prefix: `…/Profiles/work` is not inside
+    /// `…/Profiles/wo`, though one string does begin with the other.
+    ///
+    /// **Whichever spelling the caller passes in is the spelling compared** — this does no
+    /// resolving of its own. `PurgeReach` asks it three times over, with canonical paths and
+    /// with two literal forms, because those questions have different answers and each catches
+    /// a sibling the others miss; see its doc comment. A caller that assumes canonicalisation
+    /// happens here silently drops the two literal ones.
     internal static func directoriesOverlap(
         _ lhs: String,
         _ rhs: String,
