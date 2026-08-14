@@ -39,9 +39,9 @@ struct ProfileStoreMutationEdgeTests {
         defer { try? fm.removeItem(at: env.root) }
         let original = try env.store
             .add(AddProfileRequest(name: env.name("work"), color: .named("blue"))).profile
-        var edited = original
-        edited.color = .named("red") // changes the rendered badge in place
-        let result = try env.store.update(original: original, to: edited)
+        var edits = ProfileEdits(original)
+        edits.color = .named("red") // changes the rendered badge in place
+        let result = try env.store.update(original, applying: edits)
         #expect(result.dockRefreshPending == true)
         // Offered as opt-in, never a silent screen-flashing restart.
         #expect(env.runner.invocations(of: CoreConstants.killallPath).isEmpty)
@@ -57,10 +57,10 @@ struct ProfileStoreMutationEdgeTests {
         }
         let aa = try env.store.add(AddProfileRequest(name: env.name("aa"))).profile
         _ = try env.store.add(AddProfileRequest(name: env.name("bb"))).profile
-        var renamed = aa
+        var renamed = ProfileEdits(aa)
         renamed.displayName = env.display("bb") // collides with bb's launcher
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: aa, to: renamed)
+            try env.store.update(aa, applying: renamed)
         }
     }
 
@@ -72,37 +72,125 @@ struct ProfileStoreMutationEdgeTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var bad = work
+        var bad = ProfileEdits(work)
         bad.bundleID = "no dots here"
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: work, to: bad)
+            try env.store.update(work, applying: bad)
         }
     }
 
+    /// An edit applies while the profile is running, and says so. A launcher `exec`s the
+    /// real Claude binary, so a live instance is not executing out of the bundle and the
+    /// rewrite is safe; what it cannot reach is the running window, which keeps the name and
+    /// badge it launched with. Refusing the edit was the wrong remedy for that.
     @Test
-    func updateRefusedWhileProfileRunning() throws {
+    func updateAppliesUnderALiveInstanceAndReportsIt() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        // Now report the profile as running; an edit must be refused before any write.
+        // `makeStoreEnv` already delegates iconutil to the real system, so the handler only
+        // has to answer the pgrep probe.
         env.runner.setHandler { executable, args in
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
             }
             return idleStub(executable, args)
         }
-        var edited = work
-        edited.label = "ZZ"
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: work, to: edited)
+        var edits = ProfileEdits(work)
+        edits.label = "ZZ"
+        let result = try env.store.update(work, applying: edits)
+
+        #expect(result.liveRewrite?.pid == 888)
+        #expect(result.liveRewrite?.profile.label == "ZZ")
+        // The write really landed: the bundle's marker carries the new label.
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// An edit that leaves the name and the badge alone has nothing for a restart to reveal,
+    /// so it must not nudge — the window shows neither the bundle id nor anything else this
+    /// write touches.
+    @Test
+    func anEditThatChangesNothingVisibleDoesNotNudgeForARestart() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        var edits = ProfileEdits(work)
+        edits.bundleID = "com.example.renamed"
+        let result = try env.store.update(work, applying: edits)
+        #expect(result.liveRewrite == nil)
+        // The edit still landed — it just isn't something a restart would show.
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL) != nil)
+        #expect(result.profile.bundleID == "com.example.renamed")
+    }
+
+    /// Two launchers may point at one profile directory, and `runningPID` matches on that
+    /// directory — so a pid found while rewriting the idle one may well belong to the other.
+    /// Nudging there would offer a Restart that stops a live session and launches a
+    /// different launcher in its place, so an ambiguous owner produces no nudge at all.
+    @Test
+    func aPidSharedByTwoLaunchersProducesNoRestartNudge() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared").path
+        let one = try env.store.add(
+            AddProfileRequest(name: env.name("one"), profilePath: shared)
+        ).profile
+        _ = try env.store.add(AddProfileRequest(name: env.name("two"), profilePath: shared))
+
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        var edits = ProfileEdits(one)
+        edits.label = "ZZ"
+        let result = try env.store.update(one, applying: edits)
+
+        // The edit lands; only the nudge is withheld, because pid 888 may be the sibling's.
+        #expect(result.liveRewrite == nil)
+        #expect(LauncherBundle().readMarker(at: result.profile.appURL)?.marker.label == "ZZ")
+    }
+
+    /// Removal is the one mutation a live instance still blocks: trashing the bundle out
+    /// from under a profile the user may relaunch is a different act from rewriting it.
+    @Test
+    func removeIsStillRefusedWhileProfileRunning() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let work = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "888\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        #expect(throws: ClaudeManagerError.profileRunning(name: work.name, pid: 888)) {
+            try env.store.remove(work, purgeProfile: false)
         }
     }
 
     @Test
-    func removePurgeWithMissingDataKeepsPurgedFalse() throws {
+    func removePurgeWithMissingDataReportsAlreadyGone() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -117,7 +205,10 @@ struct ProfileStoreMutationEdgeTests {
         )
         #expect(!fm.fileExists(atPath: profile.profilePath))
         let result = try env.store.remove(profile, purgeProfile: true)
-        #expect(!result.purgedProfileData) // nothing to purge
+        // Nothing to purge — distinct from a refusal, and silent: the user asked for an
+        // absence they already had.
+        #expect(result.profileData == .alreadyGone)
+        #expect(result.profileData.notice(forRemovalOf: profile.displayName) == nil)
         #expect(!fm.fileExists(atPath: profile.appPath)) // launcher still trashed
     }
 

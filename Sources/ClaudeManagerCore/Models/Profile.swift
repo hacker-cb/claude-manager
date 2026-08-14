@@ -4,8 +4,10 @@ import Foundation
 /// `.app` and to describe it in the UI. Absolute paths only — display collapsing
 /// happens at the presentation layer.
 public struct Profile: Identifiable, Equatable, Hashable, Sendable {
-    /// Short handle, e.g. `work`. Lowercased by convention.
-    public var name: String
+    /// Short handle, e.g. `work`. Lowercased by convention. Immutable: it is part of the
+    /// profile's identity, and an edit that could reach it would rename a profile out from
+    /// under everything keyed on it (see `ProfileEdits`).
+    public let name: String
     /// Finder/Dock name, e.g. `Claude WORK`. Becomes `CFBundleName`.
     public var displayName: String
     /// Badge text, e.g. `W` or `WK`.
@@ -13,13 +15,30 @@ public struct Profile: Identifiable, Equatable, Hashable, Sendable {
     /// Badge fill color.
     public var color: BadgeColor
     /// `--user-data-dir` for this profile (absolute path).
-    public var profilePath: String
+    ///
+    /// Immutable, and the more load-bearing of the two: this directory holds the profile's
+    /// Anthropic login and its chat history, and a launcher pointed somewhere else does not
+    /// take them along — it abandons them. Moving profile data is a separate operation that
+    /// would have to move the directory and its `-3p` overlay with it; no edit may stand in
+    /// for it, so no edit can reach this.
+    public let profilePath: String
     /// Launcher `CFBundleIdentifier`.
     public var bundleID: String
     /// Absolute path to the launcher `.app`.
-    public var appPath: String
+    ///
+    /// Immutable for the same reason as the other two, and it is the sharpest of the three:
+    /// this is the bundle every operation writes to, trashes, or rebuilds, so a profile
+    /// re-pointed at an arbitrary path makes `update` retire whatever sits there and `remove`
+    /// trash it. `update` derives its own from the install dir and the validated display name.
+    public let appPath: String
 
-    public init(
+    /// Internal on purpose. `let` on the identity fields stops a profile being *mutated* into
+    /// pointing somewhere else; this stops one being *fabricated* that way, which is the same
+    /// hole by the other door — `update` and `rebuild` both take a profile and build from it,
+    /// so a hand-built one with a substituted `profilePath` would rewrite an installed
+    /// launcher to abandon its data. Outside this module a `Profile` therefore only ever comes
+    /// from where one actually exists: `ProfileStore.draft` or a launcher's own marker.
+    init(
         name: String,
         displayName: String,
         label: String,

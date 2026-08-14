@@ -217,8 +217,10 @@ enum Fixture {
     /// trashed launchers from accumulating in the developer's Trash.
     static func purgeTrash(displayNamePrefix prefix: String, fileManager: FileManager = .default) {
         let trash = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
-        guard let entries = try? fileManager.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
-        else { return }
+        // Through `visibleContents`, like every other enumeration here: the URL overload
+        // throws on a home directory reached via a symlink, which would silently purge
+        // nothing and leave this suite's launchers in the developer's real Trash.
+        let entries = fileManager.visibleContents(ofDirectoryAt: trash)
         let bundle = LauncherBundle(fileManager: fileManager)
         // Only ever delete our own managed launcher bundles — never an unrelated
         // user file in ~/.Trash that happens to share the prefix.
@@ -229,6 +231,21 @@ enum Fixture {
             else { continue }
             try? fileManager.removeItem(at: entry)
         }
+    }
+
+    /// The badge bytes a built launcher carries, resolved through its own
+    /// `CFBundleIconFile`. The resource is content-addressed, so its name depends on the
+    /// icon rendered for that profile and no test can hardcode it. Resolves the recorded
+    /// value through `LauncherBundle.iconResourceName` — the same interpretation the
+    /// production reader uses, so this helper cannot drift away from it.
+    static func installedBadgeData(inLauncherAt appPath: String) throws -> Data {
+        let app = URL(fileURLWithPath: appPath)
+        guard let info = RealClaude.plist(at: app.appendingPathComponent("Contents/Info.plist")),
+              let iconName = LauncherBundle.iconResourceName(recorded: info["CFBundleIconFile"] as? String)
+        else { throw FixtureError(message: "no usable CFBundleIconFile in \(appPath)") }
+        return try Data(
+            contentsOf: app.appendingPathComponent("Contents/Resources").appendingPathComponent(iconName)
+        )
     }
 
     static func makeTempDir(_ fileManager: FileManager = .default) throws -> URL {
@@ -332,8 +349,11 @@ struct StoreEnv {
 /// install dir — what the signature suites assert on. It is opt-in because a real
 /// signature costs a subprocess per launcher write, and every store suite paying that
 /// is enough to wedge a small CI runner.
+/// `fileManager` is injectable so a suite can make one operation fail without touching the
+/// filesystem's real permissions — `TrashRefusingFileManager` is the case that needs it.
 func makeStoreEnv(
     signingForReal: Bool = false,
+    fileManager: FileManager = .default,
     stub: @escaping @Sendable (String, [String]) -> CommandOutput = idleStub
 ) throws -> StoreEnv {
     let fm = FileManager.default
@@ -359,6 +379,7 @@ func makeStoreEnv(
             shipItStatePath: shipItStatePath
         ),
         runner: runner,
+        fileManager: fileManager,
         signalSender: { _, _ in 0 }
     )
     let token = String(UUID().uuidString.prefix(8)).lowercased().replacingOccurrences(of: "-", with: "")
@@ -400,4 +421,74 @@ func rawOverlay(_ userDataPath: String, fileManager: FileManager = .default) -> 
           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
     return dict
+}
+
+// MARK: - A FileManager whose Trash is broken
+
+/// Fails `trashItem` and behaves like `FileManager.default` for everything else.
+///
+/// The real thing fails for reasons a test cannot arrange without touching the machine — a
+/// volume with no Trash, a file another process holds open, a revoked permission — and a
+/// rename's Trash step is exactly the operation whose failure the store has to report rather
+/// than swallow. Subclassing reaches it because every caller goes through the injected
+/// instance, so nothing else in the store is disturbed.
+/// The failure a stubbed `FileManager` reports when it refuses a write.
+///
+/// One shape for all of them, so changing how stubbed filesystem failures look — a different
+/// domain, an errno-bearing `userInfo` a test can assert on — is one edit rather than four, and
+/// each stub is left as nothing but the method it overrides.
+func stubbedWriteFailure(_ message: String) -> NSError {
+    NSError(
+        domain: NSCocoaErrorDomain,
+        code: NSFileWriteUnknownError,
+        userInfo: [NSLocalizedDescriptionKey: message]
+    )
+}
+
+final class TrashRefusingFileManager: FileManager, @unchecked Sendable {
+    /// The reason the store is expected to carry into its report.
+    static let message = "The Trash is unavailable on this volume."
+
+    override func trashItem(
+        at _: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        throw stubbedWriteFailure(Self.message)
+    }
+}
+
+/// Refuses the Trash *and* reports every removal as failed after performing it — standing in
+/// for a rollback whose target is already gone by the time the error comes back.
+final class TrashRefusingLosingRemovalsFileManager: FileManager, @unchecked Sendable {
+    override func trashItem(
+        at _: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        throw stubbedWriteFailure(TrashRefusingFileManager.message)
+    }
+
+    override func removeItem(at url: URL) throws {
+        try super.removeItem(at: url)
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileNoSuchFileError,
+            userInfo: [NSLocalizedDescriptionKey: "The file doesn’t exist."]
+        )
+    }
+}
+
+/// Deletes the item outright and *then* fails — standing in for the race where something else
+/// removes the bundle between the store's existence check and its Trash call.
+final class TrashVanishingFileManager: FileManager, @unchecked Sendable {
+    override func trashItem(
+        at url: URL,
+        resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
+    ) throws {
+        try? removeItem(at: url)
+        throw NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileNoSuchFileError,
+            userInfo: [NSLocalizedDescriptionKey: "The file doesn’t exist."]
+        )
+    }
 }

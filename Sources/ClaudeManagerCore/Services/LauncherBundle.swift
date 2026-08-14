@@ -1,3 +1,5 @@
+import CryptoKit
+import Darwin
 import Foundation
 
 /// Creates, reads, and removes the thin launcher `.app` bundles. The bundle's
@@ -52,27 +54,61 @@ public struct LauncherBundle {
         }
     }
 
+    /// What a scan of an install directory found, and whether that is the whole story.
+    public struct Scan: Equatable, Sendable {
+        public let launchers: [Discovered]
+        /// Whether the directory could be **listed**.
+        ///
+        /// **An incomplete scan must never be read as "nobody claims this profile
+        /// directory".** That question decides whether a user-data directory — an Anthropic
+        /// login and a whole chat history — is deleted, and `removeItem` is not a Trash move.
+        /// A folder that was renamed, unmounted, or had its permissions changed answers it
+        /// exactly as an empty one does.
+        ///
+        /// Deliberately **not** false for a single unreadable bundle inside a folder that
+        /// listed fine. The install directory is the real Claude.app's own — normally
+        /// `/Applications` — so it is full of other people's apps, and one of those being
+        /// unreadable (a dangling cask symlink, an app installed by another account, an evicted
+        /// cloud placeholder) is ordinary. Counting that as "the scan may be missing a
+        /// launcher" switches off profile-data deletion, Doctor's orphan sweep and the restart
+        /// nudge for *every* profile, indefinitely, over something the user often cannot fix —
+        /// and the purge would then strand each profile's data after its launcher was already
+        /// in the Trash. The narrow risk it would buy — one of *our* launchers being both a
+        /// co-owner of the directory and unreadable — is tracked separately.
+        public let isComplete: Bool
+
+        public init(launchers: [Discovered], listed: Bool = true) {
+            self.launchers = launchers
+            isComplete = listed
+        }
+    }
+
     // MARK: - Build
 
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
-    /// at the same path — callers enforce the force/running policy first. Returns whether
-    /// the badge icon actually changed vs. what was installed at this path, so a caller
-    /// can skip the screen-flashing Dock refresh when it didn't.
+    /// at the same path — callers enforce the force/running policy first.
     @discardableResult
-    public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws -> Bool {
+    public func build(
+        profile: Profile, realBinaryPath: String, icnsData: Data
+    ) throws -> BuildResult {
         let appURL = profile.appURL
+        let iconFileName = Self.iconFileName(for: icnsData)
 
         // Whether the badge icon changes vs. what's already installed here. A rebuild that
-        // leaves the icon byte-identical (a wrapper-format bump, a script fix) needs no
-        // Dock refresh at all; only a real icon change does. A brand-new path has no prior
-        // icon and counts as changed — callers pair this with "was a bundle already here"
-        // to decide whether a pinned tile could be stale. Compared against the freshly
+        // leaves the icon untouched (a wrapper-format bump, a script fix) needs no Dock
+        // refresh at all; only a real icon change does. A brand-new path has no prior icon
+        // and counts as changed — callers pair this with "was a bundle already here" to
+        // decide whether a pinned tile could be stale. Compared against the freshly
         // rendered `icnsData`, so a non-deterministic renderer degrades gracefully: the
         // worst case is a redundant refresh hint, never a spurious silent flash.
-        let previousIcon = try? Data(
-            contentsOf: appURL.appendingPathComponent("Contents/Resources/Badge.icns")
-        )
-        let iconChanged = previousIcon != icnsData
+        let iconChanged = installedIconDiffers(at: appURL, name: iconFileName, data: icnsData)
+
+        // A launcher the user put out of sight (`chflags hidden`, or Finder) stays out of
+        // sight across a rebuild. `scan` keeps such bundles deliberately — a hidden launcher
+        // still runs and still claims its user-data directory — so `rebuildAll` reaches them,
+        // and the swap below writes a fresh directory that carries none of the old one's
+        // attributes. Read before the swap, restored after it.
+        let wasHidden = HiddenFlag.isSet(at: appURL)
 
         let parent = appURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -90,8 +126,8 @@ public struct LauncherBundle {
         try fileManager.createDirectory(at: macOS, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
 
-        // Badge icon.
-        try icnsData.write(to: resources.appendingPathComponent("Badge.icns"))
+        // Badge icon, under its content-addressed name.
+        try icnsData.write(to: resources.appendingPathComponent(iconFileName))
 
         // Launcher script (executable).
         let script = LauncherScript.render(
@@ -112,7 +148,8 @@ public struct LauncherBundle {
         try writeInfoPlist(
             at: contents.appendingPathComponent("Info.plist"),
             profile: profile,
-            marker: marker
+            marker: marker,
+            iconFileName: iconFileName
         )
 
         // Ad-hoc sign LAST — macOS refuses to execute a launcher that has no valid
@@ -137,15 +174,80 @@ public struct LauncherBundle {
             )
         }
 
+        var spellingCertain = true
         if fileManager.fileExists(atPath: appURL.path) {
-            _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+            let alignment = try alignInstalledSpelling(with: appURL)
+            if case .unknown = alignment { spellingCertain = false }
+            let spelledBefore: URL? = if case let .renamed(from) = alignment {
+                from
+            } else { nil }
+            // Which file the rename left here, so the undo below can tell it apart from the one
+            // the swap would install. Read after the rename, before the swap.
+            let renamedBundle = PathUtils.fileIdentity(appURL.path)
+            do {
+                _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+            } catch {
+                // Put the name back. The rename above is the one part of a failed build that
+                // does not undo itself: the launcher would be left under the *new* spelling
+                // carrying the *old* contents, so the edit is reported as failed while the
+                // bundle on disk answers to a name its own marker does not know — the split
+                // identity this whole path exists to close, arrived at from the other side.
+                //
+                // **Only when the file here is still the one that was renamed.** A swap that
+                // throws having already put the staged bundle in place would otherwise have its
+                // new marker and settings moved under the old name — the same split identity,
+                // manufactured by the undo itself. Identity, not the path, is what tells them
+                // apart, since both answer to it. An identity that cannot be read is not a
+                // match: nothing destructive happens on a guess.
+                //
+                // A restore that fails is **said out loud**, not swallowed. The failures that
+                // reach here are correlated — a directory that lost write permission, a volume
+                // that filled or went away fails both the swap and the move back — so the one
+                // case the restore exists for is the one where it is most likely to fail too,
+                // and reporting only "the edit failed" would leave a launcher renamed under a
+                // report that nothing changed.
+                let stillTheRenamedBundle = renamedBundle != nil
+                    && PathUtils.fileIdentity(appURL.path) == renamedBundle
+                if let spelledBefore, stillTheRenamedBundle {
+                    do {
+                        try fileManager.moveItem(at: appURL, to: spelledBefore)
+                    } catch let restoreError {
+                        throw ClaudeManagerError.launcherLeftUnderNewName(
+                            path: appURL.path,
+                            previousPath: spelledBefore.path,
+                            reason: Sentences.terminated(Sentences.reason(error))
+                                + " " + Sentences.reason(restoreError)
+                        )
+                    }
+                }
+                throw error
+            }
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
-        return iconChanged
+        // Below the signing call, and allowed to be: `HiddenFlag` writes the inode's own flag
+        // bits, which the seal does not span — its doc says why the obvious API is not usable
+        // here, and that the two are not interchangeable.
+        if wasHidden { HiddenFlag.set(at: appURL) }
+        // Where the bundle ended up, established here rather than guessed at by each caller —
+        // and `spellingCertain` covers **both** ways the answer can be a guess: the alignment
+        // step not establishing the installed name, and this read failing on its own. Either
+        // way `appPath` is the requested spelling, which must not be reported under a word that
+        // promises it came from the volume.
+        let stored = PathUtils.spellingOnDisk(appURL.path)
+        return BuildResult(
+            iconChanged: iconChanged,
+            appPath: stored ?? appURL.path,
+            spellingCertain: spellingCertain && stored != nil
+        )
     }
 
-    func writeInfoPlist(at url: URL, profile: Profile, marker: LauncherMarker) throws {
+    func writeInfoPlist(
+        at url: URL,
+        profile: Profile,
+        marker: LauncherMarker,
+        iconFileName: String
+    ) throws {
         // NB: deliberately no `CFBundleIconName` — when present macOS reads the icon
         // from Assets.car and ignores our `.icns`.
         //
@@ -162,7 +264,7 @@ public struct LauncherBundle {
             "CFBundleIdentifier": profile.bundleID,
             "CFBundleName": profile.displayName,
             "CFBundleDisplayName": profile.displayName,
-            "CFBundleIconFile": "Badge.icns",
+            "CFBundleIconFile": iconFileName,
             "CFBundlePackageType": "APPL",
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleShortVersionString": "1.0",
@@ -179,14 +281,83 @@ public struct LauncherBundle {
 
     /// Parse a bundle's marker, or `nil` if it is not one of ours.
     public func readMarker(at appURL: URL) -> Discovered? {
-        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-        guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
-              let markerDict = info[CoreConstants.markerKey] as? [String: Any],
+        guard case let .launcher(discovered) = read(at: appURL) else { return nil }
+        return discovered
+    }
+
+    /// What one bundle turned out to be, decided by a **single** read of its `Info.plist`.
+    ///
+    /// The three outcomes have to come from one read, because the two that mean "not a launcher
+    /// of ours" are treated very differently: `foreign` lets a scan call itself complete, and a
+    /// complete scan is what licenses deleting a user-data directory. Re-probing after the fact
+    /// lets the two answers disagree — permissions or a mount changing in between — and the
+    /// disagreement always lands the same way, with the launcher missing from the list while
+    /// the scan says it saw everything.
+    ///
+    /// `unreadable` therefore covers every "cannot establish": an unreachable bundle or plist,
+    /// bytes that do not parse, and a marker whose fields are missing or of the wrong type.
+    /// Only a plist that parsed and simply carries no marker is `foreign` — an ordinary
+    /// third-party app sitting in the install directory.
+    func read(at appURL: URL) -> BundleRead {
+        // `lstat`, not `fileExists`, because the two failures have to be told apart: an entry
+        // that is *gone* is harmless, while one that cannot be statted — the install directory
+        // losing traversal, a volume going away — is unknown, and calling it foreign is what
+        // licenses deleting the data it may still claim.
+        var info = stat()
+        guard lstat(appURL.path, &info) == 0 else {
+            return errno == ENOENT ? .foreign : .unreadable
+        }
+        if info.st_mode & S_IFMT == S_IFLNK {
+            // A link *to* a launcher is a launcher, so follow it. A link that leads nowhere is
+            // **not** treated as a plain non-bundle: an unmounted volume answers `ENOENT`
+            // exactly as a dangling link does, and that is the case this whole signal exists
+            // for — a launcher on a detached disk still claims its user-data directory.
+            guard stat(appURL.path, &info) == 0 else { return .unreadable }
+        }
+        // Not a directory at all — a Finder alias, a stray file. Not a bundle we failed to
+        // read; not a bundle.
+        guard info.st_mode & S_IFMT == S_IFDIR else { return .foreign }
+
+        // Everything below is decided by *reading the plist at its known path*, never by
+        // enumerating a directory to see whether it is there. A bundle whose directories grant
+        // traversal but not listing (mode `0311`) reads perfectly well, and requiring a listing
+        // would hide a working launcher from the app entirely while marking every scan
+        // incomplete — including the checks that then refuse to delete any profile data.
+        let infoPath = appURL.appendingPathComponent("Contents/Info.plist").path
+        guard let data = fileManager.contents(atPath: infoPath) else {
+            // Absent is an ordinary non-bundle; unreachable is an answer we do not have.
+            var probe = stat()
+            return lstat(infoPath, &probe) != 0 && errno == ENOENT ? .foreign : .unreadable
+        }
+        guard let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let plist = parsed as? [String: Any]
+        else { return .unreadable }
+        // A missing key is an ordinary third-party app. A key that is *present* but not a
+        // dictionary is a launcher of ours with damaged metadata — unreadable, so a purge does
+        // not take it for a stranger and delete the data it still claims.
+        guard let markerValue = plist[CoreConstants.markerKey] else { return .foreign }
+        guard let markerDict = markerValue as? [String: Any],
               let marker = LauncherMarker(dictionary: markerDict)
-        else { return nil }
-        let bundleID = (info["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
-        let displayName = (info["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
-        return Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        else { return .unreadable }
+        let bundleID = (plist["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
+        let displayName = (plist["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
+        return .launcher(
+            Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        )
+    }
+
+    /// One entry's verdict — see `read(at:)`.
+    enum BundleRead {
+        case launcher(Discovered)
+        /// Read successfully, and it is not one of ours.
+        case foreign
+        /// Could not be established either way — and, today, treated exactly as `foreign` by
+        /// the only caller: `readMarker` maps both to `nil`, and `Scan.isComplete` reports the
+        /// *listing* alone. Kept as a distinct verdict because the difference is real and the
+        /// classifier is where it can be drawn; wiring it into ownership without switching off
+        /// half the app over one unreadable stranger in `/Applications` is a separate problem
+        /// (see `Scan.isComplete`).
+        case unreadable
     }
 
     public func isManagedLauncher(at appURL: URL) -> Bool {
@@ -194,16 +365,44 @@ public struct LauncherBundle {
     }
 
     /// All managed launchers directly inside `installDirectory`, sorted by name.
-    public func scan(installDirectory: URL) -> [Discovered] {
-        let entries = (try? fileManager.contentsOfDirectory(
-            at: installDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return entries
+    ///
+    /// Each is reported under **`installDirectory`'s own spelling** of the path, rebuilt from
+    /// the directory we were handed rather than taken from what `contentsOfDirectory` returns:
+    /// that call resolves symlinks, so scanning `/tmp/Apps` hands back `/private/tmp/Apps/…`
+    /// and a launcher acquires a second spelling nothing else in the app uses.
+    ///
+    /// That is not cosmetic. `Profile.id` **is** `appPath`, and every other path is derived
+    /// from `ProfileStoreConfiguration.installDirectory` — so a launcher reached through a
+    /// symlinked install directory would carry one identity from `scan` and another from
+    /// `draft`, the same bundle listed under two ids. `update` re-derives the bundle path the
+    /// second way and compares it against the profile's, so an ordinary edit reads as a rename
+    /// onto a path that already exists — its own bundle — and is refused outright; and
+    /// `liveRewrite` matches the scanned launcher against the profile's own path, so the
+    /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
+    /// two sides equal *by construction*, rather than by both happening to normalize the same
+    /// way afterwards.
+    /// Enumerated through `listedContents(ofDirectoryAt:)`, whose doc comment owns why: one
+    /// spelling per launcher, and a symlinked install directory that does not read as empty.
+    /// The flagged-hidden filter is deliberately *not* asked for — a hidden launcher still runs
+    /// and still claims its user-data directory.
+    ///
+    /// The result carries whether it is **complete**, because callers ask two different
+    /// questions of it. "Show me the launchers" is happy with whatever was found; "does anyone
+    /// else use this profile directory" is not, and answering that from a partial list deletes
+    /// a login. See `Scan.isComplete`.
+    public func scan(installDirectory: URL) -> Scan {
+        guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
+            return Scan(launchers: [], listed: false)
+        }
+        let launchers = entries
             .filter { $0.pathExtension == "app" }
             .compactMap { readMarker(at: $0) }
-            .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
+        return Scan(
+            launchers: launchers
+                .sorted {
+                    $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending
+                }
+        )
     }
 
     // MARK: - Remove

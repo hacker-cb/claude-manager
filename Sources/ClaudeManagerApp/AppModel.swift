@@ -3,18 +3,31 @@ import ClaudeManagerCore
 import SwiftUI
 import UserNotifications
 
-/// A user-facing error wrapped for `.alert(item:)`.
+/// A user-facing message, presented by `RootView` through `.alert(_:isPresented:presenting:)`.
+///
+/// Carries its own `title` because this is the app's only alert channel and not everything
+/// routed through it is a failure — a removal that kept shared profile data, or a batch
+/// rebuild reporting what it skipped, are outcomes the user has to act on, and "Something
+/// went wrong" over them is simply untrue. The heading is a plain argument to that modifier
+/// rather than something the `presenting:` closure supplies, which is why `RootView` holds it
+/// in view state instead of reading it back off this published value.
 struct AppError: Identifiable {
+    /// The heading for anything that genuinely is a failure — the common case, so it stays
+    /// the default rather than being spelled at every call site.
+    static let defaultTitle = "Something went wrong"
+
     let id = UUID()
+    let title: String
     let message: String
 
-    init(message: String) {
+    init(title: String = AppError.defaultTitle, message: String) {
+        self.title = title
         self.message = message
     }
 
     /// Prefer a domain error's `errorDescription` over the opaque `localizedDescription`.
     init(_ error: Error) {
-        message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        self.init(message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
     }
 }
 
@@ -54,12 +67,49 @@ final class AppModel: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var currentError: AppError?
 
-    /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile may keep
-    /// showing the old icon until the launcher is next opened. Drives an opt-in "Refresh
-    /// Dock now" banner — a Dock restart flashes the whole screen, so it is never done
-    /// silently. Stays set until the user refreshes or dismisses it (the tiles self-heal
-    /// on next open regardless).
+    /// Set after a rebuild/edit changed a launcher's icon: a pinned Dock tile keeps showing
+    /// the old icon until the Dock is refreshed. Drives an opt-in "Refresh Dock now"
+    /// banner — a Dock restart flashes the whole screen, so it is never done silently.
+    /// Stays set until the user refreshes or dismisses it.
     @Published private(set) var dockRefreshPending = false
+
+    /// Flip the Dock-refresh banner (`private(set)`, so the extensions drive it via this —
+    /// the same shape `setApplyingStagedUpdate` uses).
+    func setDockRefreshPending(_ value: Bool) {
+        dockRefreshPending = value
+    }
+
+    /// Instances that were live when their launcher was rewritten, as
+    /// `Profile.id -> pid observed at the write`. A running Claude keeps the name and Dock
+    /// tile it launched with, so the edit only reaches it on a restart — this is what drives
+    /// the per-profile "Restart to apply" nudge.
+    ///
+    /// Keyed on the launcher's identity (`Profile.id`, its bundle path), not on the
+    /// user-data dir: two launchers are allowed to share one profile directory, and keying
+    /// on the directory would raise the nudge on the untouched sibling as well — where
+    /// "Restart" would then relaunch the wrong bundle and clear the real one's nudge. A
+    /// rename survives this because `LiveRewrite` carries the profile *after* the edit, so
+    /// the key is the path the launcher now has and the one the next scan reports.
+    ///
+    /// Two known limitations, both erring toward a nudge too many rather than a stale window
+    /// nobody is told about, and both survivable because the banner is dismissible:
+    ///
+    /// - In memory only, so quitting Claude Manager forgets it while the rewritten instance
+    ///   stays open.
+    /// - The evidence is "the bundle changed since the last write", not "the bundle differs
+    ///   from what this window launched with", so editing a live profile blue → red → blue
+    ///   keeps the nudge even though the running window already shows blue.
+    ///
+    /// Both want the same thing to go away properly: the launch-time presentation of the
+    /// running instance, which nothing here records. Filed as a follow-up.
+    ///
+    @Published private(set) var pendingRestart: [String: Int32] = [:]
+
+    /// Replace the restart-nudge map (`private(set)`, so `AppModel+RestartNudge` drives it
+    /// via this rather than every write in the module being able to reach it).
+    func setPendingRestart(_ value: [String: Int32]) {
+        pendingRestart = value
+    }
 
     /// Number of in-flight operations; `isBusy` tracks it. A shared Bool would let
     /// a fast operation clear the spinner while a slow one (e.g. a ~10s stop) runs.
@@ -314,6 +364,7 @@ final class AppModel: ObservableObject {
         guard let snapshot = await perform({ store in store.snapshot(measuringSizes: sizes) }) else { return }
         profiles = snapshot.profiles
         primaryProfile = snapshot.primaryProfile
+        prunePendingRestarts()
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
         // there are none — the default profile can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
@@ -347,16 +398,12 @@ final class AppModel: ObservableObject {
     }
 
     /// Apply edits. Throws for the same reason as `addProfile`.
-    func updateProfile(original: Profile, to updated: Profile) async throws {
+    func updateProfile(_ profile: Profile, applying edits: ProfileEdits) async throws {
         let result = try await performThrowing { store in
-            try store.update(original: original, to: updated)
+            try store.update(profile, applying: edits)
         }
         if result.dockRefreshPending { dockRefreshPending = true }
-        await refresh()
-    }
-
-    func removeProfile(_ profile: Profile, purgeProfile: Bool) async {
-        _ = await perform { store in try store.remove(profile, purgeProfile: purgeProfile) }
+        noteLiveRewrites(result.liveRewrite.map { [$0] } ?? [])
         await refresh()
     }
 
@@ -381,74 +428,12 @@ final class AppModel: ObservableObject {
     func stop(_ profile: Profile, force: Bool) async {
         let outcome = await perform { store in await store.stop(profile, force: force) }
         if case let .stillRunning(pid)? = outcome {
-            currentError =
-                AppError(message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop.")
-        }
-        await refresh()
-    }
-
-    /// Rebuild one launcher from the current wrapper format (script + Info.plist +
-    /// icon). Used both to clear a stale launcher and to force a fresh regenerate.
-    func rebuild(_ profile: Profile) async {
-        let pending = await perform { store in try store.rebuild(profile) }
-        if pending == true { dockRefreshPending = true }
-        await refresh()
-    }
-
-    /// Rebuild every launcher. Running ones are skipped and per-launcher failures are
-    /// collected by the core (the batch never aborts); surface either as a non-fatal
-    /// notice via the same channel `stop` uses for its running warning.
-    func rebuildAll() async {
-        guard let result = await perform({ store in try store.rebuildAll() }) else { return }
-        if result.dockRefreshPending { dockRefreshPending = true }
-        if let notice = rebuildAllNotice(for: result) {
-            currentError = AppError(message: notice)
-        }
-        await refresh()
-    }
-
-    /// The opt-in "Refresh Dock now": restart the Dock so pinned tiles repaint with the
-    /// new icon. Flashes the screen once, by explicit user request, then clears the banner.
-    func refreshDock() async {
-        // Restarting the Dock (`killall Dock`) has no dependency on Claude.app, so run it
-        // directly rather than through `perform` — which requires a located `realClaude` and
-        // would otherwise surface an unrelated "Claude not found" error while never
-        // restarting the Dock. Off-main because it forks a subprocess. Always runs while the
-        // banner is up, so the banner clears unconditionally afterwards.
-        await Task.detached { IconCache(runner: SystemCommandRunner()).restartDock() }.value
-        dockRefreshPending = false
-    }
-
-    /// Dismiss the Dock-refresh banner without restarting the Dock — each launcher's tile
-    /// self-heals the next time it is opened.
-    func dismissDockRefresh() {
-        dockRefreshPending = false
-    }
-
-    /// A non-fatal summary when a batch rebuild didn't touch every launcher, or `nil`
-    /// when all were rebuilt cleanly.
-    private func rebuildAllNotice(for result: RebuildAllResult) -> String? {
-        var parts: [String] = []
-        if !result.skippedRunning.isEmpty {
-            let c = result.skippedRunning.count
-            let names = result.skippedRunning.map(\.displayName).joined(separator: ", ")
-            parts.append(
-                "Skipped \(c) running launcher\(c == 1 ? "" : "s") (\(names)) — stop them, then rebuild."
+            currentError = AppError(
+                title: "Profile is still running",
+                message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop."
             )
         }
-        if !result.failed.isEmpty {
-            let c = result.failed.count
-            let names = result.failed.map(\.profile.displayName).joined(separator: ", ")
-            parts.append("Failed to rebuild \(c) launcher\(c == 1 ? "" : "s"): \(names).")
-            // Carry the reason through, not just the names: a signing failure leaves the
-            // launcher unable to start, and without this the user has nothing to act on.
-            // Distinct reasons only — a shared cause (the usual case) prints once.
-            let reasons = Set(result.failed.map(\.reason)).sorted()
-            parts.append(reasons.joined(separator: " "))
-        }
-        guard !parts.isEmpty else { return nil }
-        let n = result.rebuilt.count
-        return "Rebuilt \(n) launcher\(n == 1 ? "" : "s"). " + parts.joined(separator: " ")
+        await refresh()
     }
 
     private struct LocateResult {

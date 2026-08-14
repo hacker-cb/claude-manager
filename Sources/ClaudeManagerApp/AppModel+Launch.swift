@@ -41,6 +41,7 @@ extension AppModel {
             _ = await perform { store in try store.open(profile) }
         case let .stillRunning(pid)?:
             currentError = AppError(
+                title: "Profile is still running",
                 message: "\(profile.displayName) is still running (pid \(pid)). Try Force Stop, then Open."
             )
         case nil:

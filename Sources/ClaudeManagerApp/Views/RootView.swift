@@ -15,6 +15,13 @@ struct RootView: View {
     /// Measured height of the app-global banner strip, used to reserve matching top space in the
     /// sidebar's `List` (see `body`). Zero when no banner is showing.
     @State private var bannerHeight: CGFloat = 0
+    /// The alert heading, held here rather than read off `model.currentError` at render time.
+    /// The message survives dismissal because `presenting:` hands the closure a captured
+    /// payload; the title is an ordinary argument and has no such protection, so reading the
+    /// published value directly would drop it to the default the moment OK clears it — leaving
+    /// a "your data was kept" sentence under "Something went wrong" for the closing frames,
+    /// which is the exact pairing `AppError.title` exists to prevent.
+    @State private var alertTitle = AppError.defaultTitle
 
     var body: some View {
         // App-global banners (missing-Claude, staged-update) are a full-width strip at the top of
@@ -63,14 +70,24 @@ struct RootView: View {
                 .environmentObject(launchAtLogin)
         }
         .modifier(DeepLinkResidencyNudge())
+        // The heading comes from the message, not from this call site: the same channel
+        // carries outcomes that are not failures (see `AppError`).
         .alert(
-            "Something went wrong",
+            alertTitle,
             isPresented: errorBinding,
             presenting: model.currentError
         ) { _ in
             Button("OK", role: .cancel) {}
         } message: { error in
             Text(error.message)
+        }
+        // Latch the heading while there is one to latch. Keyed on `id`, which is fresh per
+        // message, so two alerts carrying the same text still re-arm it. `initial: true`
+        // because a menu-bar action (Stop, Restart, Apply update) can set the message with no
+        // window open at all — opening one then finds `currentError` already non-nil, and a
+        // change-only observer never fires for it.
+        .onChange(of: model.currentError?.id, initial: true) {
+            if let title = model.currentError?.title { alertTitle = title }
         }
         .confirmationDialog(
             model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all profiles?" }
@@ -113,13 +130,15 @@ struct RootView: View {
     }
 
     /// Shown after a rebuild/edit changed a launcher's icon. A pinned Dock tile keeps the
-    /// old icon until the launcher is next opened; the button forces it now at the cost of
-    /// one screen flash (restarting the Dock is the only reliable way — there is no
-    /// documented per-tile refresh). Dismiss leaves the tiles to self-heal on next open.
+    /// old icon until the Dock is refreshed; the button does that now at the cost of one
+    /// screen flash (restarting the Dock, and the icon-rendering agent behind it, is the
+    /// only reliable way — there is no documented per-tile refresh). Dismiss leaves the
+    /// tiles on their old icon, which is what the wording has to say: promising they heal
+    /// on next open is how a user ends up staring at an icon that never changes.
     private var dockRefreshBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(.blue)
-            Text("Launcher icons updated — their Dock tiles refresh the next time you open them.")
+            Text("Launcher icons updated — pinned Dock tiles keep the old icon until the Dock is refreshed.")
                 .font(.callout)
             Spacer()
             Button("Refresh Dock now") { Task { await model.refreshDock() } }
@@ -129,7 +148,7 @@ struct RootView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Dismiss")
-            .help("Dismiss — the icons still update the next time each launcher opens")
+            .help("Dismiss — pinned tiles keep the old icon until you refresh the Dock")
         }
         .padding(8)
         .background(.blue.opacity(0.12))

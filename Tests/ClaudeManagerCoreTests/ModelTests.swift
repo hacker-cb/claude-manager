@@ -195,11 +195,28 @@ struct ManagedProfileTests {
     func theSigningFloorNeverRisesAboveTheCurrentWrapper() {
         // What makes `attentions`' health precedence load-bearing: `isUnrunnable` must stay a
         // *subset* of `needsRebuild`, so a launcher macOS refuses to execute always also counts as
-        // stale and the `else if` can never be reached first. Asserted as the invariant rather
-        // than through a stale-but-runnable `ManagedProfile`, because while the two constants are
-        // equal no such version exists to construct — and a test that quietly cannot run is worse
-        // than one that states what it is really pinning.
+        // stale and the `else if` can never be reached first.
         #expect(CoreConstants.minimumRunnableWrapperVersion <= CoreConstants.currentWrapperVersion)
+    }
+
+    @Test
+    func aStaleButRunnableLauncherIsNudged() throws {
+        // The state between the two constants: signed (so macOS runs it) but behind the current
+        // format. It first became constructible when the wrapper went to 4 over a signing floor of
+        // 3 — the content-addressed badge bump — and it is the state every existing launcher lands
+        // in on upgrade, so the soft nudge has to be the one it gets. The precedence in
+        // `attentions` is only observable here: while the two constants were equal, no version sat
+        // between them and the `else if` could not be reached.
+        try #require(
+            CoreConstants.minimumRunnableWrapperVersion < CoreConstants.currentWrapperVersion,
+            "no wrapper version sits between the signing floor and the current format"
+        )
+        let stale = ManagedProfile(
+            profile: makeProfile(), pid: nil, wrapperVersion: CoreConstants.currentWrapperVersion - 1
+        )
+        #expect(stale.needsRebuild)
+        #expect(!stale.isUnrunnable)
+        #expect(stale.attentions == [.rebuildAvailable])
     }
 }
 
@@ -219,5 +236,123 @@ struct DiagnosticTests {
         let a = Diagnostic(severity: .ok, title: "t", detail: "d")
         let b = Diagnostic(severity: .ok, title: "t", detail: "d")
         #expect(a.id == b.id)
+    }
+}
+
+struct ProfileDataOutcomeTests {
+    /// The three silent outcomes. Each one *is* what the user asked for, so an alert here
+    /// would be a notification that the button worked.
+    @Test
+    func outcomesThatMatchTheRequestSayNothing() {
+        for outcome: ProfileDataOutcome in [.purged, .alreadyGone, .notRequested] {
+            #expect(outcome.notice(forRemovalOf: "Work") == nil)
+        }
+    }
+
+    /// An empty holder list would produce "…: still point at the same folder", naming nobody
+    /// and offering no remedy. It cannot arise from `remove` (the outcome is only built from a
+    /// non-empty filter), but the sentence must not depend on that staying true.
+    @Test
+    func sharedWithNobodySaysNothing() {
+        #expect(ProfileDataOutcome.keptSharedWith(launchers: []).notice(forRemovalOf: "Work") == nil)
+    }
+
+    @Test
+    func oneHolderIsNamedInTheSingular() throws {
+        let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.title == "Profile data was kept")
+        #expect(notice.message.contains("would have deleted the data for Personal too"))
+        #expect(notice.message.contains("Remove that launcher"))
+    }
+
+    /// Two and three holders differ only in the joining, and both have to read as English —
+    /// the list is dropped straight into a sentence. Never as a possessive: "Personal and
+    /// Test's" reads as belonging to Test alone.
+    @Test
+    func severalHoldersAreJoinedAndPluralized() throws {
+        let two = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test"])
+        let twoNotice = try #require(two.notice(forRemovalOf: "Work"))
+        #expect(twoNotice.message.contains("the data for Personal and Test too"))
+        #expect(twoNotice.message.contains("Remove those launchers"))
+        #expect(!twoNotice.message.contains("Test's"))
+
+        let three = ProfileDataOutcome.keptSharedWith(launchers: ["Personal", "Test", "Spare"])
+        let threeNotice = try #require(three.notice(forRemovalOf: "Work"))
+        #expect(threeNotice.message.contains("the data for Personal, Test and Spare too"))
+    }
+
+    /// The remedy has to name the *destructive* button. The removal dialog leads with "Move
+    /// Launcher to Trash (keep login)", and a user who follows a bare "remove it too" into
+    /// that one ends up with no launcher left through which the data could ever be deleted.
+    @Test
+    func theRemedyNamesTheButtonThatActuallyDeletes() throws {
+        let outcome = ProfileDataOutcome.keptSharedWith(launchers: ["Personal"])
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.message.contains("“Move to Trash and Delete Profile Data”"))
+    }
+
+    /// A failed purge is not a refusal: the launcher is gone and the data is not, so the
+    /// notice has to say both, and carry the reason.
+    @Test
+    func aFailedPurgeReportsWhereThingsStand() throws {
+        let outcome = ProfileDataOutcome.purgeFailed(reason: "Permission denied.")
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.title == "Profile data wasn't deleted")
+        #expect(notice.message.contains("Work's launcher is in the Trash"))
+        #expect(notice.message.contains("Permission denied."))
+        #expect(notice.message.contains("still on disk"))
+    }
+
+    /// The reason comes from Foundation or from an interpolated error, so whether it ends in a
+    /// full stop is not ours to know — and a sentence follows it either way.
+    @Test
+    func aFailedPurgeDoesNotRunTheReasonIntoTheNextSentence() throws {
+        let outcome = ProfileDataOutcome.purgeFailed(reason: "Permission denied")
+        let notice = try #require(outcome.notice(forRemovalOf: "Work"))
+        #expect(notice.message.contains("Permission denied. The login"))
+    }
+}
+
+struct ProfileEditsTests {
+    /// Opening the editor on a profile submits its current values unchanged — the shape a
+    /// "Save" on an untouched form takes, and what every caller starts from.
+    @Test
+    func initialisingFromAProfileCarriesItsEditableFields() {
+        let profile = Profile(
+            name: "work",
+            displayName: "Claude WORK",
+            label: "W",
+            color: .named("blue"),
+            profilePath: "/tmp/work",
+            bundleID: "com.example.work",
+            appPath: "/Applications/Claude WORK.app"
+        )
+        let edits = ProfileEdits(profile)
+        #expect(edits.displayName == profile.displayName)
+        #expect(edits.label == profile.label)
+        #expect(edits.color == profile.color)
+        #expect(edits.bundleID == profile.bundleID)
+    }
+}
+
+struct SentencesTests {
+    @Test
+    func listReadsAsEnglish() {
+        #expect(Sentences.list([]).isEmpty)
+        #expect(Sentences.list(["A"]) == "A")
+        #expect(Sentences.list(["A", "B"]) == "A and B")
+        #expect(Sentences.list(["A", "B", "C"]) == "A, B and C")
+    }
+
+    @Test
+    func terminatedAddsAFullStopOnlyWhereOneIsMissing() {
+        #expect(Sentences.terminated("Denied") == "Denied.")
+        #expect(Sentences.terminated("Denied.") == "Denied.")
+        #expect(Sentences.terminated("Denied!") == "Denied!")
+        #expect(Sentences.terminated("Denied?") == "Denied?")
+        // Trailing whitespace would otherwise put the stop after the gap.
+        #expect(Sentences.terminated("  Denied \n") == "Denied.")
+        #expect(Sentences.terminated("").isEmpty)
     }
 }

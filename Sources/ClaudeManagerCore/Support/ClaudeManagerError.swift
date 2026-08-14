@@ -9,6 +9,34 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     case launcherNotFound(name: String)
     case launcherAlreadyExists(path: String)
     case profileRunning(name: String, pid: Int32)
+    /// A purge was asked for over a directory that *contains* another launcher's user-data
+    /// dir. Refused before anything is touched — see `remove`.
+    case profileDataHoldsAnother(name: String, others: [String])
+    /// An operation needed to know what is installed and the launcher folder could not be
+    /// listed. Reported rather than treated as "nothing is installed", which would be a
+    /// successful-looking no-op — see `rebuildAll`.
+    case launcherFolderUnreadable(path: String)
+    /// A purge was asked for over a directory holding a **symlink** other profiles reached
+    /// their own data through. Their data survives the unlink; their recorded path does not.
+    /// Refused before anything is touched — see `remove`.
+    case profileDataStrandsAnother(name: String, others: [String])
+    /// A forced create would have rebuilt an existing launcher onto a *different* user-data
+    /// directory, abandoning the one it has — see `add`.
+    case launcherHoldsOtherProfileData(appPath: String, installed: String, requested: String)
+    /// A write was aimed at a launcher describing a different profile than the one supplied —
+    /// see `profileMatchingItsLauncher`.
+    case launcherBelongsToAnotherProfile(appPath: String, installedName: String, installedPath: String)
+    /// A rename could not retire the old bundle, and the edit was rolled back — see `update`.
+    case renameUndone(path: String, reason: String)
+    /// A rename could not retire the old bundle *and* could not roll itself back, so both
+    /// launchers are on disk pointing at one profile — see `update`. Distinct from
+    /// `renameUndone` because the state, and therefore the remedy, is the opposite one.
+    case renameLeftBothLaunchers(oldPath: String, newPath: String, reason: String)
+    /// A build renamed the installed launcher to the requested spelling, failed at the swap,
+    /// and could not put the name back — so the bundle answers to the new name while its
+    /// contents are still the old ones. Reported rather than swallowed: the edit did not land,
+    /// but something about the launcher did change, and only saying so lets the user fix it.
+    case launcherLeftUnderNewName(path: String, previousPath: String, reason: String)
     case invalidProfileName(String)
     case invalidDisplayName(String)
     case invalidBundleID(String)
@@ -33,9 +61,62 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .launcherNotFound(name):
             return "No launcher named \"\(name)\"."
         case let .launcherAlreadyExists(path):
-            return "A launcher already exists at \(path). Use force to rebuild it."
+            // "Force" only rebuilds one of *our* launchers, over its own profile data — say so
+            // rather than sending the user to an option that then refuses them.
+            return "Something already exists at \(PathUtils.abbreviatingHome(path)). If it is "
+                + "this profile's launcher, use force to rebuild it; otherwise remove it in "
+                + "Finder first."
         case let .profileRunning(name, pid):
             return "Profile \"\(name)\" is running (pid \(pid)). Stop it first."
+        case let .launcherFolderUnreadable(path):
+            return "The launcher folder \(PathUtils.abbreviatingHome(path)) could not be read, "
+                + "so there is no way to tell which launchers are installed. Nothing was "
+                + "changed. Check that the folder exists and is readable, then try again."
+        case let .launcherHoldsOtherProfileData(appPath, installed, requested):
+            return "\(PathUtils.abbreviatingHome(appPath)) already exists and uses "
+                + "\(PathUtils.abbreviatingHome(installed)) for its profile data. Rebuilding "
+                + "it with \(PathUtils.abbreviatingHome(requested)) would leave the login and "
+                + "chat history in the first folder behind, with no launcher opening them. "
+                + "Use that folder, or remove the existing launcher first."
+        case let .launcherBelongsToAnotherProfile(appPath, installedName, installedPath):
+            return "\(PathUtils.abbreviatingHome(appPath)) is the launcher for \"\(installedName)\", "
+                + "whose profile data is in \(PathUtils.abbreviatingHome(installedPath)). "
+                + "Refresh the profile list and try again."
+        case let .renameUndone(path, reason):
+            // No "delete it yourself" here: after the rollback that bundle is the profile's
+            // only launcher, so trashing it would remove the profile from the app entirely.
+            return "The launcher at \(PathUtils.abbreviatingHome(path)) could not be moved to "
+                + "the Trash: \(Sentences.terminated(reason)) The edit was undone — nothing "
+                + "changed. Try the rename again once that launcher can be moved."
+        case let .renameLeftBothLaunchers(oldPath, newPath, reason):
+            return "The launcher at \(PathUtils.abbreviatingHome(oldPath)) could not be moved "
+                + "to the Trash: \(Sentences.terminated(reason)) Undoing the edit failed too, "
+                + "so this profile now has two launchers — the one just named above, and "
+                + "\(PathUtils.abbreviatingHome(newPath)). Move the first to the Trash in "
+                + "Finder; until you do, both open this profile and either can start it."
+        case let .launcherLeftUnderNewName(path, previousPath, reason):
+            // Worded for a launcher rather than for an edit: `build` raises this, and a forced
+            // create drives `build` too — a user who pressed Create should not be told their
+            // edit failed.
+            return "The launcher was not rewritten: \(Sentences.terminated(reason)) It had "
+                + "already been renamed to \(PathUtils.abbreviatingHome(path)) by then and "
+                + "could not be renamed back, so it is still the launcher it was — same "
+                + "profile, same settings — under the new name. Rename it to "
+                + "\(PathUtils.abbreviatingHome(previousPath)) in Finder, or run the same "
+                + "operation again to bring the two into line."
+        case let .profileDataHoldsAnother(name, others):
+            let list = Sentences.list(others)
+            return "\"\(name)\"'s profile data folder contains the data for \(list), so "
+                + "deleting it would delete their login and chat history too. Remove \(list) "
+                + "first, or use “Move Launcher to Trash (keep login)” to remove only the "
+                + "launcher."
+        case let .profileDataStrandsAnother(name, others):
+            let list = Sentences.list(others)
+            return "\(list) reach their profile data through a shortcut inside \"\(name)\"'s "
+                + "profile data folder, so deleting that folder would leave them pointing at "
+                + "nothing — their login and chat history would survive, but Claude would open "
+                + "them signed out. Point \(list) straight at the real folder first, or use "
+                + "“Move Launcher to Trash (keep login)” to remove only the launcher."
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):
@@ -51,7 +132,12 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
         case let .installDirectoryNotWritable(path):
             return "Cannot write launchers to \(path). Check permissions or choose another location."
         case let .markerMissing(path):
-            return "\(path) is not a Claude Manager launcher (no marker in Info.plist)."
+            // Reached when a write was aimed at that path, so it needs a way forward: the app
+            // will not overwrite a bundle it does not own, and cannot repair one whose marker
+            // it cannot read.
+            return "\(PathUtils.abbreviatingHome(path)) is not a Claude Manager launcher (no "
+                + "marker in Info.plist), so it is left alone. Remove it in Finder if you want "
+                + "a launcher at that path."
         case let .codeSigningFailed(path, exitCode, message):
             // Not cosmetic: macOS refuses to execute a launcher without a valid
             // signature, so an unsigned bundle would look like it "hangs and never opens".

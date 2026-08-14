@@ -235,14 +235,15 @@ struct ProfileEditorView: View {
         defer { saving = false }
         do {
             if let original {
-                var updated = original
-                updated.displayName = displayName.isEmpty ? original.displayName : displayName
-                updated.label = effectiveLabel
-                updated.color = badge
-                updated.bundleID = bundleID.isEmpty ? original.bundleID : bundleID
-                // appPath is re-derived by the core (ProfileStore.update) from the
-                // install dir + validated display name, so we don't set it here.
-                try await model.updateProfile(original: original, to: updated)
+                // Only the four editable fields travel. The profile's name, its user-data
+                // directory and its bundle path are not this form's to change — the core
+                // takes them from `original` and re-derives the bundle path itself.
+                try await model.updateProfile(original, applying: ProfileEdits(
+                    displayName: displayName.isEmpty ? original.displayName : displayName,
+                    label: effectiveLabel,
+                    color: badge,
+                    bundleID: bundleID.isEmpty ? original.bundleID : bundleID
+                ))
             } else {
                 let request = AddProfileRequest(
                     name: name,

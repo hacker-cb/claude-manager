@@ -24,8 +24,7 @@ struct ProfileStoreTests {
         #expect(listed[0].isRunning == false)
 
         // The generated badge is a genuine .icns.
-        let icns = try Data(contentsOf: URL(fileURLWithPath: result.profile.appPath)
-            .appendingPathComponent("Contents/Resources/Badge.icns"))
+        let icns = try Fixture.installedBadgeData(inLauncherAt: result.profile.appPath)
         #expect(icns.prefix(4) == Data("icns".utf8))
 
         // A brand-new bundle (no trashed twin) must not restart the Dock.
@@ -127,56 +126,11 @@ struct ProfileStoreTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var evil = original
+        var evil = ProfileEdits(original)
         evil.displayName = "../../../Evil"
         #expect(throws: ClaudeManagerError.self) {
-            try env.store.update(original: original, to: evil)
+            try env.store.update(original, applying: evil)
         }
-    }
-
-    @Test
-    func purgeSpares3pSiblingThatIsAnotherLaunchersData() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("sibling"))
-        }
-        // Pathological but reachable: launcher B's user-data dir is literally launcher A's
-        // `-3p` overlay path. Purging A must delete A's data + overlay but spare B's data.
-        let workPath = env.profilesDir.appendingPathComponent("work").path
-        let siblingPath = workPath + "-3p"
-        let work = try env.store
-            .add(AddProfileRequest(name: env.name("work"), profilePath: workPath)).profile
-        _ = try env.store
-            .add(AddProfileRequest(name: env.name("sibling"), profilePath: siblingPath)).profile
-        try fm.createDirectory(atPath: siblingPath, withIntermediateDirectories: true, attributes: nil)
-        let keep = URL(fileURLWithPath: siblingPath).appendingPathComponent("data")
-        try Data("keep".utf8).write(to: keep)
-
-        _ = try env.store.remove(work, purgeProfile: true)
-
-        // B's data dir (== A's `-3p` path) belongs to another launcher, so it is spared.
-        #expect(fm.fileExists(atPath: siblingPath))
-        #expect(fm.fileExists(atPath: keep.path))
-    }
-
-    @Test
-    func removeKeepsDataSharedByAnotherLauncher() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("aa"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("bb"))
-        }
-        let shared = env.profilesDir.appendingPathComponent("shared").path
-        let first = try env.store.add(AddProfileRequest(name: env.name("aa"), profilePath: shared)).profile
-        _ = try env.store.add(AddProfileRequest(name: env.name("bb"), profilePath: shared)).profile
-
-        let result = try env.store.remove(first, purgeProfile: true)
-        // The second launcher still points at the shared dir, so its data is kept.
-        #expect(!result.purgedProfileData)
-        #expect(fm.fileExists(atPath: shared))
     }
 
     @Test
@@ -284,68 +238,6 @@ struct ProfileStoreTests {
     }
 
     @Test
-    func removeTrashesLauncherAndPurgesData() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-        }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let result = try env.store.remove(profile, purgeProfile: true)
-
-        #expect(!fm.fileExists(atPath: profile.appPath))
-        #expect(!fm.fileExists(atPath: profile.profilePath))
-        #expect(result.purgedProfileData)
-    }
-
-    @Test
-    func removeKeepsDataByDefault() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-        }
-        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        let result = try env.store.remove(profile, purgeProfile: false)
-        #expect(!result.purgedProfileData)
-        #expect(fm.fileExists(atPath: profile.profilePath))
-    }
-
-    @Test
-    func removeThrowsWhenLauncherMissing() throws {
-        let env = try makeStoreEnv()
-        defer { try? fm.removeItem(at: env.root) }
-        // A profile whose launcher was never built → consistent domain error.
-        let ghost = env.store.draft(name: env.name("ghost"))
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.remove(ghost, purgeProfile: false)
-        }
-    }
-
-    @Test
-    func removeRejectsRunning() throws {
-        let env = try makeStoreEnv(stub: { executable, args in
-            if executable == CoreConstants.pgrepPath {
-                return CommandOutput(exitCode: 0, standardOutput: "999\n", standardError: "")
-            }
-            return idleStub(executable, args)
-        })
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-        }
-        let profile = env.store.draft(name: env.name("work"))
-        try LauncherBundle(runner: stubbedSigningRunner()).build(
-            profile: profile,
-            realBinaryPath: env.real.binaryURL.path,
-            icnsData: Data("i".utf8)
-        )
-        #expect(throws: ClaudeManagerError.self) {
-            try env.store.remove(profile, purgeProfile: false)
-        }
-    }
-
-    @Test
     func updateRenamesLauncherAndTrashesOld() throws {
         let env = try makeStoreEnv()
         defer {
@@ -354,19 +246,137 @@ struct ProfileStoreTests {
             Fixture.purgeTrash(displayNamePrefix: env.display("job"))
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        var updated = original
-        updated.displayName = env.display("job")
-        updated.label = "JB"
-        updated.color = .named("red")
-        updated.appPath = env.appPath("job")
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        edits.label = "JB"
+        edits.color = .named("red")
 
-        _ = try env.store.update(original: original, to: updated)
+        let updated = try env.store.update(original, applying: edits).profile
         #expect(!fm.fileExists(atPath: original.appPath))
+        // The caller no longer supplies the bundle path — the core derives it from the new
+        // display name, and the result is where it says the launcher went.
+        #expect(updated.appPath == env.appPath("job"))
         #expect(fm.fileExists(atPath: updated.appPath))
+        // Identity is carried through untouched, whatever the edit said.
+        #expect(updated.name == original.name)
+        #expect(updated.profilePath == original.profilePath)
 
-        let discovered = try #require(LauncherBundle().readMarker(at: URL(fileURLWithPath: updated.appPath)))
+        let discovered = try #require(LauncherBundle().readMarker(at: updated.appURL))
         #expect(discovered.marker.label == "JB")
         #expect(discovered.marker.color == "red")
+    }
+
+    /// The invariant the typed edits exist for. A rename is the one edit that moves something
+    /// — the bundle — and it must leave the user-data directory exactly where it was, with its
+    /// contents. Substituting that directory is not merely rejected here, it is unrepresentable:
+    /// `ProfileEdits` has no field for it and `Profile.profilePath` is `let`.
+    @Test
+    func aRenameLeavesTheProfileDataWhereItWas() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("job"))
+        }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        // Stand in for the Anthropic token and the chat history.
+        let token = URL(fileURLWithPath: original.profilePath).appendingPathComponent("token")
+        try Data("secret".utf8).write(to: token)
+
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        let updated = try env.store.update(original, applying: edits).profile
+
+        #expect(updated.profilePath == original.profilePath)
+        #expect(fm.fileExists(atPath: token.path))
+        #expect(try Data(contentsOf: token) == Data("secret".utf8))
+        // And no second data directory was conjured next to it.
+        let dirs = try fm.contentsOfDirectory(atPath: env.profilesDir.path)
+        #expect(dirs.filter { !$0.hasSuffix("-3p") } == [URL(fileURLWithPath: original.profilePath)
+                .lastPathComponent])
+    }
+
+    /// A rename whose Trash step fails is undone, not left half-applied.
+    ///
+    /// The alternative — keeping the new bundle and reporting the stray old one — leaves two
+    /// launchers on one user-data dir, which the app reads as deliberate everywhere else: the
+    /// stale bundle stays in the sidebar as an ordinary row, `runningPID` lights up both rows
+    /// with one pid, and `liveRewrite` drops the restart nudge because ownership is ambiguous.
+    @Test
+    func updateUndoesARenameWhoseTrashStepFails() throws {
+        // No `purgeTrash` cleanup: this store refuses every `trashItem`, so nothing of its
+        // making ever reaches the Trash.
+        let env = try makeStoreEnv(fileManager: TrashRefusingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let originalColor = try #require(LauncherBundle().readMarker(at: original.appURL)).marker.color
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+        edits.color = .named("red")
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.update(original, applying: edits)
+        }
+
+        // The old launcher is untouched and the new one was rolled back, so the install
+        // directory holds exactly the launcher it started with.
+        #expect(fm.fileExists(atPath: original.appPath))
+        #expect(!fm.fileExists(atPath: env.appPath("job")))
+        #expect(env.store.list().count == 1)
+        // And it still carries the badge it had — the edit did not land halfway.
+        let discovered = try #require(LauncherBundle().readMarker(at: original.appURL))
+        #expect(discovered.marker.color == originalColor)
+
+        // The message names the bundle to deal with, says the edit was undone, and carries
+        // the filesystem's own reason. It must *not* tell the user to trash that launcher:
+        // after the rollback it is the profile's only one.
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains(PathUtils.abbreviatingHome(original.appPath)))
+        #expect(message.contains(TrashRefusingFileManager.message))
+        #expect(message.contains("The edit was undone"))
+        #expect(!message.contains("Move the first to the Trash"))
+    }
+
+    /// A rollback whose removal reports failure *after* the bundle is already gone still
+    /// achieved what it set out to do. Claiming two launchers there would send the user
+    /// hunting for a second one that does not exist.
+    @Test
+    func updateReportsAnUndoneRenameWhenTheRollbackTargetIsAlreadyGone() throws {
+        let env = try makeStoreEnv(fileManager: TrashRefusingLosingRemovalsFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.update(original, applying: edits)
+        }
+
+        #expect(!fm.fileExists(atPath: env.appPath("job")))
+        #expect(fm.fileExists(atPath: original.appPath))
+        let message = try #require(thrown.errorDescription)
+        #expect(message.contains("The edit was undone"))
+        #expect(!message.contains("two launchers"))
+    }
+
+    /// The race the rollback must not lose to: the old bundle is removed by something else
+    /// between the existence check and the Trash attempt. Retiring it is what the failed step
+    /// was *for*, so the rename stands — undoing it here would delete the profile's only
+    /// remaining launcher and leave it with none.
+    @Test
+    func updateKeepsTheRenameWhenTheOldLauncherVanishedMidTrash() throws {
+        let env = try makeStoreEnv(fileManager: TrashVanishingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var edits = ProfileEdits(original)
+        edits.displayName = env.display("job")
+
+        let result = try env.store.update(original, applying: edits)
+
+        #expect(result.profile.displayName == env.display("job"))
+        #expect(fm.fileExists(atPath: env.appPath("job")))
+        #expect(!fm.fileExists(atPath: original.appPath))
+        #expect(env.store.list().count == 1)
     }
 
     @Test
@@ -377,7 +387,7 @@ struct ProfileStoreTests {
         _ = try env.store.add(AddProfileRequest(name: env.name("home")))
         let result = try env.store.rebuildAll()
         #expect(Set(result.rebuilt.map(\.name)) == [env.name("work"), env.name("home")])
-        #expect(result.skippedRunning.isEmpty)
+        #expect(result.liveRewrites.isEmpty)
         #expect(result.failed.isEmpty)
         // Rebuilding unchanged launchers regenerates byte-identical badges, so nothing is
         // pending and the screen-flashing Dock restart is never issued (opt-in only).
@@ -414,7 +424,7 @@ struct ProfileStorePreconditionTests {
             try store.add(AddProfileRequest(name: "work"))
         }
         #expect(throws: ClaudeManagerError.realClaudeNotFound) {
-            try store.update(original: profile, to: profile)
+            try store.update(profile, applying: ProfileEdits(profile))
         }
         #expect(throws: ClaudeManagerError.realClaudeNotFound) {
             try store.rebuild(profile)

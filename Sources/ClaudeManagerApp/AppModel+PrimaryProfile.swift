@@ -62,6 +62,7 @@ extension AppModel {
         let outcome = await perform { store in await store.stopDefault(force: force) }
         if case let .stillRunning(pid)? = outcome {
             currentError = AppError(
+                title: "Profile is still running",
                 message: "The default profile is still running (pid \(pid)). Try Force Stop."
             )
         }

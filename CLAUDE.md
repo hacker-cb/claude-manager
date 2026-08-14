@@ -48,7 +48,15 @@ short form:
   *execute* an unsigned `.app` (AppleSystemPolicy kills it seconds after it appears in
   the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
   staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
-  never add a write below that call, and never sign anywhere but `build`.
+  never add a write below that call, and never sign anywhere but `build`. `HiddenFlag.set` is the
+  one thing that writes into the shipped bundle afterwards, and only because it sets the inode's
+  own flag bits, which the seal does not span. `alignInstalledSpelling` also runs after the
+  signing call but before the swap, and renames the *previously installed* bundle rather than
+  writing into anything — deliberately on that side of the swap, so that its failure leaves the
+  old launcher whole like every other failure in `build` (a rename attempted afterwards throws
+  with the rebuilt bundle already installed under the old name: an edit reported as failed whose
+  marker already carries the new one). `codesign --verify --strict` passes across a rename,
+  measured for a case-only change and a wholesale one alike.
 - **Never turn signing off for the app's own build either.** The same execution policy
   applies one level up: `make build-app` (and CI, which builds through it) takes the ad-hoc
   identity `project.yml` declares (`CODE_SIGN_IDENTITY: "-"`), and putting
@@ -59,6 +67,87 @@ short form:
   the `.app` will, and `scripts/assert-build-signed.sh` does it in CI.
 - **Keep `CFBundleIconName` out of launcher Info.plists** — otherwise macOS reads
   `Assets.car` and ignores our `.icns`.
+- **The badge resource is named after its own bytes** (`Badge-<sha256[:16]>.icns`, via
+  `LauncherBundle.iconFileName`), and `CFBundleIconFile` points at that name. Never put a
+  fixed file name back: a rebuild leaves every other part of the bundle's identity
+  identical — same path, same `CFBundleIdentifier`, same `CFBundleVersion` — so the
+  resource name is the only lever we have on what IconServices treats as a new icon, and a
+  constant one means an edited badge is never drawn. Read the installed icon through the
+  recorded `CFBundleIconFile`, never a literal, and treat a *name* change as an icon change
+  (that is what makes the v3→v4 migration offer its Dock refresh).
+- **Never compare two profile directories by string equality.** The path is free text when a
+  profile is *created*, so one profile's user-data dir can *be* another's, or sit inside it —
+  and `removeItem` is recursive, so purging the outer one takes the inner profile's Anthropic
+  token and chat history with it. `ProfileStore+Remove.PurgeReach` compares by *component*, never by string
+  prefix (`…/work` is not inside `…/wo`), and asks **both** spellings: canonical, because
+  `…/Profiles/x` and `…/ProfilesLink/x` are one directory, *and* literal, because a recursive
+  delete also takes any symlink inside it — the sibling that spelled its path through one keeps
+  its bytes and loses its path, and only the literal comparison can see that. Case follows the
+  volume, which means it holds only while the directory exists. Two things ride on
+  the same care: a purge that would reach another launcher's data is declined and reported, and
+  an install folder that could not be **listed** never counts as "nobody else uses this"
+  (`LauncherBundle.Scan.isComplete`, `keptOwnersUnknown`). A single *bundle* that cannot be read
+  deliberately does **not** make a scan incomplete — that folder is normally `/Applications`,
+  and one unreadable stranger there would switch off data deletion, Doctor's orphan sweep and
+  the restart nudge for every profile at once. And `removeItem` on a symlinked data path unlinks the link without
+  walking it, so containment there is not containment at all: `PurgeReach` says so, and getting
+  it wrong refuses the removal *and* advises deleting the profile whose data is actually at
+  risk.
+- **"Is something already at this path?" is a question about files, not strings.** `fileExists`
+  folds case on the default macOS volume, so it answers *yes* for `WORK.app` while the profile's
+  own `Work.app` is what it found — which is how renaming a profile to another capitalisation of
+  its name came to be refused on behalf of the very launcher being renamed. So `renaming` in
+  `update` means "the bundle moves to a **different file**" — `PathUtils.sameFile`, `lstat`
+  identity (`st_dev` + `st_ino`, a symlink counting as itself) — and not "the path is spelled
+  differently". Folded into that one flag rather than subtracted at each site, because all four
+  sites ask the same thing and a later `if renaming` that forgot the exception would trash the
+  bundle `build` has just written. On a case-sensitive volume those two paths are two files and
+  every guard refuses exactly as before: the volume decides, not a rule stated here. **The trash
+  step asks again, after the build**, since before it there is nothing to compare when the
+  launcher is not on disk — a supported state — and `build` will have created a bundle the old
+  spelling then folds onto. The other half is in `build`: `replaceItemAt` writes into the file
+  already at the path and **keeps that file's name** (measured), so `alignInstalledSpelling`
+  renames the installed bundle to the requested spelling first — and `build` returns
+  `BuildResult.appPath`, where the bundle actually ended up, rather than leaving each caller to
+  re-derive it from a later lookup of its own. Without it the launcher's file
+  says one thing while `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s
+  deliberate `==` on the bundle path quietly stops matching. For the same reason
+  `profileMatchingItsLauncher` takes the bundle's spelling **and everything else the launcher
+  records** from disk: `build` writes all of it from the profile handed to it, so a stale
+  `Profile` would have `rebuild` undo as much of an edit as that value is stale. Where the volume
+  will not say how it spells a name, every one of these **falls back rather than refusing** —
+  that same function gates `remove`, and `alignInstalledSpelling` is on the only path a
+  `currentWrapperVersion` bump reaches a launcher by, so a refusal there strands a profile that
+  can then be neither edited, rebuilt nor deleted. What must not happen is *assuming* the rename
+  landed: `update` reports the spelling the bundle actually ended up with. And every message
+  naming an occupied path names it as the volume stores it (`add` and `update` alike) — the text
+  sends the user to Finder, and the spelling they typed is not what anything there is called.
+  **Which spellings fold is the volume's answer,
+  never `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while
+  `"Σ".lowercased()` is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ
+  only in case" declines exactly where the collision is real. Every side asks identity instead.
+- **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
+  twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
+  directory handed to it is itself a symlink; the `atPath` overload does neither. Both
+  enumerations — `LauncherBundle.scan` and `Doctor.orphanProfileDiagnostics` — list by path and
+  rebuild each URL from the directory they were handed. This matters because `Profile.id` *is*
+  `appPath` while every other path comes from `ProfileStoreConfiguration`, and a marker records
+  whichever spelling its profile was created with. Put `at:` back and: a launcher under a
+  symlinked install directory carries one id from `scan` and another from `draft` (one bundle
+  under two ids, an ordinary edit refused as a rename onto its own bundle, the "Restart to
+  apply" nudge silently gone); an install directory that *is* a symlink reports no launchers at
+  all (empty sidebar, `rebuildAll` succeeding having rebuilt nothing); and Doctor calls every
+  live profile an orphan, naming the directory that holds the user's login as safe to delete.
+  Comparisons of those paths belong to `PathUtils.sameDirectory` / `canonicalPath`, never `==`
+  — except `liveRewrite`'s bundle-path check, which is `==` on purpose so that drift is caught
+  rather than papered over.
+- **An edit can never reach a profile's identity.** `update` takes `ProfileEdits` — display
+  name, label, colour, bundle id — beside the profile, and `Profile.name` / `Profile.profilePath`
+  are `let`. A launcher pointed at a different user-data dir does not take the login and chat
+  history along, it abandons them, so no edit may stand in for moving profile data: that would
+  be its own operation, moving the directory and its `-3p` overlay together. Keep both halves —
+  passing a whole `Profile` as the edit target, or making those fields `var` again, each
+  restores the hole on its own.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of
   running the launcher (and thus Claude) translated under Rosetta.
 - **Process detection filters on ppid == 1** to find main Claude processes and skip

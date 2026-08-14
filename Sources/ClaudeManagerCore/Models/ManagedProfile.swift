@@ -68,9 +68,12 @@ public struct ManagedProfile: Identifiable, Equatable, Sendable {
     /// **Two axes, deliberately not collapsed into one.** Launcher health and Claude version are
     /// independent conditions with different remedies, so folding them into a single "most severe"
     /// value silently drops the other: a stale-but-runnable launcher whose running instance is
-    /// also behind the app on disk would show only the rebuild flag, while the rebuild it points
-    /// at is the one action unavailable to a *running* profile — leaving the restart that would
-    /// actually fix things unmentioned.
+    /// also behind the app on disk would show only the rebuild flag, and the restart that fixes
+    /// the second condition would go unmentioned even though the two are unrelated.
+    ///
+    /// A third mark, `.restartToApply`, is decided by the app rather than here: whether a running
+    /// window predates the last rewrite of its launcher depends on a pid observed at write time,
+    /// which is state this value type does not carry.
     ///
     /// Within the health axis the precedence *is* load-bearing: `isUnrunnable` is a subset of
     /// `needsRebuild`, so an unsigned launcher satisfies both, and the wrong order would word a
@@ -99,4 +102,8 @@ public enum LauncherAttention: Hashable, Sendable {
     case rebuildAvailable
     /// The running instance is behind the Claude.app on disk — fixed by a restart, not a rebuild.
     case claudeUpdate(version: String?)
+    /// The launcher was rewritten while this instance was up, so the window still shows the
+    /// name and badge it launched with — also fixed by a restart. Raised by the app, which
+    /// holds the pid observed at the write; see `AppModel.pendingRestart`.
+    case restartToApply
 }

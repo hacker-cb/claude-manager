@@ -63,12 +63,20 @@ func buildDoctorLauncher(
     )
 }
 
-func runDoctor(_ scene: DoctorScene, runner: CommandRunner, fm: FileManager = .default) -> [Diagnostic] {
+/// `profilesDirectory` overrides where Doctor looks for orphan profiles — a suite reaching
+/// that directory by another spelling needs it, and copying this construction to do so would
+/// leave the copy to be updated in lockstep with the hermeticity notes below.
+func runDoctor(
+    _ scene: DoctorScene,
+    runner: CommandRunner,
+    fm: FileManager = .default,
+    profilesDirectory: URL? = nil
+) -> [Diagnostic] {
     Doctor(
         realClaude: scene.real,
         configuration: ProfileStoreConfiguration(
             installDirectory: scene.installDir,
-            defaultProfilesDirectory: scene.profilesDir,
+            defaultProfilesDirectory: profilesDirectory ?? scene.profilesDir,
             defaultProfileUserDataPath: scene.defaultProfilePath,
             shipItStatePath: scene.shipItStatePath
         ),

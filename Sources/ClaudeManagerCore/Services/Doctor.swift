@@ -36,7 +36,8 @@ public struct Doctor {
         var diagnostics: [Diagnostic] = []
         diagnostics.append(realClaudeDiagnostic())
 
-        let discovered = bundle.scan(installDirectory: configuration.installDirectory)
+        let scan = bundle.scan(installDirectory: configuration.installDirectory)
+        let discovered = scan.launchers
         var knownProfiles = Set<String>()
         for launcher in discovered {
             knownProfiles.insert(launcher.marker.profile)
@@ -48,7 +49,9 @@ public struct Doctor {
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
         diagnostics.append(contentsOf: stagedUpdateDiagnostics())
-        diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
+        diagnostics.append(
+            contentsOf: orphanProfileDiagnostics(known: knownProfiles, scan: scan)
+        )
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
     }
@@ -305,21 +308,50 @@ public struct Doctor {
         return diagnostics
     }
 
-    private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
+    /// The profiles directory's contents that no launcher claims.
+    ///
+    /// Both halves are spelling-sensitive, and getting either wrong tells the user that a
+    /// directory holding their Anthropic login and chat history is safe to delete. So the
+    /// listing goes through `visibleContents(ofDirectoryAt:)` — whose doc comment explains what
+    /// the URL overload would lose here — and the "is it claimed" test compares canonical
+    /// paths, since a marker records whatever spelling the profile was created with (iCloud's
+    /// Desktop & Documents replaces `~/Documents` with a symlink, and the profiles directory is
+    /// user-settable).
+    private func orphanProfileDiagnostics(
+        known: Set<String>,
+        scan: LauncherBundle.Scan
+    ) -> [Diagnostic] {
+        // `known` comes from a scan of the install directory, and `LauncherBundle.scan` reports
+        // an unreadable one as holding no launchers. Reading that as "nobody claims any of
+        // these directories" is the misreading its doc comment warns callers about, and here
+        // it would label every live profile — each holding a login and a chat history — as
+        // safe to delete. A launcher folder that was renamed, unmounted, or had its
+        // permissions changed is exactly that state, so say the check could not run.
+        guard scan.isComplete else {
+            return [Diagnostic(
+                severity: .warning,
+                title: "Cannot read the launcher folder — orphan-profile check skipped",
+                detail: PathUtils.abbreviatingHome(configuration.installDirectory.path)
+            )]
+        }
         let dir = configuration.defaultProfilesDirectory
-        guard let entries = try? fileManager.contentsOfDirectory(
-            at: dir,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        // The default profile owns no launcher, so it is in no marker and no scan — and the
+        // profiles folder is user-settable, so it can be pointed at the directory holding it
+        // (`~/Library/Application Support`). Without this it is reported as an orphan: the
+        // user's primary Anthropic login and chat history, named as safe to delete.
+        // `purgeProfileData` guards the same blind spot with `keptForDefaultProfile`.
+        let claimed = Set(
+            known.union([configuration.defaultProfileUserDataPath])
+                .map { PathUtils.canonicalPath($0) }
+        )
 
-        return entries
+        return fileManager.visibleContents(ofDirectoryAt: dir, skippingFlaggedHidden: true)
             .sorted { $0.path < $1.path }
             .filter { entry in
                 var isDirectory: ObjCBool = false
                 fileManager.fileExists(atPath: entry.path, isDirectory: &isDirectory)
                 return isDirectory.boolValue
-                    && !known.contains(entry.path)
+                    && !claimed.contains(PathUtils.canonicalPath(entry.path))
                     && !entry.lastPathComponent.hasPrefix("_")
                     // Skip our managed-config tier (`<userData>-3p`) — identified by its
                     // `configLibrary/_meta.json`, not the name suffix, so a profile a user
