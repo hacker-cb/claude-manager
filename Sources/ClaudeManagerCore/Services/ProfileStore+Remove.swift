@@ -151,6 +151,10 @@ public extension ProfileStore {
         // traversal — exactly as it answers "deleted", and `.alreadyGone` shows the user
         // nothing at all. Told apart by `lstat`: only ENOENT is genuinely nothing there.
         switch Self.pathState(profile.profilePath) {
+        case .unreachable where isDefaultProfileData:
+            // Nothing was going to be deleted whatever the state of the path, so the honest
+            // answer is the refusal, not a failure to do something never attempted.
+            return .keptForDefaultProfile
         case .unreachable:
             // Not `keptOwnersUnknown`: that one is about the *launcher* folder and sends the
             // user to make it readable, which here is already true and would fix nothing. What
@@ -178,7 +182,27 @@ public extension ProfileStore {
         // launcher's name with "delete the folder by hand if you are sure nothing else uses
         // it" — advice that destroys the very login this refusal exists to keep.
         guard sharing.isEmpty else {
-            return .keptSharedWith(launchers: sharing.map(\.profile.displayName))
+            // Told apart by what the deletion would actually have done to them — the two
+            // sentences differ, and one of the remedies is destructive if given for the wrong
+            // case. A sibling whose directory is genuinely inside this one loses its data; one
+            // that merely reached its own data through a shortcut in here loses the shortcut.
+            // Nothing is destroyed when our own path is a link: the unlink removes the
+            // shortcut and walks nowhere, so every sibling it affects loses a path, not bytes.
+            // Otherwise, overlap either way round — their directory inside ours means the
+            // recursion takes their data, ours inside theirs means it takes part of what their
+            // directory holds.
+            let unlinkOnly = Self.isSymbolicLink(profile.profileURL)
+            let destroyed = unlinkOnly ? [] : sharing.filter {
+                Self.directoriesOverlap(
+                    PathUtils.canonicalPath(profile.profilePath),
+                    PathUtils.canonicalPath($0.marker.profile),
+                    ignoringCase: Self.volumeIgnoresCase(at: profile.profileURL)
+                )
+            }
+            guard destroyed.isEmpty else {
+                return .keptSharedWith(launchers: destroyed.map(\.profile.displayName))
+            }
+            return .keptWouldStrand(launchers: sharing.map(\.profile.displayName))
         }
         guard ownersKnown else { return .keptOwnersUnknown }
         do {
@@ -378,13 +402,16 @@ public extension ProfileStore {
         }
     }
 
-    /// Whether the volume holding `url` treats names case-insensitively — the default on
-    /// macOS. Unknown answers assume it does, since folding too eagerly costs a refusal while
-    /// not folding costs a deletion.
+    /// Whether the volume holding `url` treats names case-insensitively — the default on macOS.
+    ///
+    /// An unknown answer folds **nothing**. The volume can only be asked about a path that
+    /// exists, and a path that does not exist is one the purge will not delete anyway — so
+    /// folding there protects nothing while inventing collisions: on a case-sensitive volume
+    /// `…/work` and `…/Work` are two real directories, and treating them as one produces a
+    /// refusal that repeats on every attempt and advises deleting an unrelated profile's login.
     internal static func volumeIgnoresCase(at url: URL) -> Bool {
-        let sensitive = (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
-            .volumeSupportsCaseSensitiveNames
-        return sensitive != true
+        (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames == false
     }
 
     /// What is at a path, with "nothing there" told apart from "cannot look".

@@ -32,6 +32,13 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// take their login and history with it. Carries their display names because the remedy is
     /// per-launcher.
     case keptSharedWith(launchers: [String])
+    /// Deletion was asked for and declined because it would have **stranded** the launchers
+    /// named here: their data is not inside this profile's directory, they only reach it
+    /// *through* a symlink that the deletion would have removed. Their login and chat history
+    /// survive either way — what they would lose is the path to it — so this must never be
+    /// reported as `keptSharedWith`, whose sentence claims their data would be deleted and
+    /// whose remedy ("remove that launcher with Delete Profile Data") destroys it.
+    case keptWouldStrand(launchers: [String])
     /// Deletion was asked for and declined because the deletion would reach the **default
     /// profile's** directory — the one Claude itself uses. Either the profile points at it (a
     /// supported way to reuse an existing login) or its own directory *contains* it, which the
@@ -72,6 +79,8 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             nil
         case let .keptSharedWith(launchers):
             Self.sharedNotice(displayName: displayName, launchers: launchers)
+        case let .keptWouldStrand(launchers):
+            Self.strandNotice(displayName: displayName, launchers: launchers)
         case .keptForDefaultProfile:
             RemovalNotice(
                 title: "Profile data was kept",
@@ -98,6 +107,22 @@ public enum ProfileDataOutcome: Sendable, Equatable {
                     + "chat history are still on disk."
             )
         }
+    }
+
+    /// The other decline, and the difference is the whole point: nothing of theirs would have
+    /// been deleted, so the remedy is to repoint them, never to remove them with their data.
+    private static func strandNotice(displayName: String, launchers: [String]) -> RemovalNotice? {
+        guard !launchers.isEmpty else { return nil }
+        let list = Sentences.list(launchers)
+        return RemovalNotice(
+            title: "Profile data was kept",
+            message: "\(list) reach their profile data through a shortcut inside "
+                + "\(displayName)'s profile data folder, so deleting that folder would have "
+                + "left them pointing at nothing — their login and chat history are not in "
+                + "there and would have survived, but Claude would open them signed out. The "
+                + "folder was left alone; point \(list) straight at the real folder to be able "
+                + "to delete it."
+        )
     }
 
     /// The refusal, named concretely enough to act on. It says which button does the deletion,

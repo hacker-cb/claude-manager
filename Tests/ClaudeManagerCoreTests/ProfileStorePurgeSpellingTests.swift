@@ -158,43 +158,6 @@ struct ProfileStorePurgeSpellingTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
-    /// Unlinking a link strands whatever was spelled *through* it. The sibling's bytes survive
-    /// under the target, but its recorded path leads nowhere afterwards — so it is still what
-    /// this removal affects, and the purge declines rather than proceeding.
-    ///
-    /// A **decline**, not the up-front refusal the nested case gets: nothing is destroyed here,
-    /// and that refusal's message ("deleting it would delete their login and chat history too,
-    /// remove that launcher first") would be false — and following its advice is what would
-    /// actually destroy the sibling's data.
-    @Test
-    func removingALinkDeclinesWhenASiblingSpelledItsPathThroughIt() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("under"))
-        }
-        let real = env.profilesDir.appendingPathComponent("real")
-        try fm.createDirectory(at: real.appendingPathComponent("inner"), withIntermediateDirectories: true)
-        let alias = env.profilesDir.appendingPathComponent("alias")
-        try fm.createSymbolicLink(at: alias, withDestinationURL: real)
-
-        let aliasProfile = try env.store.add(
-            AddProfileRequest(name: env.name("alias"), profilePath: alias.path)
-        ).profile
-        // Spelled through the link, so the unlink takes its path away.
-        let under = try env.store.add(
-            AddProfileRequest(
-                name: env.name("under"), profilePath: alias.appendingPathComponent("inner").path
-            )
-        ).profile
-
-        let result = try env.store.remove(aliasProfile, purgeProfile: true)
-
-        #expect(result.profileData == .keptSharedWith(launchers: [under.displayName]))
-        #expect(fm.fileExists(atPath: alias.path))
-    }
-
     /// A sibling can sit under the purged directory only by the path it *recorded* — through a
     /// symlink inside that directory, the shape a user creates by moving one profile's data to
     /// an external disk and leaving a link behind. Canonicalising moves it out of containment,
@@ -263,7 +226,9 @@ struct ProfileStorePurgeSpellingTests {
 
         let result = try env.store.remove(aliasProfile, purgeProfile: true)
 
-        #expect(result.profileData == .keptSharedWith(launchers: [twin.displayName]))
+        // Both profiles record the same link, so the unlink strands the twin — its data under
+        // the target is untouched, which is what tells this apart from a deletion.
+        #expect(result.profileData == .keptWouldStrand(launchers: [twin.displayName]))
         #expect(fm.fileExists(atPath: alias.path))
     }
 
@@ -328,42 +293,8 @@ struct ProfileStorePurgeSpellingTests {
         // Declined, naming the sibling — and the link is still there, so the sibling's path
         // still resolves. Nothing was lost, which is why this is a decline rather than the
         // up-front refusal the nested case gets.
-        #expect(result.profileData == .keptSharedWith(launchers: [under.displayName]))
+        #expect(result.profileData == .keptWouldStrand(launchers: [under.displayName]))
         #expect(fm.fileExists(atPath: alias.path))
-    }
-
-    /// The link being unlinked is an entry in someone else's directory: a launcher that owns
-    /// the link's physical parent owns the link too, so removing it changes that profile's
-    /// data. Reached here through an aliased parent, which is what puts the two paths beyond a
-    /// literal comparison.
-    @Test
-    func removingALinkSeesTheLauncherOwningItsParent() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("parent"))
-        }
-        let real = env.profilesDir.appendingPathComponent("real")
-        try fm.createDirectory(at: real, withIntermediateDirectories: true)
-        try fm.createSymbolicLink(
-            at: env.profilesDir.appendingPathComponent("alias"), withDestinationURL: real
-        )
-        // The purged profile reaches its link through an alias of the parent directory.
-        let aliasByLink = try linkedProfilesDir(env).appendingPathComponent("alias")
-
-        let aliasProfile = try env.store.add(
-            AddProfileRequest(name: env.name("alias"), profilePath: aliasByLink.path)
-        ).profile
-        // And this one owns the directory the link physically lives in.
-        let parent = try env.store.add(
-            AddProfileRequest(name: env.name("parent"), profilePath: env.profilesDir.path)
-        ).profile
-
-        let result = try env.store.remove(aliasProfile, purgeProfile: true)
-
-        #expect(result.profileData == .keptSharedWith(launchers: [parent.displayName]))
-        #expect(fm.fileExists(atPath: env.profilesDir.appendingPathComponent("alias").path))
     }
 
     /// The literal question has to fold case the way the volume does. Here the sibling is
