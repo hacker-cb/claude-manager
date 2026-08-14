@@ -135,4 +135,43 @@ struct ProfileStorePurgeSymlinkTests {
         #expect(result.profileData == .keptWouldStrand(launchers: [under.displayName]))
         #expect(fm.fileExists(atPath: alias.path))
     }
+
+    /// The sibling reached the shortcut through a differently spelled ancestor. The literal
+    /// comparison misses it (the spelling differs) and the canonical one resolves the shortcut
+    /// out of this directory entirely — so without asking a third way, the deletion takes the
+    /// shortcut and says nothing at all.
+    @Test
+    func aSiblingReachingTheShortcutByAnAliasedAncestorIsSeen() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("outer"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("moved"))
+        }
+        let outer = env.profilesDir.appendingPathComponent("outer")
+        try fm.createDirectory(at: outer, withIntermediateDirectories: true)
+        let elsewhere = env.root.appendingPathComponent("elsewhere")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: outer.appendingPathComponent("moved"), withDestinationURL: elsewhere
+        )
+
+        let outerProfile = try env.store.add(
+            AddProfileRequest(name: env.name("outer"), profilePath: outer.path)
+        ).profile
+        let moved = try env.store.add(
+            AddProfileRequest(
+                name: env.name("moved"),
+                profilePath: linkedProfilesDir(env)
+                    .appendingPathComponent("outer/moved").path
+            )
+        ).profile
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.remove(outerProfile, purgeProfile: true)
+        }
+
+        #expect(fm.fileExists(atPath: outer.appendingPathComponent("moved").path))
+        #expect(try #require(thrown.errorDescription).contains(moved.displayName))
+    }
 }
