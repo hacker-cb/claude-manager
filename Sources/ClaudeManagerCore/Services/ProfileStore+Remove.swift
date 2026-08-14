@@ -60,11 +60,23 @@ public extension ProfileStore {
         // the user to remove every other profile first, which *would* destroy their data.
         if purgeProfile, !PurgeReach(profile).reaches(configuration.defaultProfileUserDataPath) {
             let scan = bundle.scan(installDirectory: configuration.installDirectory)
-            seenBeforeTrashing = scan.launchers
+            // Filtered here, while our bundle is still on disk: `read` follows symlinks, so an
+            // alias to it scans as a launcher of its own, and carrying that forward would make
+            // the profile decline against itself. Resolved paths answer that — two launchers
+            // may legitimately share a name *and* a data directory, so the marker cannot.
+            let ourBundle = PathUtils.canonicalPath(profile.appPath)
+            seenBeforeTrashing = scan.launchers.filter {
+                PathUtils.canonicalPath($0.appURL.path) != ourBundle
+            }
             let nested = launchersNested(under: profile, among: scan.launchers)
-            guard nested.isEmpty else {
+            guard nested.destroyed.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
-                    name: profile.displayName, others: nested
+                    name: profile.displayName, others: nested.destroyed
+                )
+            }
+            guard nested.stranded.isEmpty else {
+                throw ClaudeManagerError.profileDataStrandsAnother(
+                    name: profile.displayName, others: nested.stranded
                 )
             }
         }
@@ -111,15 +123,9 @@ public extension ProfileStore {
         var seenPaths = Set(survivors.map(\.appURL.standardizedFileURL.path))
         for earlier in seenBefore {
             let path = earlier.appURL.standardizedFileURL.path
-            // Not us — by path *or* by marker. `read` follows symlinks, so an alias in the
-            // install directory scans as a launcher carrying our own marker; re-admitting it
-            // from the earlier scan makes the removal report the profile as its own rival and
-            // refuse forever, naming a launcher that is already in the Trash.
-            guard path != ourApp,
-                  !(earlier.marker.name == profile.name
-                      && PathUtils.sameDirectory(earlier.marker.profile, profile.profilePath)),
-                  seenPaths.insert(path).inserted
-            else { continue }
+            // Our own bundle — and any alias of it — was already dropped from `seenBefore`
+            // while it still existed; this only guards the second scan's own view.
+            guard path != ourApp, seenPaths.insert(path).inserted else { continue }
             survivors.append(earlier)
         }
         let reach = PurgeReach(profile)
@@ -193,40 +199,52 @@ public extension ProfileStore {
         }
     }
 
-    /// Display names of the launchers whose user-data directory sits **strictly inside**
-    /// `profile`'s — the case a purge cannot be talked out of afterwards. This runs before the
-    /// launcher is trashed, so it filters `profile` out of the scan itself rather than relying
-    /// on the removal having already happened.
+    /// Launchers this purge would hurt, gathered before the launcher is trashed — so it
+    /// filters `profile` out of the scan itself rather than relying on the removal having
+    /// already happened.
+    ///
+    /// Two different harms, told apart because the remedy and the honest sentence differ.
+    ///
+    /// `destroyed` — the sibling's directory is physically inside this one, so the recursive
+    /// delete takes its login and chat history. `stranded` — the sibling only *spelled* its
+    /// path through a symlink inside this one, so the delete unlinks that link and its bytes
+    /// survive somewhere else, but its recorded path stops resolving.
+    ///
+    /// Both are refused before the launcher is trashed, and for the same reason: afterwards no
+    /// profile lists this directory, so nothing in the app can finish or undo the job.
     private func launchersNested(
         under profile: Profile,
         among launchers: [LauncherBundle.Discovered]
-    ) -> [String] {
+    ) -> (destroyed: [String], stranded: [String]) {
         // A link-valued data path is never this case. Unlinking destroys nothing, so the
         // refusal's own message — "deleting it would delete their login and chat history too,
         // remove that launcher first" — would be false, and following its advice is what
         // actually destroys that data. A sibling reached through the link is still seen, by
         // `PurgeReach`, and comes back as the decline it really is.
-        guard !Self.isSymbolicLink(profile.profileURL) else { return [] }
+        guard !Self.isSymbolicLink(profile.profileURL) else { return ([], []) }
         let ourApp = profile.appURL.standardizedFileURL.path
         let ourLiteral = PurgeReach.literalPath(profile.profilePath)
         let ourCanonical = PathUtils.canonicalPath(profile.profilePath)
         let ignoringCase = Self.volumeIgnoresCase(at: profile.profileURL)
-        return launchers
-            .filter { $0.appURL.standardizedFileURL.path != ourApp }
+        let others = launchers.filter { $0.appURL.standardizedFileURL.path != ourApp }
+        let destroyed = others.filter {
+            Self.directoryStrictlyContains(
+                ourCanonical,
+                PathUtils.canonicalPath($0.marker.profile),
+                ignoringCase: ignoringCase
+            )
+        }
+        let destroyedApps = Set(destroyed.map(\.appURL.standardizedFileURL.path))
+        let stranded = others
+            .filter { !destroyedApps.contains($0.appURL.standardizedFileURL.path) }
             .filter {
-                // Canonical only. This refusal is for the case whose data the deletion would
-                // *destroy*, and its message says exactly that. A sibling that merely spelled
-                // its path through a symlink inside this directory loses the path, not the
-                // bytes — recursion unlinks the link and walks no further — so it comes back as
-                // a decline through `PurgeReach` instead, rather than as a refusal advising the
-                // user to delete a profile whose data was never at risk.
                 Self.directoryStrictlyContains(
-                    ourCanonical,
-                    PathUtils.canonicalPath($0.marker.profile),
+                    ourLiteral,
+                    PurgeReach.literalPath($0.marker.profile),
                     ignoringCase: ignoringCase
                 )
             }
-            .map(\.profile.displayName)
+        return (destroyed.map(\.profile.displayName), stranded.map(\.profile.displayName))
     }
 
     /// Whether deleting one of these directories would take the other with it — the same path,

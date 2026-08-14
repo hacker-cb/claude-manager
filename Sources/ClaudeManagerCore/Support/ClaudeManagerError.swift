@@ -16,6 +16,10 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     /// listed. Reported rather than treated as "nothing is installed", which would be a
     /// successful-looking no-op — see `rebuildAll`.
     case launcherFolderUnreadable(path: String)
+    /// A purge was asked for over a directory holding a **symlink** other profiles reached
+    /// their own data through. Their data survives the unlink; their recorded path does not.
+    /// Refused before anything is touched — see `remove`.
+    case profileDataStrandsAnother(name: String, others: [String])
     /// A forced create would have rebuilt an existing launcher onto a *different* user-data
     /// directory, abandoning the one it has — see `add`.
     case launcherHoldsOtherProfileData(appPath: String, installed: String, requested: String)
@@ -91,6 +95,13 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
                 + "deleting it would delete their login and chat history too. Remove \(list) "
                 + "first, or use “Move Launcher to Trash (keep login)” to remove only the "
                 + "launcher."
+        case let .profileDataStrandsAnother(name, others):
+            let list = Sentences.list(others)
+            return "\(list) reach their profile data through a shortcut inside \"\(name)\"'s "
+                + "profile data folder, so deleting that folder would leave them pointing at "
+                + "nothing — their login and chat history would survive, but Claude would open "
+                + "them signed out. Point \(list) straight at the real folder first, or use "
+                + "“Move Launcher to Trash (keep login)” to remove only the launcher."
         case let .invalidProfileName(name):
             return "Invalid profile name \"\(name)\". Use letters, digits, dashes, or underscores."
         case let .invalidDisplayName(name):
