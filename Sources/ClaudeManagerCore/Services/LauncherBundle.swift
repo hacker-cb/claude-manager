@@ -246,7 +246,8 @@ public struct LauncherBundle {
                         throw ClaudeManagerError.launcherLeftUnderNewName(
                             path: appURL.path,
                             previousPath: spelledBefore.path,
-                            reason: Sentences.reason(error) + " " + Sentences.reason(restoreError)
+                            reason: Sentences.terminated(Sentences.reason(error))
+                                + " " + Sentences.reason(restoreError)
                         )
                     }
                 }

@@ -159,10 +159,26 @@ public extension ProfileStore {
         // write touches — so an edit that leaves both alone (a bundle-id change, or Save on
         // an unmodified form) has nothing for a restart to reveal.
         let presentationChanged = iconChanged || updated.displayName != original.displayName
+        // Reported under the spelling the launcher actually ended up with, which is the
+        // requested one whenever `build` could rename it and the old one when it could not
+        // establish the name to rename from. `Profile.id` *is* this path and `liveRewrite`
+        // matches on it exactly, so handing back the spelling that was asked for rather than
+        // the one on disk is how a row loses its selection and a running profile loses its
+        // restart nudge — the split identity, produced by trusting a promise instead of
+        // checking it. The display name is untouched: that one did land, in the marker.
+        let applied = Profile(
+            name: updated.name,
+            displayName: updated.displayName,
+            label: updated.label,
+            color: updated.color,
+            profilePath: updated.profilePath,
+            bundleID: updated.bundleID,
+            appPath: PathUtils.spellingOnDisk(updated.appPath) ?? updated.appPath
+        )
         return UpdateResult(
-            profile: updated,
+            profile: applied,
             dockRefreshPending: dockRefreshPending,
-            liveRewrite: liveRewrite(for: updated, presentationChanged: presentationChanged)
+            liveRewrite: liveRewrite(for: applied, presentationChanged: presentationChanged)
         )
     }
 }

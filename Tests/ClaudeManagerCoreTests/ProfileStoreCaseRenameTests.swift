@@ -170,6 +170,28 @@ struct ProfileStoreCaseRenameTests {
         #expect(try Data(contentsOf: secondsToken) == Data("secret".utf8))
     }
 
+    /// The create path refuses in the same words, and has to name the same file. A display name
+    /// that folds onto an installed launcher collides with it, and the message sends the user to
+    /// Finder — where the name they typed is not what anything is called.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aCollidingCreateNamesTheLauncherAsTheVolumeStoresIt() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let installed = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.add(AddProfileRequest(
+                name: env.name("other"), displayName: installed.displayName.uppercased()
+            ))
+        }
+
+        #expect(thrown == .launcherAlreadyExists(path: installed.appPath))
+        #expect(thrown.errorDescription?.contains(installed.displayName) == true)
+    }
+
     /// The same promise on the create path. `add(force:)` rebuilds the launcher already at the
     /// path, so a forced re-create under a new capitalisation runs into `replaceItemAt` keeping
     /// the installed file's name exactly as a rename does.

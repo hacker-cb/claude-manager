@@ -19,10 +19,6 @@ final class ReplaceRefusingFileManager: FileManager, @unchecked Sendable {
         options _: FileManager.ItemReplacementOptions = [],
         resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
     ) throws {
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: Self.message]
-        )
+        throw stubbedWriteFailure(Self.message)
     }
 }

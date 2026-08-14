@@ -110,9 +110,16 @@ short form:
   renames the installed bundle to the requested spelling first. Without it the launcher's file
   says one thing while `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s
   deliberate `==` on the bundle path quietly stops matching. For the same reason
-  `profileMatchingItsLauncher` takes the bundle's spelling **and its display name** from disk:
-  `build` writes both from the profile handed to it, so a stale `Profile` would have `rebuild`
-  rename a launcher back and undo the user's edit. **Which spellings fold is the volume's answer,
+  `profileMatchingItsLauncher` takes the bundle's spelling **and everything else the launcher
+  records** from disk: `build` writes all of it from the profile handed to it, so a stale
+  `Profile` would have `rebuild` undo as much of an edit as that value is stale. Where the volume
+  will not say how it spells a name, every one of these **falls back rather than refusing** —
+  that same function gates `remove`, and `alignInstalledSpelling` is on the only path a
+  `currentWrapperVersion` bump reaches a launcher by, so a refusal there strands a profile that
+  can then be neither edited, rebuilt nor deleted. What must not happen is *assuming* the rename
+  landed: `update` reports the spelling the bundle actually ended up with. And every message
+  naming an occupied path names it as the volume stores it (`add` and `update` alike) — the text
+  sends the user to Finder, and the spelling they typed is not what anything there is called. **Which spellings fold is the volume's answer,
   never `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while
   `"Σ".lowercased()` is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ
   only in case" declines exactly where the collision is real. Every side asks identity instead.

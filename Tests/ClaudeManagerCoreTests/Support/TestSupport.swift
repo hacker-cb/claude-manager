@@ -432,6 +432,19 @@ func rawOverlay(_ userDataPath: String, fileManager: FileManager = .default) -> 
 /// rename's Trash step is exactly the operation whose failure the store has to report rather
 /// than swallow. Subclassing reaches it because every caller goes through the injected
 /// instance, so nothing else in the store is disturbed.
+/// The failure a stubbed `FileManager` reports when it refuses a write.
+///
+/// One shape for all of them, so changing how stubbed filesystem failures look — a different
+/// domain, an errno-bearing `userInfo` a test can assert on — is one edit rather than four, and
+/// each stub is left as nothing but the method it overrides.
+func stubbedWriteFailure(_ message: String) -> NSError {
+    NSError(
+        domain: NSCocoaErrorDomain,
+        code: NSFileWriteUnknownError,
+        userInfo: [NSLocalizedDescriptionKey: message]
+    )
+}
+
 final class TrashRefusingFileManager: FileManager, @unchecked Sendable {
     /// The reason the store is expected to carry into its report.
     static let message = "The Trash is unavailable on this volume."
@@ -440,11 +453,7 @@ final class TrashRefusingFileManager: FileManager, @unchecked Sendable {
         at _: URL,
         resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
     ) throws {
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: Self.message]
-        )
+        throw stubbedWriteFailure(Self.message)
     }
 }
 
@@ -455,11 +464,7 @@ final class TrashRefusingLosingRemovalsFileManager: FileManager, @unchecked Send
         at _: URL,
         resultingItemURL _: AutoreleasingUnsafeMutablePointer<NSURL?>?
     ) throws {
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: TrashRefusingFileManager.message]
-        )
+        throw stubbedWriteFailure(TrashRefusingFileManager.message)
     }
 
     override func removeItem(at url: URL) throws {

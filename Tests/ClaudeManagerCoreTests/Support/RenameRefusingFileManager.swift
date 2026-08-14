@@ -19,10 +19,6 @@ final class RenameRefusingFileManager: FileManager, @unchecked Sendable {
             try super.moveItem(at: srcURL, to: dstURL)
             return
         }
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: Self.message]
-        )
+        throw stubbedWriteFailure(Self.message)
     }
 }

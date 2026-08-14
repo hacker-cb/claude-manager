@@ -25,10 +25,6 @@ final class ReplaceThenFailingFileManager: FileManager, @unchecked Sendable {
             options: options,
             resultingItemURL: resultingItemURL
         )
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteUnknownError,
-            userInfo: [NSLocalizedDescriptionKey: Self.message]
-        )
+        throw stubbedWriteFailure(Self.message)
     }
 }
