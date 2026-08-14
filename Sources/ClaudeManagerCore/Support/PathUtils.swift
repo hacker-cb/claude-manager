@@ -103,10 +103,24 @@ public enum PathUtils {
     /// bundle it was meant to preserve. False whenever either side cannot be statted — a
     /// missing answer is never "yes, the same file", and every caller acts on `true`.
     public static func sameFile(_ lhs: String, _ rhs: String) -> Bool {
-        var left = stat()
-        var right = stat()
-        guard lstat(lhs, &left) == 0, lstat(rhs, &right) == 0 else { return false }
-        return left.st_dev == right.st_dev && left.st_ino == right.st_ino
+        guard let left = fileIdentity(lhs), let right = fileIdentity(rhs) else { return false }
+        return left == right
+    }
+
+    /// What the file system calls the file at `path` — device and inode — or `nil` when it
+    /// cannot be reached. Comparable across time, which is what `sameFile` cannot do: it answers
+    /// about two paths *now*, and some questions are about whether the file at one path is still
+    /// the one that was there a moment ago.
+    public static func fileIdentity(_ path: String) -> FileIdentity? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return FileIdentity(device: info.st_dev, inode: info.st_ino)
+    }
+
+    /// A file's identity as the file system states it — see `fileIdentity`.
+    public struct FileIdentity: Equatable, Sendable {
+        let device: dev_t
+        let inode: ino_t
     }
 
     /// `path` with its last component spelled the way the volume stores it, or `nil` when

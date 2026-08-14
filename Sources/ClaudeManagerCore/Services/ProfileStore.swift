@@ -163,6 +163,16 @@ public struct ProfileStore {
         // Everything the launcher itself records, taken from the launcher — the whole profile
         // rather than a field or two of it, since any of them stale reverts that much of an
         // edit. Only the bundle path is rebuilt, from the volume's own spelling of it.
+        //
+        // No falling back to the caller's spelling when that cannot be read. The marker was
+        // just parsed out of this bundle, so a name that will not come back is an anomaly, not
+        // a state to paper over — and papering over it is the bug this line exists to fix: a
+        // stale path carried forward is written straight back by `build`, which renames the
+        // launcher to it. Refusing costs an edit that can be retried; the fallback costs the
+        // user's rename, silently.
+        guard let installedPath = PathUtils.spellingOnDisk(profile.appPath) else {
+            throw ClaudeManagerError.launcherSpellingUnreadable(path: profile.appPath)
+        }
         let onDisk = installed.profile
         return Profile(
             name: onDisk.name,
@@ -171,7 +181,7 @@ public struct ProfileStore {
             color: onDisk.color,
             profilePath: onDisk.profilePath,
             bundleID: onDisk.bundleID,
-            appPath: PathUtils.spellingOnDisk(profile.appPath) ?? profile.appPath
+            appPath: installedPath
         )
     }
 

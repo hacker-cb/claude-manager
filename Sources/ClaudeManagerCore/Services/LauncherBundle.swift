@@ -212,6 +212,9 @@ public struct LauncherBundle {
 
         if fileManager.fileExists(atPath: appURL.path) {
             let spelledBefore = try alignInstalledSpelling(with: appURL)
+            // Which file the rename left here, so the undo below can tell it apart from the one
+            // the swap would install. Read after the rename, before the swap.
+            let renamedBundle = PathUtils.fileIdentity(appURL.path)
             do {
                 _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
             } catch {
@@ -221,13 +224,22 @@ public struct LauncherBundle {
                 // bundle on disk answers to a name its own marker does not know — the split
                 // identity this whole path exists to close, arrived at from the other side.
                 //
+                // **Only when the file here is still the one that was renamed.** A swap that
+                // throws having already put the staged bundle in place would otherwise have its
+                // new marker and settings moved under the old name — the same split identity,
+                // manufactured by the undo itself. Identity, not the path, is what tells them
+                // apart, since both answer to it. An identity that cannot be read is not a
+                // match: nothing destructive happens on a guess.
+                //
                 // A restore that fails is **said out loud**, not swallowed. The failures that
                 // reach here are correlated — a directory that lost write permission, a volume
                 // that filled or went away fails both the swap and the move back — so the one
                 // case the restore exists for is the one where it is most likely to fail too,
                 // and reporting only "the edit failed" would leave a launcher renamed under a
                 // report that nothing changed.
-                if let spelledBefore {
+                let stillTheRenamedBundle = renamedBundle != nil
+                    && PathUtils.fileIdentity(appURL.path) == renamedBundle
+                if let spelledBefore, stillTheRenamedBundle {
                     do {
                         try fileManager.moveItem(at: appURL, to: spelledBefore)
                     } catch let restoreError {

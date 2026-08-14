@@ -310,6 +310,31 @@ struct ProfileStoreCaseRenameTests {
         #expect(discovered.marker.label == "ZZ")
     }
 
+    /// The undo has to know *what* it is undoing. A swap that fails having already installed the
+    /// staged bundle leaves the new marker and settings at the path, and moving that back under
+    /// the old name would manufacture the very split identity the undo exists to prevent — a
+    /// launcher whose file says one thing and whose marker says another, produced by the repair.
+    /// Identity is what tells the two bundles apart; both answer to the same path.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aSwapThatFailsAfterInstallingIsNotUndoneByRenaming() throws {
+        let env = try makeStoreEnv(fileManager: ReplaceThenFailingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var edits = ProfileEdits(original)
+        edits.displayName = original.displayName.uppercased()
+        edits.color = .named("red")
+
+        #expect(throws: (any Error).self) { try env.store.update(original, applying: edits) }
+
+        // The swap did land, so what is installed is the edited bundle — and it keeps the name
+        // that belongs to it rather than being dragged back under the old one.
+        #expect(try installedNames(in: env) == ["\(edits.displayName).app"])
+        let installed = env.installDir.appendingPathComponent("\(edits.displayName).app")
+        let discovered = try #require(LauncherBundle().readMarker(at: installed))
+        #expect(discovered.displayName == edits.displayName)
+        #expect(discovered.marker.color == "red")
+    }
+
     /// The swap is the last thing that can fail after the bundle has been renamed, and the rename
     /// is the one part of a failed build that does not undo itself. Left in place, the launcher
     /// answers to the new name while its marker still holds the old one — the same split
