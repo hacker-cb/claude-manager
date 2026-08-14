@@ -64,8 +64,10 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
+            // Only the original spelling can ever reach the Trash — on a case-sensitive
+            // volume, where the rename is an ordinary one. The new spelling names precisely
+            // the launcher this fix keeps *out* of it.
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("work").uppercased())
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         // Stands in for the Anthropic token and the chat history.
@@ -91,8 +93,10 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
+            // Only the original spelling can ever reach the Trash — on a case-sensitive
+            // volume, where the rename is an ordinary one. The new spelling names precisely
+            // the launcher this fix keeps *out* of it.
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("work").uppercased())
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         var edits = ProfileEdits(original)
@@ -153,7 +157,10 @@ struct ProfileStoreCaseRenameTests {
             try env.store.update(first, applying: edits)
         }
 
-        #expect(thrown.errorDescription?.isEmpty == false)
+        // The collision guard is what refused, named by its own case — not merely "something
+        // threw", which a validation failure or a marker mismatch would satisfy too.
+        #expect(thrown == .launcherAlreadyExists(path: env.installDir
+                .appendingPathComponent("\(edits.displayName).app").path))
         // Both launchers stand, under the names they had, and nobody's data was touched.
         #expect(try installedNames(in: env) == [
             "\(first.displayName).app", "\(second.displayName).app"
@@ -169,8 +176,10 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
+            // Only the original spelling can ever reach the Trash — on a case-sensitive
+            // volume, where the rename is an ordinary one. The new spelling names precisely
+            // the launcher this fix keeps *out* of it.
             Fixture.purgeTrash(displayNamePrefix: env.display("work"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("work").uppercased())
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         let shouted = original.displayName.uppercased()
@@ -198,7 +207,6 @@ struct ProfileStoreCaseRenameTests {
         defer {
             try? fm.removeItem(at: env.root)
             Fixture.purgeTrash(displayNamePrefix: "Σ\(env.token)")
-            Fixture.purgeTrash(displayNamePrefix: "ς\(env.token)")
         }
         let original = try env.store.add(AddProfileRequest(
             name: env.name("work"), displayName: "Σ\(env.token)"
@@ -231,12 +239,90 @@ struct ProfileStoreCaseRenameTests {
                 .appendingPathComponent("\(profile.displayName.uppercased()).app").path
         )
 
-        try LauncherBundle().build(
-            profile: shouted,
-            realBinaryPath: env.real.binaryURL.path,
-            icnsData: Fixture.baseICNSData()
+        // Stubbed signer and throwaway icns bytes: this asserts a file name, so a real
+        // `codesign`/`iconutil` per write would only buy a subprocess and a failure mode
+        // (`codesign` unavailable) that has nothing to do with what is under test. The
+        // signature across this step is `LauncherSigningTests`' business, where the real tool
+        // runs serialized.
+        try LauncherBundle(runner: stubbedSigningRunner()).build(
+            profile: shouted, realBinaryPath: env.real.binaryURL.path, icnsData: Data("i".utf8)
         )
 
         #expect(try installedNames(in: env) == ["\(shouted.displayName).app"])
+    }
+
+    /// The rename's other half, and the one that loses a launcher outright: retiring the old
+    /// bundle. Identity has to be asked **again** after the build, because before it there was
+    /// nothing to ask about — the launcher was not on disk, a state `profileMatchingItsLauncher`
+    /// supports on purpose (deleted from Finder while the editor sheet was open). `build` then
+    /// creates the bundle, the old path folds onto it, and the retire step trashes the launcher
+    /// that was just built: success reported, sidebar empty, login left behind.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aCaseOnlyRenameOfAnAbsentLauncherKeepsTheOneItBuilds() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let token = URL(fileURLWithPath: original.profilePath).appendingPathComponent("token")
+        try Data("secret".utf8).write(to: token)
+        // Deleted from under the app, exactly as Finder or a cleanup script would.
+        try fm.removeItem(at: original.appURL)
+
+        var edits = ProfileEdits(original)
+        edits.displayName = original.displayName.uppercased()
+        let updated = try env.store.update(original, applying: edits).profile
+
+        #expect(try installedNames(in: env) == ["\(edits.displayName).app"])
+        #expect(env.store.list().map(\.profile.appPath) == [updated.appPath])
+        #expect(try Data(contentsOf: token) == Data("secret".utf8))
+    }
+
+    /// A `Profile` captured before the rename — a row's context menu, a detail pane — must not
+    /// undo it. `build` installs under the spelling its profile carries, and after a rename in
+    /// place the pre-rename path still opens the same bundle, so nothing threw the way it used
+    /// to: the launcher was renamed back and `CFBundleName` rewritten with it, silently
+    /// reverting an edit the user made.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aRebuildFromAStaleProfileDoesNotUndoARenameInPlace() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let stale = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var edits = ProfileEdits(stale)
+        edits.displayName = stale.displayName.uppercased()
+        let renamed = try env.store.update(stale, applying: edits).profile
+
+        try env.store.rebuild(stale)
+
+        #expect(try installedNames(in: env) == ["\(renamed.displayName).app"])
+        #expect(env.store.list().map(\.profile.displayName) == [renamed.displayName])
+    }
+
+    /// The rename runs **before** the atomic swap, so its failure is like every other failure in
+    /// `build`: the previous launcher is left whole. Run after the swap it would throw with the
+    /// rebuilt bundle already installed under the old name — an edit reported as failed, its
+    /// marker already carrying the new display name, and the launcher's file disagreeing with
+    /// `Profile.id`, which is the split identity this whole change exists to close.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aFailedSpellingRenameLeavesThePreviousLauncherIntact() throws {
+        let env = try makeStoreEnv(fileManager: RenameRefusingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let colorBefore = try #require(LauncherBundle().readMarker(at: original.appURL)).marker.color
+        var edits = ProfileEdits(original)
+        edits.displayName = original.displayName.uppercased()
+        edits.color = .named("red")
+
+        #expect(throws: (any Error).self) { try env.store.update(original, applying: edits) }
+
+        // Same launcher, same name, same badge: nothing of the edit landed.
+        #expect(try installedNames(in: env) == ["\(original.displayName).app"])
+        let discovered = try #require(LauncherBundle().readMarker(at: original.appURL))
+        #expect(discovered.marker.color == colorBefore)
+        #expect(env.store.list().map(\.profile.appPath) == [original.appPath])
     }
 }

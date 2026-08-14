@@ -48,24 +48,30 @@ public extension ProfileStore {
                 .appendingPathComponent("\(edits.displayName).app").path
         )
 
+        // **Renaming means the bundle moves to a different file** — not merely that the path is
+        // spelled differently. On a case-insensitive volume, macOS's default, `WORK.app` *is*
+        // the bundle this profile already owns when `Work.app` is installed, and every step
+        // below asks the same question of it: is the destination occupied (by a stranger), is
+        // the old bundle to be retired (a different one), does the hidden flag have to be
+        // carried across (to a file that does not exist yet). Spelled as a string comparison,
+        // all four answered wrong at once — the destination looked taken by the profile's own
+        // launcher, so a rename to another capitalisation was refused outright. Folded in here
+        // rather than subtracted at each site: a condition added later that says `if renaming`
+        // and forgets the exception would trash the bundle `build` has just written.
+        //
+        // `build` is what makes this true rather than merely tolerated: it renames the installed
+        // bundle to the requested spelling, so a rename in place still lands where it says.
         let renaming = updated.appPath != original.appPath
-        // Whether the destination is *occupied* is a question about files, and `fileExists`
-        // answers about paths. On a case-insensitive volume — macOS's default — `WORK.app` is
-        // the very bundle this profile already owns when `Work.app` is installed, so the check
-        // used to find the profile's own launcher and refuse the edit on its behalf: renaming a
-        // profile to another capitalisation of its name was impossible from the app at all.
-        // Asking the file system for identity instead keeps the guard exactly as strong where
-        // it matters — on a case-sensitive volume those are two files and the second is a
-        // stranger's, which `sameFile` reports as such.
-        let renamingInPlace = renaming && PathUtils.sameFile(original.appPath, updated.appPath)
-        if renaming, !renamingInPlace, fileManager.fileExists(atPath: updated.appPath) {
+            && !PathUtils.sameFile(original.appPath, updated.appPath)
+        if renaming, fileManager.fileExists(atPath: updated.appPath) {
             throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
         }
         // A launcher the user put out of sight stays out of sight across an edit. `build`
         // carries the flag itself, but only for a bundle it *replaces* — a rename installs at
         // a path that does not exist yet, so the flag has to come from the bundle being
-        // retired, and only this side knows both paths. A rename in place is not that: the
-        // bundle at the new spelling is the one `build` replaced, flag and all.
+        // retired, and only this side knows both paths. A rename in place is not that, which is
+        // what `renaming` being false about it says: the bundle at the new spelling is the one
+        // `build` replaced, flag and all.
         let wasHidden = HiddenFlag.isSet(at: original.appURL)
 
         try ensureInstallDirectoryWritable()
@@ -104,12 +110,19 @@ public extension ProfileStore {
         // only what this call wrote; the icon-cache registration and the managed-config
         // overlay happen below, so neither has run yet.
         //
-        // **Never on a rename in place.** There the old path and the new one are one file, so
-        // the bundle this would retire is the one `build` has just written under its new name:
-        // trashing it leaves the profile with no launcher at all, and the data directory it
-        // still owns with nothing in the app pointing at it. Nothing is left over to retire
-        // either — `build` renamed the bundle rather than adding a second one.
-        if renaming, !renamingInPlace, fileManager.fileExists(atPath: original.appPath) {
+        // **Identity is asked again, after the build, and it has to be.** `renaming` was decided
+        // before it, when `sameFile` could compare two paths that both existed — and it answers
+        // `false` when neither side can be statted, which is exactly the supported case of a
+        // profile whose launcher is not on disk at Save time (deleted in Finder while the editor
+        // was open; `profileMatchingItsLauncher` rebuilds it). Rename such a profile to another
+        // capitalisation and there is nothing to compare beforehand, so this reads as an
+        // ordinary rename — but `build` has since created the bundle, and on a case-insensitive
+        // volume `fileExists(original.appPath)` now folds straight onto it. Trashing there
+        // retires the launcher just built: `update` returns success, the sidebar goes empty, and
+        // the user-data directory holding the login is left with nothing pointing at it.
+        let oldBundleIsStillItsOwnFile = fileManager.fileExists(atPath: original.appPath)
+            && !PathUtils.sameFile(original.appPath, updated.appPath)
+        if renaming, oldBundleIsStillItsOwnFile {
             do {
                 _ = try bundle.moveToTrash(appURL: original.appURL)
             } catch {
@@ -120,18 +133,17 @@ public extension ProfileStore {
             }
         }
 
-        if renaming, !renamingInPlace, wasHidden { HiddenFlag.set(at: updated.appURL) }
+        if renaming, wasHidden { HiddenFlag.set(at: updated.appURL) }
 
         // Register so the new icon is picked up on next fetch — never flash the screen. A
         // pinned tile can be stale only for an in-place edit (or a rename onto a trashed
         // twin) that changed the icon; it is repainted by the app's opt-in refresh. A
-        // fresh rename path has nothing cached.
-        // A rename in place counts with the in-place edits, not with the renames: the file at
-        // the new spelling is the one that was already here, and the volume opens both
-        // spellings as one path — so whatever a pinned tile cached, it cached for this bundle.
+        // fresh rename path has nothing cached — and a rename in place is not one: the file at
+        // the new spelling is the one that was already here, so it counts with the in-place
+        // edits, which is what `renaming` being false about it already says.
         iconCache.register(appURL: updated.appURL)
-        let dockRefreshPending = iconChanged
-            && (!renaming || renamingInPlace || bundle.hasTrashedTwin(appURL: updated.appURL))
+        let dockRefreshPending =
+            iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
         // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
         try? reconcileManagedConfig(for: updated)
         // The nudge names the *edited* profile, so it carries the updated value: after a

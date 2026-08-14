@@ -116,6 +116,21 @@ public struct ProfileStore {
     ///   returned profile adopts the marker's spelling of that directory. `runningPID` greps
     ///   for the literal path, so writing back a different spelling of the same directory
     ///   would hide a live instance from `stop`, `list` and `remove`.
+    ///
+    /// The launcher's **presentation** — the spelling of its bundle path, and the display name
+    /// inside it — is likewise adopted from disk rather than from the caller, which is what
+    /// makes `rebuild` "regenerate from the bundle's own marker" true rather than nearly true.
+    /// `build` writes both from the profile it is handed, so a `Profile` captured before a
+    /// rename in place — a row's context menu, a detail pane, any value held across the refresh
+    /// — would otherwise have `rebuild` rename the launcher *back* and rewrite `CFBundleName`
+    /// with it, undoing an edit the user made and leaving a running instance showing the old
+    /// name with no restart nudge, since a rebuild reports none. Before an in-place rename was
+    /// possible this was unreachable: a rename retired the old bundle, so a stale path resolved
+    /// to nothing and `rebuild` threw `launcherNotFound`. Now it resolves to the same file, and
+    /// the answer to "which launcher is this" has to come from the volume.
+    ///
+    /// This takes nothing away from `update`: an edit's new display name arrives in
+    /// `ProfileEdits` and is applied to the profile this returns, never read back from it.
     func profileMatchingItsLauncher(_ profile: Profile) throws -> Profile {
         guard let installed = bundle.readMarker(at: profile.appURL) else {
             guard !fileManager.fileExists(atPath: profile.appPath) else {
@@ -146,12 +161,12 @@ public struct ProfileStore {
         }
         return Profile(
             name: profile.name,
-            displayName: profile.displayName,
+            displayName: installed.displayName,
             label: profile.label,
             color: profile.color,
             profilePath: installed.marker.profile,
             bundleID: profile.bundleID,
-            appPath: profile.appPath
+            appPath: PathUtils.spellingOnDisk(profile.appPath) ?? profile.appPath
         )
     }
 

@@ -1,9 +1,12 @@
 import Darwin
 import Foundation
 
-/// Small path/string helpers used across services. All but `canonicalPath` (and the
-/// `sameDirectory` built on it) are pure; those two have to ask the file system, since a
-/// symlink and a volume's case sensitivity are facts about the disk and not about the string.
+/// Small path/string helpers used across services. Most are pure string work; `canonicalPath`
+/// (with the `sameDirectory` built on it), `sameFile` and `spellingOnDisk` are not — they ask
+/// the file system, because a symlink, a volume's case folding and the name a volume actually
+/// stores are facts about the disk and not about the string. Each of those three answers
+/// "no"/`nil` for a path it cannot reach, so a caller that needs the difference between *absent*
+/// and *unreachable* has to establish it itself.
 public enum PathUtils {
     /// Collapse a leading `$HOME` to `~` for display. Storage always keeps
     /// absolute paths — this is presentation only.
@@ -104,6 +107,24 @@ public enum PathUtils {
         var right = stat()
         guard lstat(lhs, &left) == 0, lstat(rhs, &right) == 0 else { return false }
         return left.st_dev == right.st_dev && left.st_ino == right.st_ino
+    }
+
+    /// `path` with its last component spelled the way the volume stores it, or `nil` when
+    /// nothing there can be read.
+    ///
+    /// A path that *opens* a file is not the same as the file's name: on a case-insensitive
+    /// volume `…/WORK.app` opens the installed `…/Work.app`, and asking `lastPathComponent` only
+    /// echoes back what the caller already said. This asks the file system instead.
+    ///
+    /// It matters wherever a path is an **identity** rather than a way in. `Profile.id` *is*
+    /// `appPath` and `build` installs a bundle under the spelling its profile carries, so a
+    /// profile holding a path that merely opens the launcher can rename that launcher on its
+    /// next write. Only the last component is settled, which is the one that is free text: the
+    /// rest comes from `ProfileStoreConfiguration` and is the same string for everyone.
+    public static func spellingOnDisk(_ path: String) -> String? {
+        let url = URL(fileURLWithPath: path)
+        guard let name = (try? url.resourceValues(forKeys: [.nameKey]))?.name else { return nil }
+        return url.deletingLastPathComponent().appendingPathComponent(name).path
     }
 
     /// Escape a literal string so it can be embedded in an extended regular

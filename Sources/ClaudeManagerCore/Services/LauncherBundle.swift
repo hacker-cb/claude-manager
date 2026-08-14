@@ -211,8 +211,8 @@ public struct LauncherBundle {
         }
 
         if fileManager.fileExists(atPath: appURL.path) {
+            try alignInstalledSpelling(with: appURL)
             _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
-            try matchInstalledSpelling(to: appURL)
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
@@ -223,10 +223,10 @@ public struct LauncherBundle {
         return iconChanged
     }
 
-    /// Finish what `replaceItemAt` leaves undone: put the bundle under the name it was built
-    /// for.
+    /// Bring the bundle already installed here under the name this build was asked for, so the
+    /// swap that follows lands where it says it does.
     ///
-    /// That call writes into the file **already at the path and keeps that file's name**
+    /// `replaceItemAt` writes into the file **already at the path and keeps that file's name**
     /// (measured, not inferred from the docs). On a case-insensitive volume `WORK.app` *is* the
     /// installed `Work.app`, so a build asked for a new spelling would write every byte it
     /// promised and return with the old name still on disk — and the rest of the app takes
@@ -237,19 +237,27 @@ public struct LauncherBundle {
     /// producing. It also reaches `add(force:)`, where re-creating a profile under a new
     /// spelling silently kept the old one.
     ///
-    /// Below the ad-hoc signing call, and allowed to be, on the same terms as `HiddenFlag`:
-    /// this renames the bundle's *directory* rather than writing anything into it, and the seal
-    /// spans the contents — `codesign --verify --strict` passes across a rename, measured for a
-    /// case-only change and a wholesale one alike.
+    /// **Before the swap, deliberately.** This step can fail — the bundle renamed from Finder
+    /// mid-build, the install directory losing write permission — and every other failure in
+    /// `build` happens while the previous launcher is still whole. Run afterwards it would throw
+    /// with the rebuilt bundle already installed under the *old* name: the edit reported as
+    /// failed, the marker already carrying the new display name, and exactly the split identity
+    /// this function exists to prevent. Run first, a failure leaves the launcher untouched and
+    /// the caller free to report an edit that did not happen. It renames the *installed* bundle,
+    /// which this build has not written to and whose seal it does not touch; the staging copy is
+    /// signed and swapped in afterwards, so signing remains the last write into what ships.
     ///
     /// What is moved is decided by **identity**, never by a case rule of our own. The volume is
     /// the only authority on which two spellings it folds, and its rules are not `lowercased()`:
     /// APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while `"Σ".lowercased()` is `σ` and
     /// `"ς".lowercased()` is `ς` — so a guard written that way declines to rename exactly where
     /// the collision is real, which is the case this function exists for. Asking whether the
-    /// requested path opens the file we are about to move covers every folding the volume does,
-    /// and still refuses to move a *different* file, which is all the guard was ever for.
-    private func matchInstalledSpelling(to appURL: URL) throws {
+    /// requested path opens the file about to be moved covers every folding the volume does, and
+    /// still refuses to move a *different* file, which is all the guard was ever for. Declining
+    /// is safe here in a way it would not be after the swap: the build carries on and
+    /// `replaceItemAt` behaves as it always did, rather than leaving a caller that has already
+    /// acted on the promise of a rename.
+    private func alignInstalledSpelling(with appURL: URL) throws {
         let requested = appURL.lastPathComponent
         guard let installed = (try? appURL.resourceValues(forKeys: [.nameKey]))?.name,
               installed != requested

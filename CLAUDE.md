@@ -48,11 +48,15 @@ short form:
   *execute* an unsigned `.app` (AppleSystemPolicy kills it seconds after it appears in
   the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
   staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
-  never add a write below that call, and never sign anywhere but `build`. The two steps that
-  *are* below it write nothing **into** the bundle: `HiddenFlag.set` sets the inode's own flag
-  bits, and `matchInstalledSpelling` renames the bundle's directory. `codesign --verify
-  --strict` passes across both — measured, for a case-only rename and a wholesale one alike —
-  and neither is licence to move anything else down there.
+  never add a write below that call, and never sign anywhere but `build`. `HiddenFlag.set` is the
+  one thing that writes into the shipped bundle afterwards, and only because it sets the inode's
+  own flag bits, which the seal does not span. `alignInstalledSpelling` also runs after the
+  signing call but before the swap, and renames the *previously installed* bundle rather than
+  writing into anything — deliberately on that side of the swap, so that its failure leaves the
+  old launcher whole like every other failure in `build` (a rename attempted afterwards throws
+  with the rebuilt bundle already installed under the old name: an edit reported as failed whose
+  marker already carries the new one). `codesign --verify --strict` passes across a rename,
+  measured for a case-only change and a wholesale one alike.
 - **Never turn signing off for the app's own build either.** The same execution policy
   applies one level up: `make build-app` (and CI, which builds through it) takes the ad-hoc
   identity `project.yml` declares (`CODE_SIGN_IDENTITY: "-"`), and putting
@@ -92,19 +96,26 @@ short form:
 - **"Is something already at this path?" is a question about files, not strings.** `fileExists`
   folds case on the default macOS volume, so it answers *yes* for `WORK.app` while the profile's
   own `Work.app` is what it found — which is how renaming a profile to another capitalisation of
-  its name came to be refused on behalf of the very launcher being renamed. `update` asks
-  `PathUtils.sameFile` (`lstat` identity — `st_dev` + `st_ino`, so a symlink counts as itself)
-  and treats that as a rename **in place**: the old bundle is never trashed, because it *is* the
-  new one, and trashing it leaves the profile with no launcher at all. On a case-sensitive volume
-  the same two paths are two files and the guard refuses exactly as before — the volume decides,
-  not a rule stated here. The other half is in `build`: `replaceItemAt` writes into the file
-  already at the path and **keeps that file's name** (measured), so it finishes by renaming the
-  bundle to the spelling it was asked for. Without that the launcher's file says one thing while
-  `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s deliberate `==` on the
-  bundle path quietly stops matching. **Which spellings fold is the volume's answer, never
-  `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while `"Σ".lowercased()`
-  is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ only in case"
-  declines exactly where the collision is real. Both sides ask identity instead.
+  its name came to be refused on behalf of the very launcher being renamed. So `renaming` in
+  `update` means "the bundle moves to a **different file**" — `PathUtils.sameFile`, `lstat`
+  identity (`st_dev` + `st_ino`, a symlink counting as itself) — and not "the path is spelled
+  differently". Folded into that one flag rather than subtracted at each site, because all four
+  sites ask the same thing and a later `if renaming` that forgot the exception would trash the
+  bundle `build` has just written. On a case-sensitive volume those two paths are two files and
+  every guard refuses exactly as before: the volume decides, not a rule stated here. **The trash
+  step asks again, after the build**, since before it there is nothing to compare when the
+  launcher is not on disk — a supported state — and `build` will have created a bundle the old
+  spelling then folds onto. The other half is in `build`: `replaceItemAt` writes into the file
+  already at the path and **keeps that file's name** (measured), so `alignInstalledSpelling`
+  renames the installed bundle to the requested spelling first. Without it the launcher's file
+  says one thing while `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s
+  deliberate `==` on the bundle path quietly stops matching. For the same reason
+  `profileMatchingItsLauncher` takes the bundle's spelling **and its display name** from disk:
+  `build` writes both from the profile handed to it, so a stale `Profile` would have `rebuild`
+  rename a launcher back and undo the user's edit. **Which spellings fold is the volume's answer,
+  never `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while
+  `"Σ".lowercased()` is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ
+  only in case" declines exactly where the collision is real. Every side asks identity instead.
 - **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
   twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
   directory handed to it is itself a symlink; the `atPath` overload does neither. Both
