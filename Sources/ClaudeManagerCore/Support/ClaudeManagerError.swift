@@ -95,12 +95,15 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
                 + "\(PathUtils.abbreviatingHome(newPath)). Move the first to the Trash in "
                 + "Finder; until you do, both open this profile and either can start it."
         case let .launcherLeftUnderNewName(path, previousPath, reason):
-            return "The edit was not applied: \(Sentences.terminated(reason)) The launcher had "
+            // Worded for a launcher rather than for an edit: `build` raises this, and a forced
+            // create drives `build` too — a user who pressed Create should not be told their
+            // edit failed.
+            return "The launcher was not rewritten: \(Sentences.terminated(reason)) It had "
                 + "already been renamed to \(PathUtils.abbreviatingHome(path)) by then and "
                 + "could not be renamed back, so it is still the launcher it was — same "
                 + "profile, same settings — under the new name. Rename it to "
-                + "\(PathUtils.abbreviatingHome(previousPath)) in Finder, or make the edit "
-                + "again to bring the two into line."
+                + "\(PathUtils.abbreviatingHome(previousPath)) in Finder, or run the same "
+                + "operation again to bring the two into line."
         case let .profileDataHoldsAnother(name, others):
             let list = Sentences.list(others)
             return "\"\(name)\"'s profile data folder contains the data for \(list), so "
