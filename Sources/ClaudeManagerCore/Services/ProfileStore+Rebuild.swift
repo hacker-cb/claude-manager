@@ -83,7 +83,7 @@ public extension ProfileStore {
         )
         let iconChanged = try bundle.build(
             profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
-        )
+        ).iconChanged
         // Register so the new icon is picked up on next fetch/open — never flash the
         // screen (see `IconCache`).
         iconCache.register(appURL: profile.appURL)

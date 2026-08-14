@@ -85,48 +85,12 @@ public struct LauncherBundle {
 
     // MARK: - Build
 
-    /// The `Contents/Resources` file name carrying `icnsData` — content-addressed, so the
-    /// name changes exactly when the icon's bytes do.
-    ///
-    /// This is what makes an edited badge actually *appear*. A launcher rebuild presents
-    /// the same bundle identity every time — same path, same `CFBundleIdentifier`, same
-    /// `CFBundleVersion` (we ship a fixed `1`) — so when it also points at the same
-    /// `Badge.icns`, IconServices has nothing to tell the new icon apart by and serves the
-    /// image it already rendered. The resource name is the one part of that identity this
-    /// app controls, so deriving it from the icon's own bytes is what makes an edited badge
-    /// a thing the cache has never seen. The staging build always writes into a fresh
-    /// directory, so the previous name is dropped with the bundle it belonged to rather
-    /// than accumulating.
-    ///
-    /// `sha256(icns)[:16]` mirrors `TokenProvider.fingerprint`: 64 bits is far past any
-    /// practical collision here, and the name stays short enough to read in Finder.
-    public static func iconFileName(for icnsData: Data) -> String {
-        let hex = SHA256.hash(data: icnsData).map { String(format: "%02x", $0) }.joined()
-        return "Badge-\(hex.prefix(16)).icns"
-    }
-
-    /// The `Contents/Resources` file name a bundle's recorded `CFBundleIconFile` refers to,
-    /// or `nil` when it records nothing usable. The single place that value is interpreted,
-    /// so every reader resolves it the same way:
-    ///
-    /// - `lastPathComponent` keeps the read inside `Contents/Resources`. A launcher bundle
-    ///   is user-writable, so the recorded value is not trusted to be a bare file name.
-    /// - The extension is optional in `CFBundleIconFile`, so restore it when absent —
-    ///   otherwise a hand-written `Badge` resolves to no file at all.
-    public static func iconResourceName(recorded: String?) -> String? {
-        guard let recorded, !recorded.isEmpty else { return nil }
-        var name = (recorded as NSString).lastPathComponent
-        guard !name.isEmpty, name != "/" else { return nil }
-        if !name.hasSuffix(".icns") { name += ".icns" }
-        return name
-    }
-
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
-    /// at the same path — callers enforce the force/running policy first. Returns whether
-    /// the badge icon actually changed vs. what was installed at this path, so a caller
-    /// can skip the screen-flashing Dock refresh when it didn't.
+    /// at the same path — callers enforce the force/running policy first.
     @discardableResult
-    public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws -> Bool {
+    public func build(
+        profile: Profile, realBinaryPath: String, icnsData: Data
+    ) throws -> BuildResult {
         let appURL = profile.appURL
         let iconFileName = Self.iconFileName(for: icnsData)
 
@@ -210,8 +174,54 @@ public struct LauncherBundle {
             )
         }
 
+        var spellingCertain = true
         if fileManager.fileExists(atPath: appURL.path) {
-            _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+            let alignment = try alignInstalledSpelling(with: appURL)
+            if case .unknown = alignment { spellingCertain = false }
+            let spelledBefore: URL? = if case let .renamed(from) = alignment {
+                from
+            } else { nil }
+            // Which file the rename left here, so the undo below can tell it apart from the one
+            // the swap would install. Read after the rename, before the swap.
+            let renamedBundle = PathUtils.fileIdentity(appURL.path)
+            do {
+                _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+            } catch {
+                // Put the name back. The rename above is the one part of a failed build that
+                // does not undo itself: the launcher would be left under the *new* spelling
+                // carrying the *old* contents, so the edit is reported as failed while the
+                // bundle on disk answers to a name its own marker does not know — the split
+                // identity this whole path exists to close, arrived at from the other side.
+                //
+                // **Only when the file here is still the one that was renamed.** A swap that
+                // throws having already put the staged bundle in place would otherwise have its
+                // new marker and settings moved under the old name — the same split identity,
+                // manufactured by the undo itself. Identity, not the path, is what tells them
+                // apart, since both answer to it. An identity that cannot be read is not a
+                // match: nothing destructive happens on a guess.
+                //
+                // A restore that fails is **said out loud**, not swallowed. The failures that
+                // reach here are correlated — a directory that lost write permission, a volume
+                // that filled or went away fails both the swap and the move back — so the one
+                // case the restore exists for is the one where it is most likely to fail too,
+                // and reporting only "the edit failed" would leave a launcher renamed under a
+                // report that nothing changed.
+                let stillTheRenamedBundle = renamedBundle != nil
+                    && PathUtils.fileIdentity(appURL.path) == renamedBundle
+                if let spelledBefore, stillTheRenamedBundle {
+                    do {
+                        try fileManager.moveItem(at: appURL, to: spelledBefore)
+                    } catch let restoreError {
+                        throw ClaudeManagerError.launcherLeftUnderNewName(
+                            path: appURL.path,
+                            previousPath: spelledBefore.path,
+                            reason: Sentences.terminated(Sentences.reason(error))
+                                + " " + Sentences.reason(restoreError)
+                        )
+                    }
+                }
+                throw error
+            }
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
@@ -219,35 +229,17 @@ public struct LauncherBundle {
         // bits, which the seal does not span — its doc says why the obvious API is not usable
         // here, and that the two are not interchangeable.
         if wasHidden { HiddenFlag.set(at: appURL) }
-        return iconChanged
-    }
-
-    /// Whether the badge this build is about to write differs from what the bundle
-    /// installed at `appURL` presents — by the resource **name** it points at as well as by
-    /// its bytes. Both are read from that bundle's own `CFBundleIconFile`, never a
-    /// hardcoded name, which is also what keeps this correct against a launcher built
-    /// before v4 whose badge is still the fixed `Badge.icns`.
-    ///
-    /// The name is checked on its own for one case, and it is the case this whole change
-    /// exists for: a pre-v4 launcher that was already edited carries the *current* badge
-    /// bytes behind a name IconServices has a stale render for. Comparing bytes alone
-    /// calls that "unchanged", so the migration rebuild — the very moment the fix reaches
-    /// that launcher — would decline to offer the Dock refresh its tile needs. After v4
-    /// the name is derived from the bytes, so this adds nothing to an ordinary rebuild:
-    /// same icon, same name, still unchanged.
-    private func installedIconDiffers(at appURL: URL, name: String, data: Data) -> Bool {
-        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-        guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
-              let installedName = Self.iconResourceName(recorded: info["CFBundleIconFile"] as? String)
-        else { return true } // nothing installed here yet, or unreadable — treat as changed
-        guard installedName == name else { return true }
-        // Same name still gets a byte check: it catches a truncated or hand-edited
-        // resource, where the name promises bytes the file no longer holds.
-        let installed = try? Data(
-            contentsOf: appURL.appendingPathComponent("Contents/Resources")
-                .appendingPathComponent(installedName)
+        // Where the bundle ended up, established here rather than guessed at by each caller —
+        // and `spellingCertain` covers **both** ways the answer can be a guess: the alignment
+        // step not establishing the installed name, and this read failing on its own. Either
+        // way `appPath` is the requested spelling, which must not be reported under a word that
+        // promises it came from the volume.
+        let stored = PathUtils.spellingOnDisk(appURL.path)
+        return BuildResult(
+            iconChanged: iconChanged,
+            appPath: stored ?? appURL.path,
+            spellingCertain: spellingCertain && stored != nil
         )
-        return installed != data
     }
 
     func writeInfoPlist(

@@ -116,6 +116,22 @@ public struct ProfileStore {
     ///   returned profile adopts the marker's spelling of that directory. `runningPID` greps
     ///   for the literal path, so writing back a different spelling of the same directory
     ///   would hide a live instance from `stop`, `list` and `remove`.
+    ///
+    ///   Everything else the launcher records — display name, label, colour, bundle id — is
+    ///   adopted the same way, which is what makes `rebuild`'s "regenerates from the bundle's
+    ///   own marker" true rather than nearly true. `build` writes all of it from the profile it
+    ///   is handed, so a `Profile` captured before an edit — a row's context menu, a detail
+    ///   pane, any value held across the refresh — would have `rebuild` write those older values
+    ///   back, undoing as much of the edit as that value is stale. The bundle path is settled
+    ///   from the volume's spelling of it for the same reason: after a rename in place the
+    ///   pre-rename path still opens the same file, so the rebuild would rename the launcher
+    ///   *back* and rewrite `CFBundleName` with it, leaving a running instance showing the old
+    ///   name and no restart nudge, since a rebuild reports none. Before an in-place rename was
+    ///   possible none of this was reachable: a rename retired the old bundle, so a stale path
+    ///   resolved to nothing and `rebuild` threw `launcherNotFound`.
+    ///
+    /// This takes nothing away from `update`: an edit's new values arrive in `ProfileEdits` and
+    /// are applied to the profile this returns, never read back from it.
     func profileMatchingItsLauncher(_ profile: Profile) throws -> Profile {
         guard let installed = bundle.readMarker(at: profile.appURL) else {
             guard !fileManager.fileExists(atPath: profile.appPath) else {
@@ -144,14 +160,29 @@ public struct ProfileStore {
                 installedPath: installed.marker.profile
             )
         }
+        // Everything the launcher itself records, taken from the launcher — the whole profile
+        // rather than a field or two of it, since any of them stale reverts that much of an
+        // edit. Only the bundle path is rebuilt, from the volume's own spelling of it.
+        //
+        // A spelling that cannot be read falls back to the caller's, rather than refusing. This
+        // function gates `remove` as well as the writes, and `remove` needs no spelling at all —
+        // it trashes a path that opens the same bundle either way. Refusing here would leave a
+        // profile that can be neither edited, rebuilt *nor* deleted, over an attribute none of
+        // those three needs, with a message about a rename nobody asked for. The fallback is
+        // safe in the way that matters: a stale spelling only reverts a rename if something
+        // renames the launcher to it, and the one step that does — `alignInstalledSpelling` —
+        // cannot read the name either, so it does nothing and `replaceItemAt` keeps the name
+        // already on disk.
+        let installedPath = PathUtils.spellingOnDisk(profile.appPath) ?? profile.appPath
+        let onDisk = installed.profile
         return Profile(
-            name: profile.name,
-            displayName: profile.displayName,
-            label: profile.label,
-            color: profile.color,
-            profilePath: installed.marker.profile,
-            bundleID: profile.bundleID,
-            appPath: profile.appPath
+            name: onDisk.name,
+            displayName: onDisk.displayName,
+            label: onDisk.label,
+            color: onDisk.color,
+            profilePath: onDisk.profilePath,
+            bundleID: onDisk.bundleID,
+            appPath: installedPath
         )
     }
 
@@ -285,54 +316,7 @@ public struct ProfileStore {
         }
 
         if fileManager.fileExists(atPath: profile.appPath) {
-            guard request.force else {
-                throw ClaudeManagerError.launcherAlreadyExists(path: profile.appPath)
-            }
-            // `force` means "rebuild the launcher that is already here" — so what is here has
-            // to be one of ours, and it has to be this profile's.
-            //
-            // Both halves are load-bearing. `build` finishes with `replaceItemAt`, which
-            // *deletes* what it replaces: with no marker check, a forced create whose display
-            // name resolves onto a bundle we do not own destroys it outright, and the default
-            // install directory is the real Claude.app's own — a display name of "Claude"
-            // (the sheet's placeholder is "Claude NAME") wipes the user's Claude installation
-            // and every launcher's baked binary path with it. With no directory check, the
-            // rebuild repoints an existing launcher at another user-data dir and abandons the
-            // one holding its login and chat history.
-            guard let installed = bundle.readMarker(at: profile.appURL) else {
-                throw ClaudeManagerError.markerMissing(path: profile.appPath)
-            }
-            guard PathUtils.sameDirectory(installed.marker.profile, profile.profilePath) else {
-                throw ClaudeManagerError.launcherHoldsOtherProfileData(
-                    appPath: profile.appPath,
-                    installed: installed.marker.profile,
-                    requested: profile.profilePath
-                )
-            }
-            // The directory alone does not identify the launcher: two launchers may share one
-            // profile directory, so a force with a *different* name and the sibling's display
-            // name would pass the check above, replace that sibling, and write this name into
-            // its marker — renaming a profile through a create.
-            guard installed.marker.name == profile.name else {
-                throw ClaudeManagerError.launcherBelongsToAnotherProfile(
-                    appPath: profile.appPath,
-                    installedName: installed.marker.name,
-                    installedPath: installed.marker.profile
-                )
-            }
-            // Adopt the marker's spelling of the directory the two agree on. `runningPID`
-            // greps for the literal path, and the rebuilt marker records what is used here —
-            // so keeping the requested spelling would miss a live instance launched under the
-            // recorded one, and then leave `list` and `remove` blind to it afterwards.
-            profile = Profile(
-                name: profile.name,
-                displayName: profile.displayName,
-                label: profile.label,
-                color: profile.color,
-                profilePath: installed.marker.profile,
-                bundleID: profile.bundleID,
-                appPath: profile.appPath
-            )
+            profile = try profileForForcedRebuild(over: profile, force: request.force)
         }
         // Refuse whenever this profile's user-data-dir already has a live instance,
         // not only on a forced rebuild — otherwise re-adding a name whose bundle was
@@ -347,7 +331,7 @@ public struct ProfileStore {
         let profileDirExisted = fileManager.fileExists(atPath: profile.profilePath)
         try fileManager.createDirectory(at: profile.profileURL, withIntermediateDirectories: true)
 
-        let iconChanged: Bool
+        let built: LauncherBundle.BuildResult
         do {
             let icns = try iconPipeline.makeBadgeICNS(
                 realClaude: realClaude,
@@ -355,7 +339,7 @@ public struct ProfileStore {
                 color: profile.color,
                 style: configuration.badgeStyle
             )
-            iconChanged = try bundle.build(
+            built = try bundle.build(
                 profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
             )
         } catch {
@@ -369,20 +353,35 @@ public struct ProfileStore {
             throw error
         }
 
+        // Under the spelling the launcher actually landed with. A forced create over an
+        // installed bundle depends on the same rename an edit does — `replaceItemAt` keeps the
+        // replaced file's name — so returning the requested spelling here would hand back a
+        // `Profile.id` (which *is* `appPath`) that no scan will ever produce, and key the icon
+        // cache and the trashed-twin probe on it too.
+        let installed = Profile(
+            name: profile.name,
+            displayName: profile.displayName,
+            label: profile.label,
+            color: profile.color,
+            profilePath: profile.profilePath,
+            bundleID: profile.bundleID,
+            appPath: built.appPath
+        )
+
         // Register so Finder/LaunchServices pick up the icon — never flash the screen. A
         // pinned tile can only be stale when a bundle was already here (forced rebuild or a
         // trashed twin) *and* the icon changed; that tile is repainted by the app's opt-in
         // "Refresh Dock now". A brand-new path has nothing cached.
-        iconCache.register(appURL: profile.appURL)
+        iconCache.register(appURL: installed.appURL)
         let dockRefreshPending =
-            iconChanged && (request.force || bundle.hasTrashedTwin(appURL: profile.appURL))
+            built.iconChanged && (request.force || bundle.hasTrashedTwin(appURL: installed.appURL))
 
         // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
         // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
-        try? reconcileManagedConfig(for: profile)
+        try? reconcileManagedConfig(for: installed)
 
         return AddResult(
-            profile: profile, reusedProfileData: reused, dockRefreshPending: dockRefreshPending
+            profile: installed, reusedProfileData: reused, dockRefreshPending: dockRefreshPending
         )
     }
 

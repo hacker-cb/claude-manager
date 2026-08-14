@@ -6,6 +6,17 @@ import Testing
 struct LauncherRebuildTests {
     let fm = FileManager.default
 
+    /// The badge resource this launcher actually points at, located the one way that works:
+    /// through its own `CFBundleIconFile`, since the name is content-addressed. `Fixture`
+    /// resolves it for reading; this returns the URL, so a test can overwrite it.
+    private func installedIconURL(of profile: Profile) -> URL? {
+        let info = RealClaude.plist(at: profile.appURL.appendingPathComponent("Contents/Info.plist"))
+        guard let name = LauncherBundle
+            .iconResourceName(recorded: info?["CFBundleIconFile"] as? String)
+        else { return nil }
+        return profile.appURL.appendingPathComponent("Contents/Resources").appendingPathComponent(name)
+    }
+
     @Test
     func rebuildRestampsCurrentWrapperVersionAndArchKey() throws {
         let env = try makeStoreEnv()
@@ -87,7 +98,7 @@ struct LauncherRebuildTests {
     func rebuildRunsUnderALiveInstanceAndReportsIt() throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
-        var profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         // `makeStoreEnv` already delegates iconutil to the real system, so the handler only
         // has to answer the pgrep probe.
         env.runner.setHandler { executable, args in
@@ -96,14 +107,22 @@ struct LauncherRebuildTests {
             }
             return idleStub(executable, args)
         }
-        // Change the badge, or the rebuild is byte-identical and correctly says there is
-        // nothing to restart for (see `rebuildOfAnUnchangedLauncherNeverNudgesForARestart`).
-        profile.label = "ZZ"
+        // The installed badge has to differ from the one this rebuild renders, or the write is
+        // byte-identical and correctly says there is nothing to restart for (see
+        // `rebuildOfAnUnchangedLauncherNeverNudgesForARestart`). Done by overwriting the icon
+        // on disk rather than by handing `rebuild` an edited profile: it regenerates from the
+        // bundle's own marker (`profileMatchingItsLauncher`), so a mutated argument changes
+        // nothing — that is what stops a stale value from reverting an edit.
+        let installedIcon = try #require(installedIconURL(of: profile))
+        try Data("not the rendered badge".utf8).write(to: installedIcon)
+
         let result = try env.store.rebuild(profile)
+
         #expect(result.iconChanged)
         #expect(result.liveRewrite == LiveRewrite(profile: profile, pid: 888))
-        // The bundle really was rewritten, not skipped.
-        #expect(LauncherBundle().readMarker(at: profile.appURL)?.marker.label == "ZZ")
+        // The bundle really was rewritten, not skipped: the badge is back to the rendered one.
+        #expect(try Data(contentsOf: #require(installedIconURL(of: profile)))
+            != Data("not the rendered badge".utf8))
     }
 
     /// The nudge has to answer "would a restart reveal anything", not "is it running". A

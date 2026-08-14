@@ -78,11 +78,14 @@ struct LauncherSigningTests {
         #expect(!SignatureProbe.isValidAdHoc(appURL))
     }
 
-    /// Restoring a hidden launcher's hidden state is the one thing `build` does *after*
-    /// signing, so it has to be the kind of write the seal does not span. `HiddenFlag` uses
-    /// the `UF_HIDDEN` inode bit for exactly that reason: `URLResourceValues.isHidden` writes
-    /// a `com.apple.FinderInfo` xattr instead, and `codesign --verify --strict` rejects a
-    /// bundle carrying one — which would leave the hidden launcher unrunnable.
+    /// Restoring a hidden launcher's hidden state is the one thing `build` writes into the
+    /// bundle *after* signing it, so it has to be the kind of write the seal does not span.
+    /// `HiddenFlag` uses the `UF_HIDDEN` inode bit for exactly that reason:
+    /// `URLResourceValues.isHidden` writes a `com.apple.FinderInfo` xattr instead, and `codesign
+    /// --verify --strict` rejects a bundle carrying one — which would leave the hidden launcher
+    /// unrunnable. (`alignInstalledSpelling` also runs after the signing call, but renames the
+    /// *previously installed* bundle before the swap, and writes nothing at all; the case it
+    /// leaves behind is covered below.)
     @Test
     func rebuildingAHiddenLauncherKeepsItHiddenAndValidlySigned() throws {
         let dir = try Fixture.makeTempDir()
@@ -99,6 +102,67 @@ struct LauncherSigningTests {
         // Through `codesign --verify --strict`, which is what `Doctor` and macOS's own
         // execution gate use: the Security-framework probe accepts a bundle carrying a
         // `com.apple.FinderInfo` xattr, and the CLI — the one that matters — does not.
+        #expect(CodeSigner(runner: SystemCommandRunner()).isValidlySigned(bundleURL: appURL))
+    }
+
+    /// The claim `alignInstalledSpelling` rests on, and that CLAUDE.md states as measured: a
+    /// **signed** bundle survives being renamed. That is what lets a rename sit below the
+    /// signing call at all, so it is asserted against a bundle that was signed and then renamed
+    /// — not against one rebuilt afterwards, where `replaceItemAt` installs a fresh staging copy
+    /// and the seal under test would be that copy's, never the renamed bundle's.
+    ///
+    /// Both directions, because the rule is about renaming and not about case: getting it wrong
+    /// is invisible until macOS kills the launcher seconds after it reaches the Dock and the
+    /// user reports a profile that "hangs and never opens".
+    @Test
+    func aSignedLauncherSurvivesBeingRenamed() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let profile = makeProfile(installDir: dir)
+        try LauncherBundle().build(
+            profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8)
+        )
+        let signer = CodeSigner(runner: SystemCommandRunner())
+        let installed = URL(fileURLWithPath: profile.appPath)
+
+        let shouted = dir.appendingPathComponent("\(profile.displayName.uppercased()).app")
+        try fm.moveItem(at: installed, to: shouted)
+        #expect(signer.isValidlySigned(bundleURL: shouted))
+
+        let elsewhere = dir.appendingPathComponent("Totally Different.app")
+        try fm.moveItem(at: shouted, to: elsewhere)
+        #expect(signer.isValidlySigned(bundleURL: elsewhere))
+    }
+
+    /// And the whole step in context: rebuilding a launcher under another spelling of its own
+    /// name renames the installed bundle before swapping the new one in, and what ends up
+    /// installed has to be executable.
+    ///
+    /// Gated on the volume: where `Work.app` and `WORK.app` are two files this is an ordinary
+    /// build at a fresh path, which the cases above already cover.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func rebuildingUnderAnotherSpellingKeepsTheLauncherValidlySigned() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let profile = makeProfile(installDir: dir)
+        let bundle = LauncherBundle()
+        try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8))
+        let display = profile.displayName.uppercased()
+        let shouted = Profile(
+            name: profile.name,
+            displayName: display,
+            label: profile.label,
+            color: profile.color,
+            profilePath: profile.profilePath,
+            bundleID: profile.bundleID,
+            appPath: dir.appendingPathComponent("\(display).app").path
+        )
+
+        try bundle.build(profile: shouted, realBinaryPath: realBinary, icnsData: Data("i2".utf8))
+
+        let appURL = URL(fileURLWithPath: shouted.appPath)
+        #expect(try fm.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".app") }
+            == ["\(shouted.displayName).app"])
         #expect(CodeSigner(runner: SystemCommandRunner()).isValidlySigned(bundleURL: appURL))
     }
 
