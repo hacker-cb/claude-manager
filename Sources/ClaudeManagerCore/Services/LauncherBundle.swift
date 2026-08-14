@@ -242,16 +242,20 @@ public struct LauncherBundle {
     /// spans the contents — `codesign --verify --strict` passes across a rename, measured for a
     /// case-only change and a wholesale one alike.
     ///
-    /// Only a difference of **case** is ever acted on. `nameKey` answers with the name the
-    /// volume actually stores, so a name differing any other way would mean this path opened a
-    /// file that is not the one just written, and moving *that* is not this function's business.
+    /// What is moved is decided by **identity**, never by a case rule of our own. The volume is
+    /// the only authority on which two spellings it folds, and its rules are not `lowercased()`:
+    /// APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while `"Σ".lowercased()` is `σ` and
+    /// `"ς".lowercased()` is `ς` — so a guard written that way declines to rename exactly where
+    /// the collision is real, which is the case this function exists for. Asking whether the
+    /// requested path opens the file we are about to move covers every folding the volume does,
+    /// and still refuses to move a *different* file, which is all the guard was ever for.
     private func matchInstalledSpelling(to appURL: URL) throws {
         let requested = appURL.lastPathComponent
         guard let installed = (try? appURL.resourceValues(forKeys: [.nameKey]))?.name,
-              installed != requested,
-              installed.lowercased() == requested.lowercased()
+              installed != requested
         else { return }
         let onDisk = appURL.deletingLastPathComponent().appendingPathComponent(installed)
+        guard PathUtils.sameFile(onDisk.path, appURL.path) else { return }
         try fileManager.moveItem(at: onDisk, to: appURL)
     }
 

@@ -101,7 +101,10 @@ short form:
   already at the path and **keeps that file's name** (measured), so it finishes by renaming the
   bundle to the spelling it was asked for. Without that the launcher's file says one thing while
   `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s deliberate `==` on the
-  bundle path quietly stops matching.
+  bundle path quietly stops matching. **Which spellings fold is the volume's answer, never
+  `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while `"Σ".lowercased()`
+  is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ only in case"
+  declines exactly where the collision is real. Both sides ask identity instead.
 - **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
   twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
   directory handed to it is itself a symlink; the `atPath` overload does neither. Both

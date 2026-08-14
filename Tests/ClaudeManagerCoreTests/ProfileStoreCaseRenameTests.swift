@@ -2,19 +2,32 @@ import Foundation
 import Testing
 @testable import ClaudeManagerCore
 
-/// Whether the volume holding `url` folds case — macOS's own default (APFS, case-insensitive),
-/// and the condition under which `Work.app` and `WORK.app` are one bundle rather than two.
+/// Whether the volume holding `url` opens these two spellings of one name as a **single file**.
 ///
-/// Asked of the volume rather than assumed, because both answers are ordinary: a developer
-/// working on a case-sensitive APFS volume gets genuinely different behaviour, and a test that
-/// asserted the folding one there would fail for a correct build. The tests below split on it —
-/// most hold either way, and the few that describe the collision itself are gated on this.
+/// Answered by writing one and looking for the other, because the volume is the only authority
+/// on which spellings it folds and the rule is not the obvious one: APFS folds `Σ`, `σ` and `ς`
+/// together, which no amount of `lowercased()` reproduces. `volumeSupportsCaseSensitiveNames`
+/// would answer the ASCII question alone, and this file needs both.
 ///
-/// Unreadable answers count as case-*sensitive*: that skips the gated tests rather than running
-/// them against a volume whose behaviour is unknown.
+/// Both answers are ordinary — a developer working on a case-sensitive volume gets genuinely
+/// different behaviour, and a test asserting the folding one there would fail a correct build —
+/// so the tests describing a collision are gated on this, while the ones that hold either way
+/// are not. A probe that cannot be written counts as *not* folding, which skips those tests
+/// rather than running them against a volume whose behaviour is unknown.
+func volumeFolds(_ spelling: String, and other: String, at url: URL) -> Bool {
+    let fm = FileManager.default
+    let probe = url.appendingPathComponent("cm-fold-probe-\(UUID().uuidString)")
+    guard (try? fm.createDirectory(at: probe, withIntermediateDirectories: true)) != nil
+    else { return false }
+    defer { try? fm.removeItem(at: probe) }
+    guard (try? Data().write(to: probe.appendingPathComponent(spelling))) != nil else { return false }
+    return fm.fileExists(atPath: probe.appendingPathComponent(other).path)
+}
+
+/// The ASCII case of `volumeFolds` — macOS's own default (APFS, case-insensitive), and the
+/// condition under which `Work.app` and `WORK.app` are one bundle rather than two.
 func volumeFoldsCase(at url: URL) -> Bool {
-    (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
-        .volumeSupportsCaseSensitiveNames == false
+    volumeFolds("Work", and: "WORK", at: url)
 }
 
 /// Renaming a launcher to another capitalisation of its own name.
@@ -168,6 +181,35 @@ struct ProfileStoreCaseRenameTests {
 
         #expect(try installedNames(in: env) == ["\(shouted).app"])
         #expect(rebuilt.appPath == env.installDir.appendingPathComponent("\(shouted).app").path)
+    }
+
+    /// The same rename where the volume's folding is not the one a case rule would guess. APFS
+    /// opens `Σ`, `σ` and `ς` as one file; `"Σ".lowercased()` is `σ` and `"ς".lowercased()` is
+    /// `ς`, so anything phrased as "these differ only in case" declines here — and declines
+    /// precisely where the collision is real, leaving `update` returning a path that the bundle
+    /// on disk does not have. `Profile.id` *is* that path, and `liveRewrite` matches on it
+    /// exactly, so the launcher goes on running with the restart nudge silently gone.
+    ///
+    /// Display names are free text (`isValidDisplayName` bars separators and dot-names, nothing
+    /// else), so this is reachable from the editor, not a contrived string.
+    @Test(.enabled(if: volumeFolds("Σ", and: "ς", at: FileManager.default.temporaryDirectory)))
+    func aRenameBetweenSpellingsTheVolumeFoldsLandsOnDisk() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: "Σ\(env.token)")
+            Fixture.purgeTrash(displayNamePrefix: "ς\(env.token)")
+        }
+        let original = try env.store.add(AddProfileRequest(
+            name: env.name("work"), displayName: "Σ\(env.token)"
+        )).profile
+        var edits = ProfileEdits(original)
+        edits.displayName = "ς\(env.token)"
+
+        let updated = try env.store.update(original, applying: edits).profile
+
+        #expect(try installedNames(in: env) == ["ς\(env.token).app"])
+        #expect(env.store.list().map(\.profile.appPath) == [updated.appPath])
     }
 
     /// `build`'s own promise, held to directly: the bundle ends up at the path it was handed.
