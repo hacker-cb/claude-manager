@@ -59,8 +59,10 @@ public extension ProfileStore {
         // traversal — exactly as it answers "deleted", and skipping the check on that reading
         // trashes the launcher, reports `.alreadyGone` (which says nothing), and leaves the
         // nested profile's data undeletable through the app once the volume is back.
+        var seenBeforeTrashing: [LauncherBundle.Discovered] = []
         if purgeProfile {
             let scan = bundle.scan(installDirectory: configuration.installDirectory)
+            seenBeforeTrashing = scan.launchers
             let nested = launchersNested(under: profile, among: scan.launchers)
             guard nested.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
@@ -72,7 +74,9 @@ public extension ProfileStore {
         return RemovalResult(
             trashedAppURL: trashed,
             profilePath: profile.profilePath,
-            profileData: purgeProfile ? purgeProfileData(for: profile) : .notRequested
+            profileData: purgeProfile
+                ? purgeProfileData(for: profile, seenBefore: seenBeforeTrashing)
+                : .notRequested
         )
     }
 
@@ -85,7 +89,10 @@ public extension ProfileStore {
     /// runs, so a `removeItem` failure raised as an error reports the *whole* removal as
     /// failed while half of it already happened — and the half that did not is the half
     /// holding the credentials. It comes back as `purgeFailed` instead, carrying the reason.
-    private func purgeProfileData(for profile: Profile) -> ProfileDataOutcome {
+    private func purgeProfileData(
+        for profile: Profile,
+        seenBefore: [LauncherBundle.Discovered]
+    ) -> ProfileDataOutcome {
         // Never delete data another launcher still points at (the launcher we
         // just trashed is already gone from the scan).
         //
@@ -96,7 +103,19 @@ public extension ProfileStore {
         // see `Scan.isComplete` for why that trade is deliberate.
         let scan = bundle.scan(installDirectory: configuration.installDirectory)
         let ownersKnown = scan.isComplete
-        let survivors = scan.launchers
+        // Everything either scan saw. A launcher observed before the launcher was trashed does
+        // not stop claiming its directory because the second read could not see it — a bundle
+        // that became unreadable in between, an unmounted volume — and forgetting it here is
+        // how the data it claims gets deleted. Our own launcher is in the Trash by now, so it
+        // is filtered out rather than counting as a rival.
+        let ourApp = profile.appURL.standardizedFileURL.path
+        var survivors = scan.launchers
+        var seenPaths = Set(survivors.map(\.appURL.standardizedFileURL.path))
+        for earlier in seenBefore {
+            let path = earlier.appURL.standardizedFileURL.path
+            guard path != ourApp, seenPaths.insert(path).inserted else { continue }
+            survivors.append(earlier)
+        }
         let reach = PurgeReach(profile)
         let sharing = survivors.filter { reach.covers($0.marker.profile) }
         // The default profile owns no launcher, so it appears in no scan and the sharing check

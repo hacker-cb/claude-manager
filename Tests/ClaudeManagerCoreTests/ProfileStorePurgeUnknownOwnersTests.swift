@@ -78,6 +78,45 @@ struct ProfileStorePurgeUnknownOwnersTests {
         #expect(try #require(thrown.errorDescription).contains(innerProfile.displayName))
     }
 
+    /// A sibling seen before the launcher was trashed still claims its directory when the
+    /// second read cannot see it — a bundle that lost its permissions in between, a volume that
+    /// went away. Forgetting it there is how its data gets deleted.
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
+    func aSiblingSeenBeforeTrashingStillCountsAfterwards() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
+        }
+        let shared = env.profilesDir.appendingPathComponent("shared")
+        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
+        let one = try env.store.add(
+            AddProfileRequest(name: env.name("one"), profilePath: shared.path)
+        ).profile
+        let two = try env.store.add(
+            AddProfileRequest(name: env.name("two"), profilePath: shared.path)
+        ).profile
+        let login = shared.appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+        // `trashItem` is what runs between the two scans, so making the sibling unreadable
+        // there reproduces the window without any timing.
+        let fileManager = SiblingHidingFileManager(hideOnTrash: two.appPath)
+        let store = ProfileStore(
+            realClaude: env.real,
+            configuration: env.store.configuration,
+            runner: env.runner,
+            fileManager: fileManager,
+            signalSender: { _, _ in 0 }
+        )
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: two.appPath) }
+
+        let result = try store.remove(one, purgeProfile: true)
+
+        #expect(result.profileData == .keptSharedWith(launchers: [two.displayName]))
+        #expect(fm.fileExists(atPath: login.path))
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.
