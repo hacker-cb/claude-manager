@@ -57,25 +57,29 @@ public struct LauncherBundle {
     /// What a scan of an install directory found, and whether that is the whole story.
     public struct Scan: Equatable, Sendable {
         public let launchers: [Discovered]
-        /// Bundles that could not be read well enough to tell whether they are ours — empty
-        /// when the *directory itself* could not be listed, which `isComplete` also covers.
-        /// Carried so a caller can name what actually blocked it: "make the launcher folder
-        /// readable" is the wrong remedy for a folder that listed fine.
-        public let unreadable: [URL]
-        /// Whether the directory listed **and** every bundle in it could be read.
+        /// Whether the directory could be **listed**.
         ///
         /// **An incomplete scan must never be read as "nobody claims this profile
         /// directory".** That question decides whether a user-data directory — an Anthropic
         /// login and a whole chat history — is deleted, and `removeItem` is not a Trash move.
         /// A folder that was renamed, unmounted, or had its permissions changed answers it
-        /// exactly as an empty one does, and so does a single sibling bundle that cannot be
-        /// read.
+        /// exactly as an empty one does.
+        ///
+        /// Deliberately **not** false for a single unreadable bundle inside a folder that
+        /// listed fine. The install directory is the real Claude.app's own — normally
+        /// `/Applications` — so it is full of other people's apps, and one of those being
+        /// unreadable (a dangling cask symlink, an app installed by another account, an evicted
+        /// cloud placeholder) is ordinary. Counting that as "the scan may be missing a
+        /// launcher" switches off profile-data deletion, Doctor's orphan sweep and the restart
+        /// nudge for *every* profile, indefinitely, over something the user often cannot fix —
+        /// and the purge would then strand each profile's data after its launcher was already
+        /// in the Trash. The narrow risk it would buy — one of *our* launchers being both a
+        /// co-owner of the directory and unreadable — is tracked separately.
         public let isComplete: Bool
 
-        public init(launchers: [Discovered], unreadable: [URL], listed: Bool = true) {
+        public init(launchers: [Discovered], listed: Bool = true) {
             self.launchers = launchers
-            self.unreadable = unreadable
-            isComplete = listed && unreadable.isEmpty
+            isComplete = listed
         }
     }
 
@@ -289,6 +293,14 @@ public struct LauncherBundle {
         return discovered
     }
 
+    /// Whether the bundle at `appURL` could not be read well enough to tell whether it is one
+    /// of ours. Not part of `Scan.isComplete` — see the reasoning there — but the distinction
+    /// the classifier draws is worth keeping reachable.
+    func isUnreadable(at appURL: URL) -> Bool {
+        if case .unreadable = read(at: appURL) { return true }
+        return false
+    }
+
     /// What one bundle turned out to be, decided by a **single** read of its `Info.plist`.
     ///
     /// The three outcomes have to come from one read, because the two that mean "not a launcher
@@ -392,23 +404,16 @@ public struct LauncherBundle {
     /// a login. See `Scan.isComplete`.
     public func scan(installDirectory: URL) -> Scan {
         guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
-            return Scan(launchers: [], unreadable: [], listed: false)
+            return Scan(launchers: [], listed: false)
         }
-        var launchers: [Discovered] = []
-        var unreadable: [URL] = []
-        for url in entries where url.pathExtension == "app" {
-            switch read(at: url) {
-            case let .launcher(discovered): launchers.append(discovered)
-            case .foreign: continue
-            case .unreadable: unreadable.append(url)
-            }
-        }
+        let launchers = entries
+            .filter { $0.pathExtension == "app" }
+            .compactMap { readMarker(at: $0) }
         return Scan(
             launchers: launchers
                 .sorted {
                     $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending
-                },
-            unreadable: unreadable
+                }
         )
     }
 

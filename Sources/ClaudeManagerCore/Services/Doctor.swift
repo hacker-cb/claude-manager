@@ -328,16 +328,10 @@ public struct Doctor {
         // safe to delete. A launcher folder that was renamed, unmounted, or had its
         // permissions changed is exactly that state, so say the check could not run.
         guard scan.isComplete else {
-            // Named by what actually blocked it. Pointing at the launcher folder when the
-            // folder listed fine leaves the user nothing to fix and no way to find the bundle
-            // that switched this check off.
-            let blocked = scan.unreadable.isEmpty
-                ? [configuration.installDirectory.path]
-                : scan.unreadable.map(\.path)
             return [Diagnostic(
                 severity: .warning,
-                title: "Could not read every launcher — orphan-profile check skipped",
-                detail: Sentences.list(blocked.map { PathUtils.abbreviatingHome($0) })
+                title: "Cannot read the launcher folder — orphan-profile check skipped",
+                detail: PathUtils.abbreviatingHome(configuration.installDirectory.path)
             )]
         }
         let dir = configuration.defaultProfilesDirectory

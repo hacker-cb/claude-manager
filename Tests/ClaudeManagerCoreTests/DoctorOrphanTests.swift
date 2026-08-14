@@ -26,7 +26,7 @@ struct DoctorOrphanTests {
         let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
 
         #expect(!diags.contains { $0.title == "Orphan profile (no launcher)" })
-        #expect(diags.contains { $0.title.contains("Could not read every launcher") })
+        #expect(diags.contains { $0.title.contains("Cannot read the launcher folder") })
     }
 
     /// The default profile owns no launcher, so no marker claims its directory — and the

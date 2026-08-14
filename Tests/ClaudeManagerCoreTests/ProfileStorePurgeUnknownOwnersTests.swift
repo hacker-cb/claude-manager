@@ -3,9 +3,9 @@ import Testing
 @testable import ClaudeManagerCore
 
 /// A purge may only delete a user-data directory when it could establish that nobody else
-/// uses it — and "could not establish" looks exactly like "nobody else does" from the
-/// inside: an unlistable launcher folder, or a bundle in it that cannot be read, both come
-/// back as no launchers at all. These hold that distinction.
+/// uses it — and "could not establish" looks exactly like "nobody else does" from the inside:
+/// an unlistable launcher folder comes back as no launchers at all. These hold that
+/// distinction.
 ///
 /// Separate file/suite so `ProfileStorePurgeSpellingTests` stays within the length cap.
 struct ProfileStorePurgeUnknownOwnersTests {
@@ -46,52 +46,12 @@ struct ProfileStorePurgeUnknownOwnersTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
-    /// A sibling whose bundle cannot be read drops out of the scan the same way a third-party
-    /// app does — `readMarker` returns `nil` for both — so an install directory that lists fine
-    /// can still yield an answer that is missing the very launcher that would have stopped the
-    /// deletion.
-    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
-    func purgeDeclinesWhenASiblingBundleCannotBeRead() throws {
-        let env = try makeStoreEnv()
-        defer {
-            try? fm.removeItem(at: env.root)
-            Fixture.purgeTrash(displayNamePrefix: env.display("one"))
-            Fixture.purgeTrash(displayNamePrefix: env.display("two"))
-        }
-        let shared = env.profilesDir.appendingPathComponent("shared")
-        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
-        let one = try env.store.add(
-            AddProfileRequest(name: env.name("one"), profilePath: shared.path)
-        ).profile
-        let two = try env.store.add(
-            AddProfileRequest(name: env.name("two"), profilePath: shared.path)
-        ).profile
-        let login = shared.appendingPathComponent("login.json")
-        try Data("token".utf8).write(to: login)
-        // The sibling is on disk and still claims the directory — it just cannot be read.
-        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: two.appPath)
-        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: two.appPath) }
-
-        let result = try env.store.remove(one, purgeProfile: true)
-
-        // The launcher goes; the data stays, because whether the sibling still claims it could
-        // not be established. Refusing the whole removal instead would punish every profile for
-        // one unreadable bundle in a folder that is normally `/Applications`.
-        #expect(result.profileData == .keptOwnersUnknown)
-        #expect(fm.fileExists(atPath: login.path))
-        let notice = try #require(result.profileData.notice(forRemovalOf: one.displayName))
-        #expect(notice.message.contains("still on disk"))
-        _ = two
-    }
-
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.
     ///
-    /// The data is kept and the user is told. The removal itself is *not* refused: the scan
-    /// covers every `.app` in the install directory — the real Claude.app's own folder, normally
-    /// `/Applications` — so one unreadable stranger there would otherwise block removing any
-    /// profile's data at all, naming an app unrelated to it.
+    /// The data is kept and the user is told, while the launcher itself is still removed —
+    /// refusing the whole removal would leave a profile that cannot be retired at all.
     @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
     func purgeKeepsTheDataWhenTheLauncherFolderCannotBeRead() throws {
         let env = try makeStoreEnv()
