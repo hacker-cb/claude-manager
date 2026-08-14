@@ -123,7 +123,12 @@ public extension ProfileStore {
         // new format reaches them. Every other consumer of the signal refuses to act on an
         // incomplete scan; so does this one.
         let scan = bundle.scan(installDirectory: configuration.installDirectory)
-        guard scan.isComplete else {
+        // A folder that does not exist yet is not a failure — an install-directory override
+        // pointed somewhere new is a state `ensureInstallDirectoryWritable` creates on the next
+        // add, and there is genuinely nothing to rebuild. Only a folder that is *there* and
+        // cannot be listed hides launchers from this batch.
+        let folderIsThere = ProfileStore.pathState(configuration.installDirectory.path) != .absent
+        if !scan.isComplete, folderIsThere {
             throw ClaudeManagerError.launcherFolderUnreadable(
                 path: configuration.installDirectory.path
             )

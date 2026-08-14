@@ -70,11 +70,12 @@ short form:
 - **Never compare two profile directories by string equality.** The path is free text when a
   profile is *created*, so one profile's user-data dir can *be* another's, or sit inside it —
   and `removeItem` is recursive, so purging the outer one takes the inner profile's Anthropic
-  token and chat history with it. `ProfileStore+Remove.PurgeReach` compares **canonical** paths
-  (`PathUtils.canonicalPath`) by *component* — never by string prefix (`…/work` is not inside
-  `…/wo`) and never by the recorded spelling, since `…/Profiles/x` and `…/ProfilesLink/x` are
-  one directory (and so are `…/x` and `…/X`, wherever the volume says they are — that half is
-  the file system's answer, so it holds only while the directory exists). Two things ride on
+  token and chat history with it. `ProfileStore+Remove.PurgeReach` compares by *component*, never by string
+  prefix (`…/work` is not inside `…/wo`), and asks **both** spellings: canonical, because
+  `…/Profiles/x` and `…/ProfilesLink/x` are one directory, *and* literal, because a recursive
+  delete also takes any symlink inside it — the sibling that spelled its path through one keeps
+  its bytes and loses its path, and only the literal comparison can see that. Case follows the
+  volume, which means it holds only while the directory exists. Two things ride on
   the same care: a purge that would reach another launcher's data is declined and reported, and
   an install folder that could not be **listed** never counts as "nobody else uses this"
   (`LauncherBundle.Scan.isComplete`, `keptOwnersUnknown`). A single *bundle* that cannot be read

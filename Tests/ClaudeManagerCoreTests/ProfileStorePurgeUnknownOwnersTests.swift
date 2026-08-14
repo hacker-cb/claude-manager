@@ -117,6 +117,31 @@ struct ProfileStorePurgeUnknownOwnersTests {
         #expect(fm.fileExists(atPath: login.path))
     }
 
+    /// A data directory that cannot be reached — an unmounted volume, a parent that lost
+    /// traversal — answers `fileExists` exactly as a deleted one does. Reported as
+    /// `.alreadyGone` it says nothing at all, so the user is left believing a login that is
+    /// still on that disk was destroyed, with the launcher that could delete it in the Trash.
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
+    func unreachableDataIsNotReportedAsAlreadyGone() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: env.profilesDir.path)
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        let login = URL(fileURLWithPath: profile.profilePath).appendingPathComponent("login.json")
+        try Data("token".utf8).write(to: login)
+        // The parent stops granting traversal, so the data directory can no longer be reached
+        // — and `fileExists` on it now answers exactly as it would for a deleted one.
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: env.profilesDir.path)
+
+        let result = try env.store.remove(profile, purgeProfile: true)
+
+        #expect(result.profileData == .keptOwnersUnknown)
+        #expect(result.profileData.notice(forRemovalOf: profile.displayName) != nil)
+    }
+
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty
     /// folder reports too. Reading that as "nobody else claims this data" is how a sibling's
     /// login gets deleted over a folder that was merely renamed or unmounted.

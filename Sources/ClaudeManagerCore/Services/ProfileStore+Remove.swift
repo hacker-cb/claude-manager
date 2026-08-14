@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Outcome of removing a launcher.
@@ -146,7 +147,15 @@ public extension ProfileStore {
         // nothing to delete" and "this is Claude's own directory" stay true however little we
         // could see, and reporting the unknown instead would claim data was left behind that
         // either does not exist or was never a candidate.
-        guard fileManager.fileExists(atPath: profile.profilePath) else {
+        // `fileExists` answers "unreachable" — an unmounted volume, a parent that lost
+        // traversal — exactly as it answers "deleted", and `.alreadyGone` shows the user
+        // nothing at all. Told apart by `lstat`: only ENOENT is genuinely nothing there.
+        switch Self.pathState(profile.profilePath) {
+        case .unreachable:
+            return .keptOwnersUnknown
+        case .present:
+            break
+        case .absent:
             // The overlay is swept even here — it is created independently of the data dir —
             // but not when the path is shared, where it is the survivor's overlay too, nor
             // when it is the default profile's, where it is Claude's own config tier, nor when
@@ -282,7 +291,7 @@ public extension ProfileStore {
     ///   target, so containment there is not containment at all. What it reaches is whatever
     ///   was spelled through the link — literal again — plus any spelling of *that same link*,
     ///   which is the link's parent resolved with its own name left alone.
-    struct PurgeReach {
+    internal struct PurgeReach {
         private let literal: String
         private let canonical: String
         private let linkIdentity: String?
@@ -307,23 +316,16 @@ public extension ProfileStore {
         /// lexically while `removeItem` resolves the link and deletes something else entirely.
         /// Refusing there strands the profile's own data for no reason.
         func reaches(_ other: String) -> Bool {
-            let theirLiteral = Self.literalPath(other)
-            guard linkIdentity == nil else {
-                // Unlinking reaches the link itself and whatever was spelled through it — and
-                // the *target* counts here too, unlike in `covers`. This question is asked by
-                // the guard over Claude's own directory, where the answer decides what the user
-                // is told: a profile that is a link to that directory has its data untouched by
-                // the unlink, so reporting "profile data deleted" would tell someone revoking
-                // access that the session is gone while it is still there.
-                return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
-                    || ProfileStore.directoryContains(
-                        canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
-                    )
-            }
-            return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
-                || ProfileStore.directoryContains(
-                    canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
-                )
+            // Both spellings, link or not — and unlike `covers`, the *target* of a link counts
+            // here. This question is asked by the guard over Claude's own directory, where the
+            // answer decides what the user is told: a profile that is a link to that directory
+            // has its data untouched by the unlink, so reporting "profile data deleted" would
+            // tell someone revoking access that the session is gone while it is still there.
+            ProfileStore.directoryContains(
+                literal, Self.literalPath(other), ignoringCase: ignoringCase
+            ) || ProfileStore.directoryContains(
+                canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
+            )
         }
 
         func covers(_ other: String) -> Bool {
@@ -375,29 +377,37 @@ public extension ProfileStore {
     /// Whether the volume holding `url` treats names case-insensitively — the default on
     /// macOS. Unknown answers assume it does, since folding too eagerly costs a refusal while
     /// not folding costs a deletion.
-    static func volumeIgnoresCase(at url: URL) -> Bool {
+    internal static func volumeIgnoresCase(at url: URL) -> Bool {
         let sensitive = (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
             .volumeSupportsCaseSensitiveNames
         return sensitive != true
     }
 
-    static func isSymbolicLink(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+    /// What is at a path, with "nothing there" told apart from "cannot look".
+    ///
+    /// `fileExists` collapses the two, and they mean opposite things to a removal: an absent
+    /// directory is nothing to delete and nothing to say, while an unreachable one — an
+    /// unmounted volume, a parent that lost traversal — still holds a login that the app is
+    /// about to lose its last way of deleting.
+    enum PathState {
+        case present
+        case absent
+        case unreachable
     }
 
-    /// The same overlap question asked of the paths **as recorded**, with no symlink
-    /// resolution — what `PurgeReach` needs for a link, whose unlink reaches whatever was
-    /// spelled through it and nothing else.
-    static func directoriesOverlapLiterally(_ lhs: String, _ rhs: String) -> Bool {
-        directoriesOverlap(
-            URL(fileURLWithPath: lhs).standardizedFileURL.path,
-            URL(fileURLWithPath: rhs).standardizedFileURL.path
-        )
+    internal static func pathState(_ path: String) -> PathState {
+        var info = stat()
+        guard lstat(path, &info) != 0 else { return .present }
+        return errno == ENOENT ? .absent : .unreachable
+    }
+
+    internal static func isSymbolicLink(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
     }
 
     /// Whether `inner` is `outer` or sits below it — the asymmetric question, for "would
     /// deleting `outer` reach `inner`".
-    static func directoryContains(
+    internal static func directoryContains(
         _ outer: String,
         _ inner: String,
         ignoringCase: Bool = false
@@ -408,7 +418,7 @@ public extension ProfileStore {
         return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
-    static func directoriesOverlap(
+    internal static func directoriesOverlap(
         _ lhs: String,
         _ rhs: String,
         ignoringCase: Bool = false
@@ -430,7 +440,7 @@ public extension ProfileStore {
 
     /// Whole-path equality, folded the way the volume folds names — the same question `same`
     /// answers per component.
-    static func samePath(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
+    internal static func samePath(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
         same(lhs, rhs, ignoringCase: ignoringCase)
     }
 

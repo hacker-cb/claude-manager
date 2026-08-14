@@ -266,4 +266,19 @@ struct LauncherRebuildTests {
 
         #expect(try #require(thrown.errorDescription).contains("could not be read"))
     }
+
+    /// An install directory that simply is not there yet — an override pointed somewhere new —
+    /// is a state the store creates on demand, and there is genuinely nothing to rebuild. Only
+    /// a folder that exists and cannot be listed hides launchers from the batch.
+    @Test
+    func rebuildAllIsANoOpWhenTheInstallDirectoryDoesNotExistYet() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try fm.removeItem(at: env.installDir)
+
+        let result = try env.store.rebuildAll()
+
+        #expect(result.rebuilt.isEmpty)
+        #expect(result.failed.isEmpty)
+    }
 }
