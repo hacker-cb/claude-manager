@@ -159,13 +159,20 @@ public extension ProfileStore {
         // write touches — so an edit that leaves both alone (a bundle-id change, or Save on
         // an unmodified form) has nothing for a restart to reveal.
         let presentationChanged = iconChanged || updated.displayName != original.displayName
-        // Reported under the spelling the launcher actually ended up with, which is the
-        // requested one whenever `build` could rename it and the old one when it could not
-        // establish the name to rename from. `Profile.id` *is* this path and `liveRewrite`
-        // matches on it exactly, so handing back the spelling that was asked for rather than
-        // the one on disk is how a row loses its selection and a running profile loses its
-        // restart nudge — the split identity, produced by trusting a promise instead of
-        // checking it. The display name is untouched: that one did land, in the marker.
+        // Reported under the spelling the launcher actually ended up with. `Profile.id` *is*
+        // this path and `liveRewrite` matches on it exactly, so handing back the spelling that
+        // was asked for rather than the one on disk is how a row loses its selection and a
+        // running profile loses its restart nudge — the split identity, produced by trusting a
+        // promise instead of checking it. The display name is untouched: that one did land, in
+        // the marker.
+        //
+        // Where the volume will not say, the fallback splits on the same fact `renaming` does.
+        // A real rename installed at a path of its own, so the requested spelling is what is
+        // there. A rename **in place** did not: the only step that would have changed the name
+        // is the one that reads it, so a lookup failing here means that step failed too and the
+        // bundle is still under `original`'s spelling — which is known, and is the answer.
+        let appliedPath = PathUtils.spellingOnDisk(updated.appPath)
+            ?? (renaming ? updated.appPath : original.appPath)
         let applied = Profile(
             name: updated.name,
             displayName: updated.displayName,
@@ -173,7 +180,7 @@ public extension ProfileStore {
             color: updated.color,
             profilePath: updated.profilePath,
             bundleID: updated.bundleID,
-            appPath: PathUtils.spellingOnDisk(updated.appPath) ?? updated.appPath
+            appPath: appliedPath
         )
         return UpdateResult(
             profile: applied,
