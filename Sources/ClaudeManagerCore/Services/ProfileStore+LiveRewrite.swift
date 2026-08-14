@@ -56,10 +56,10 @@ extension ProfileStore {
         // survives to the canonical test is only what a plain comparison already rejected.
         let ourProfileDir = PathUtils.canonicalPath(profile.profilePath)
         let scan = bundle.scan(installDirectory: configuration.installDirectory)
-        // A scan that could not read every bundle answers "who else claims this directory" the
-        // same way an empty install directory does — and this guard exists precisely to refuse
-        // acting on that. A missing sibling here means the Restart is offered against a pid
-        // that may be its, stopping someone's live session.
+        // An install directory that could not be listed answers "who else claims this
+        // directory" the same way an empty one does — and this guard exists precisely to refuse
+        // acting on that. A missing sibling here means the Restart is offered against a pid that
+        // may be its, stopping someone's live session.
         guard scan.isComplete else { return nil }
         let sharingThisProfileDir = scan
             .launchers

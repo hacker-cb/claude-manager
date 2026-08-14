@@ -85,10 +85,10 @@ public extension ProfileStore {
         // just trashed is already gone from the scan).
         //
         // The scan has to be *complete* before its emptiness means anything: an unlistable
-        // folder, or a bundle in it that cannot be read, reports the same "no launchers" an
-        // empty folder does — and reading that as "nobody else claims this directory" deletes
-        // a sibling's login. `remove` refuses up front for that reason; this is the residue,
-        // the folder having changed state since. `Doctor` guards the same degradation.
+        // folder reports the same "no launchers" an empty one does, and reading that as "nobody
+        // else claims this directory" deletes a sibling's login. `Doctor` guards the same
+        // degradation. What this does *not* cover is a single bundle that could not be read —
+        // see `Scan.isComplete` for why that trade is deliberate.
         let scan = bundle.scan(installDirectory: configuration.installDirectory)
         let ownersKnown = scan.isComplete
         let survivors = scan.launchers
@@ -267,8 +267,16 @@ public extension ProfileStore {
         func reaches(_ other: String) -> Bool {
             let theirLiteral = Self.literalPath(other)
             guard linkIdentity == nil else {
-                // Unlinking reaches the link itself and whatever was spelled through it.
+                // Unlinking reaches the link itself and whatever was spelled through it — and
+                // the *target* counts here too, unlike in `covers`. This question is asked by
+                // the guard over Claude's own directory, where the answer decides what the user
+                // is told: a profile that is a link to that directory has its data untouched by
+                // the unlink, so reporting "profile data deleted" would tell someone revoking
+                // access that the session is gone while it is still there.
                 return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
+                    || ProfileStore.directoryContains(
+                        canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
+                    )
             }
             return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
                 || ProfileStore.directoryContains(

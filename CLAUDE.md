@@ -76,9 +76,11 @@ short form:
   one directory (and so are `…/x` and `…/X`, wherever the volume says they are — that half is
   the file system's answer, so it holds only while the directory exists). Two things ride on
   the same care: a purge that would reach another launcher's data is declined and reported, and
-  a scan that is not **complete** — an unlistable folder, or a bundle in it that cannot be read
-  — never counts as "nobody else uses this" (`LauncherBundle.Scan.isComplete`,
-  `keptOwnersUnknown`). And `removeItem` on a symlinked data path unlinks the link without
+  an install folder that could not be **listed** never counts as "nobody else uses this"
+  (`LauncherBundle.Scan.isComplete`, `keptOwnersUnknown`). A single *bundle* that cannot be read
+  deliberately does **not** make a scan incomplete — that folder is normally `/Applications`,
+  and one unreadable stranger there would switch off data deletion, Doctor's orphan sweep and
+  the restart nudge for every profile at once. And `removeItem` on a symlinked data path unlinks the link without
   walking it, so containment there is not containment at all: `PurgeReach` says so, and getting
   it wrong refuses the removal *and* advises deleting the profile whose data is actually at
   risk.

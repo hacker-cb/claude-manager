@@ -11,6 +11,36 @@ import Testing
 struct ProfileStorePurgeDefaultProfileTests {
     let fm = FileManager.default
 
+    /// A profile pointed at Claude's own directory *by symlink*. Unlinking would leave the
+    /// login untouched — which is exactly why reporting a deletion here is the wrong answer: a
+    /// user removing the profile to revoke access on a shared machine would be told the session
+    /// is gone while it is still on disk.
+    @Test
+    func purgeIsDeclinedWhenTheDataPathIsALinkToTheDefaultProfile() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("mirror"))
+        }
+        let claudeOwn = URL(fileURLWithPath: env.defaultProfileUserDataPath)
+        try fm.createDirectory(at: claudeOwn, withIntermediateDirectories: true)
+        let login = claudeOwn.appendingPathComponent("login.json")
+        try Data("claude's own".utf8).write(to: login)
+        let link = env.profilesDir.appendingPathComponent("mirror")
+        try fm.createDirectory(at: env.profilesDir, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: link, withDestinationURL: claudeOwn)
+
+        let mirror = try env.store.add(
+            AddProfileRequest(name: env.name("mirror"), profilePath: link.path)
+        ).profile
+
+        let result = try env.store.remove(mirror, purgeProfile: true)
+
+        #expect(result.profileData == .keptForDefaultProfile)
+        #expect(fm.fileExists(atPath: login.path))
+        #expect(fm.fileExists(atPath: link.path))
+    }
+
     /// The default profile's directory is Claude's own, and the purge is recursive — so a
     /// profile whose data path is an *ancestor* of it reaches it just as surely as one that is
     /// it. The "Profile data" field is free text, so `~/Library/Application Support` is a
