@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// Creates, reads, and removes the thin launcher `.app` bundles. The bundle's
@@ -50,6 +51,35 @@ public struct LauncherBundle {
                 bundleID: bundleID,
                 appPath: appURL.path
             )
+        }
+    }
+
+    /// What a scan of an install directory found, and whether that is the whole story.
+    public struct Scan: Equatable, Sendable {
+        public let launchers: [Discovered]
+        /// Whether the directory could be **listed**.
+        ///
+        /// **An incomplete scan must never be read as "nobody claims this profile
+        /// directory".** That question decides whether a user-data directory — an Anthropic
+        /// login and a whole chat history — is deleted, and `removeItem` is not a Trash move.
+        /// A folder that was renamed, unmounted, or had its permissions changed answers it
+        /// exactly as an empty one does.
+        ///
+        /// Deliberately **not** false for a single unreadable bundle inside a folder that
+        /// listed fine. The install directory is the real Claude.app's own — normally
+        /// `/Applications` — so it is full of other people's apps, and one of those being
+        /// unreadable (a dangling cask symlink, an app installed by another account, an evicted
+        /// cloud placeholder) is ordinary. Counting that as "the scan may be missing a
+        /// launcher" switches off profile-data deletion, Doctor's orphan sweep and the restart
+        /// nudge for *every* profile, indefinitely, over something the user often cannot fix —
+        /// and the purge would then strand each profile's data after its launcher was already
+        /// in the Trash. The narrow risk it would buy — one of *our* launchers being both a
+        /// co-owner of the directory and unreadable — is tracked separately.
+        public let isComplete: Bool
+
+        public init(launchers: [Discovered], listed: Bool = true) {
+            self.launchers = launchers
+            isComplete = listed
         }
     }
 
@@ -259,14 +289,83 @@ public struct LauncherBundle {
 
     /// Parse a bundle's marker, or `nil` if it is not one of ours.
     public func readMarker(at appURL: URL) -> Discovered? {
-        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-        guard let info = RealClaude.plist(at: infoURL, fileManager: fileManager),
-              let markerDict = info[CoreConstants.markerKey] as? [String: Any],
+        guard case let .launcher(discovered) = read(at: appURL) else { return nil }
+        return discovered
+    }
+
+    /// What one bundle turned out to be, decided by a **single** read of its `Info.plist`.
+    ///
+    /// The three outcomes have to come from one read, because the two that mean "not a launcher
+    /// of ours" are treated very differently: `foreign` lets a scan call itself complete, and a
+    /// complete scan is what licenses deleting a user-data directory. Re-probing after the fact
+    /// lets the two answers disagree — permissions or a mount changing in between — and the
+    /// disagreement always lands the same way, with the launcher missing from the list while
+    /// the scan says it saw everything.
+    ///
+    /// `unreadable` therefore covers every "cannot establish": an unreachable bundle or plist,
+    /// bytes that do not parse, and a marker whose fields are missing or of the wrong type.
+    /// Only a plist that parsed and simply carries no marker is `foreign` — an ordinary
+    /// third-party app sitting in the install directory.
+    func read(at appURL: URL) -> BundleRead {
+        // `lstat`, not `fileExists`, because the two failures have to be told apart: an entry
+        // that is *gone* is harmless, while one that cannot be statted — the install directory
+        // losing traversal, a volume going away — is unknown, and calling it foreign is what
+        // licenses deleting the data it may still claim.
+        var info = stat()
+        guard lstat(appURL.path, &info) == 0 else {
+            return errno == ENOENT ? .foreign : .unreadable
+        }
+        if info.st_mode & S_IFMT == S_IFLNK {
+            // A link *to* a launcher is a launcher, so follow it. A link that leads nowhere is
+            // **not** treated as a plain non-bundle: an unmounted volume answers `ENOENT`
+            // exactly as a dangling link does, and that is the case this whole signal exists
+            // for — a launcher on a detached disk still claims its user-data directory.
+            guard stat(appURL.path, &info) == 0 else { return .unreadable }
+        }
+        // Not a directory at all — a Finder alias, a stray file. Not a bundle we failed to
+        // read; not a bundle.
+        guard info.st_mode & S_IFMT == S_IFDIR else { return .foreign }
+
+        // Everything below is decided by *reading the plist at its known path*, never by
+        // enumerating a directory to see whether it is there. A bundle whose directories grant
+        // traversal but not listing (mode `0311`) reads perfectly well, and requiring a listing
+        // would hide a working launcher from the app entirely while marking every scan
+        // incomplete — including the checks that then refuse to delete any profile data.
+        let infoPath = appURL.appendingPathComponent("Contents/Info.plist").path
+        guard let data = fileManager.contents(atPath: infoPath) else {
+            // Absent is an ordinary non-bundle; unreachable is an answer we do not have.
+            var probe = stat()
+            return lstat(infoPath, &probe) != 0 && errno == ENOENT ? .foreign : .unreadable
+        }
+        guard let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let plist = parsed as? [String: Any]
+        else { return .unreadable }
+        // A missing key is an ordinary third-party app. A key that is *present* but not a
+        // dictionary is a launcher of ours with damaged metadata — unreadable, so a purge does
+        // not take it for a stranger and delete the data it still claims.
+        guard let markerValue = plist[CoreConstants.markerKey] else { return .foreign }
+        guard let markerDict = markerValue as? [String: Any],
               let marker = LauncherMarker(dictionary: markerDict)
-        else { return nil }
-        let bundleID = (info["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
-        let displayName = (info["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
-        return Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        else { return .unreadable }
+        let bundleID = (plist["CFBundleIdentifier"] as? String) ?? Profile.defaultBundleID(for: marker.name)
+        let displayName = (plist["CFBundleName"] as? String) ?? Profile.defaultDisplayName(for: marker.name)
+        return .launcher(
+            Discovered(appURL: appURL, marker: marker, bundleID: bundleID, displayName: displayName)
+        )
+    }
+
+    /// One entry's verdict — see `read(at:)`.
+    enum BundleRead {
+        case launcher(Discovered)
+        /// Read successfully, and it is not one of ours.
+        case foreign
+        /// Could not be established either way — and, today, treated exactly as `foreign` by
+        /// the only caller: `readMarker` maps both to `nil`, and `Scan.isComplete` reports the
+        /// *listing* alone. Kept as a distinct verdict because the difference is real and the
+        /// classifier is where it can be drawn; wiring it into ownership without switching off
+        /// half the app over one unreadable stranger in `/Applications` is a separate problem
+        /// (see `Scan.isComplete`).
+        case unreadable
     }
 
     public func isManagedLauncher(at appURL: URL) -> Bool {
@@ -290,18 +389,28 @@ public struct LauncherBundle {
     /// "Restart to apply" nudge silently stops appearing. Rebuilding the URL here keeps the
     /// two sides equal *by construction*, rather than by both happening to normalize the same
     /// way afterwards.
-    /// Enumerated through `visibleContents(ofDirectoryAt:)`, whose doc comment owns why: one
+    /// Enumerated through `listedContents(ofDirectoryAt:)`, whose doc comment owns why: one
     /// spelling per launcher, and a symlinked install directory that does not read as empty.
     /// The flagged-hidden filter is deliberately *not* asked for — a hidden launcher still runs
     /// and still claims its user-data directory.
     ///
-    /// An unreadable install directory yields no launchers, which callers must not read as
-    /// "nobody claims this profile directory" — `liveRewrite` says what it does about that.
-    public func scan(installDirectory: URL) -> [Discovered] {
-        fileManager.visibleContents(ofDirectoryAt: installDirectory)
+    /// The result carries whether it is **complete**, because callers ask two different
+    /// questions of it. "Show me the launchers" is happy with whatever was found; "does anyone
+    /// else use this profile directory" is not, and answering that from a partial list deletes
+    /// a login. See `Scan.isComplete`.
+    public func scan(installDirectory: URL) -> Scan {
+        guard let entries = fileManager.listedContents(ofDirectoryAt: installDirectory) else {
+            return Scan(launchers: [], listed: false)
+        }
+        let launchers = entries
             .filter { $0.pathExtension == "app" }
             .compactMap { readMarker(at: $0) }
-            .sorted { $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending }
+        return Scan(
+            launchers: launchers
+                .sorted {
+                    $0.marker.name.localizedCaseInsensitiveCompare($1.marker.name) == .orderedAscending
+                }
+        )
     }
 
     // MARK: - Remove

@@ -236,7 +236,10 @@ struct LauncherBundleTests {
         try bareInfo.write(to: bare.appendingPathComponent("Info.plist"))
 
         let found = bundle.scan(installDirectory: dir)
-        #expect(found.map(\.marker.name) == ["work"])
+        #expect(found.launchers.map(\.marker.name) == ["work"])
+        // A readable bundle that simply is not ours leaves the scan complete: only an entry
+        // that could not be *read* makes "no launcher claims this" untrustworthy.
+        #expect(found.isComplete)
         #expect(bundle.isManagedLauncher(at: URL(fileURLWithPath: makeProfile(installDir: dir).appPath)))
     }
 

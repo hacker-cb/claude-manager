@@ -117,7 +117,23 @@ public extension ProfileStore {
         // full `ps` sweep and per-launcher `pgrep` that `list()` runs to fill in running
         // state and versions would be paid for and thrown away. It was needed while running
         // launchers were skipped; `rebuild` still probes for itself, once, after its swap.
-        for profile in bundle.scan(installDirectory: configuration.installDirectory).map(\.profile) {
+        // An unlistable install directory scans as "no launchers", and iterating that reports
+        // a successful batch that rebuilt nothing — the one outcome this operation must never
+        // produce, since a wrapper bump makes every launcher stale at once and this is how the
+        // new format reaches them. Every other consumer of the signal refuses to act on an
+        // incomplete scan; so does this one.
+        let scan = bundle.scan(installDirectory: configuration.installDirectory)
+        // A folder that does not exist yet is not a failure — an install-directory override
+        // pointed somewhere new is a state `ensureInstallDirectoryWritable` creates on the next
+        // add, and there is genuinely nothing to rebuild. Only a folder that is *there* and
+        // cannot be listed hides launchers from this batch.
+        let folderIsThere = ProfileStore.pathState(configuration.installDirectory.path) != .absent
+        if !scan.isComplete, folderIsThere {
+            throw ClaudeManagerError.launcherFolderUnreadable(
+                path: configuration.installDirectory.path
+            )
+        }
+        for profile in scan.launchers.map(\.profile) {
             do {
                 let result = try rebuild(profile)
                 rebuilt.append(profile)

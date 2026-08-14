@@ -36,7 +36,8 @@ public struct Doctor {
         var diagnostics: [Diagnostic] = []
         diagnostics.append(realClaudeDiagnostic())
 
-        let discovered = bundle.scan(installDirectory: configuration.installDirectory)
+        let scan = bundle.scan(installDirectory: configuration.installDirectory)
+        let discovered = scan.launchers
         var knownProfiles = Set<String>()
         for launcher in discovered {
             knownProfiles.insert(launcher.marker.profile)
@@ -48,7 +49,9 @@ public struct Doctor {
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
         diagnostics.append(contentsOf: stagedUpdateDiagnostics())
-        diagnostics.append(contentsOf: orphanProfileDiagnostics(known: knownProfiles))
+        diagnostics.append(
+            contentsOf: orphanProfileDiagnostics(known: knownProfiles, scan: scan)
+        )
         diagnostics.append(contentsOf: duplicateInstanceDiagnostics())
         return diagnostics
     }
@@ -314,16 +317,17 @@ public struct Doctor {
     /// paths, since a marker records whatever spelling the profile was created with (iCloud's
     /// Desktop & Documents replaces `~/Documents` with a symlink, and the profiles directory is
     /// user-settable).
-    private func orphanProfileDiagnostics(known: Set<String>) -> [Diagnostic] {
+    private func orphanProfileDiagnostics(
+        known: Set<String>,
+        scan: LauncherBundle.Scan
+    ) -> [Diagnostic] {
         // `known` comes from a scan of the install directory, and `LauncherBundle.scan` reports
         // an unreadable one as holding no launchers. Reading that as "nobody claims any of
         // these directories" is the misreading its doc comment warns callers about, and here
         // it would label every live profile — each holding a login and a chat history — as
         // safe to delete. A launcher folder that was renamed, unmounted, or had its
         // permissions changed is exactly that state, so say the check could not run.
-        guard (try? fileManager.contentsOfDirectory(atPath: configuration.installDirectory.path))
-            != nil
-        else {
+        guard scan.isComplete else {
             return [Diagnostic(
                 severity: .warning,
                 title: "Cannot read the launcher folder — orphan-profile check skipped",

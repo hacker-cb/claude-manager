@@ -245,4 +245,40 @@ struct LauncherRebuildTests {
         #expect(!diagnostics.contains { $0.title.contains("older launcher format") })
         #expect(diagnostics.contains { $0.severity == .error && $0.title.contains("macOS will not run it") })
     }
+
+    /// An unlistable install directory scans as "no launchers", and a batch over that reports
+    /// success having rebuilt nothing — while every launcher stays on the old wrapper, which is
+    /// exactly what this operation exists to fix.
+    @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
+    func rebuildAllRefusesWhenTheInstallDirectoryCannotBeListed() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: env.installDir.path)
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+        }
+        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
+        try fm.setAttributes([.posixPermissions: 0o311], ofItemAtPath: env.installDir.path)
+
+        let thrown = try #require(throws: ClaudeManagerError.self) {
+            try env.store.rebuildAll()
+        }
+
+        #expect(try #require(thrown.errorDescription).contains("could not be read"))
+    }
+
+    /// An install directory that simply is not there yet — an override pointed somewhere new —
+    /// is a state the store creates on demand, and there is genuinely nothing to rebuild. Only
+    /// a folder that exists and cannot be listed hides launchers from the batch.
+    @Test
+    func rebuildAllIsANoOpWhenTheInstallDirectoryDoesNotExistYet() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try fm.removeItem(at: env.installDir)
+
+        let result = try env.store.rebuildAll()
+
+        #expect(result.rebuilt.isEmpty)
+        #expect(result.failed.isEmpty)
+    }
 }

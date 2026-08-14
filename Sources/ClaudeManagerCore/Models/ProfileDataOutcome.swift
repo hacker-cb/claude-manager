@@ -32,11 +32,28 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// take their login and history with it. Carries their display names because the remedy is
     /// per-launcher.
     case keptSharedWith(launchers: [String])
-    /// Deletion was asked for and declined because the directory is the **default profile's**
-    /// own — the one Claude itself uses. It owns no launcher, so it appears in no scan and
-    /// `keptSharedWith` cannot name it; pointing a clone at it to reuse an existing login is
-    /// a supported thing to do, and purging from there would sign the user out of Claude.
+    /// Deletion was asked for and declined because it would have **stranded** the launchers
+    /// named here: their data is not inside this profile's directory, they only reach it
+    /// *through* a symlink that the deletion would have removed. Their login and chat history
+    /// survive either way — what they would lose is the path to it — so this must never be
+    /// reported as `keptSharedWith`, whose sentence claims their data would be deleted and
+    /// whose remedy ("remove that launcher with Delete Profile Data") destroys it.
+    case keptWouldStrand(launchers: [String])
+    /// Deletion was asked for and declined because the deletion would reach the **default
+    /// profile's** directory — the one Claude itself uses. Either the profile points at it (a
+    /// supported way to reuse an existing login) or its own directory *contains* it, which the
+    /// free-text path field allows. It owns no launcher, so it appears in no scan and
+    /// `keptSharedWith` cannot name it; purging from there would sign the user out of Claude.
     case keptForDefaultProfile
+    /// Deletion was asked for and declined because **whether anyone else uses this directory
+    /// could not be established**: the launcher folder could not be listed, and that is where
+    /// the answer lives. An empty scan is what an unlistable folder and an empty one look like
+    /// from the inside, so treating it as "nobody else claims this" deletes a sibling's login
+    /// over a folder that was merely renamed, unmounted, or had its permissions changed.
+    /// Reached whether that was already so before the removal or became so during it — the
+    /// launcher is still removed either way, since refusing would leave a profile that cannot
+    /// be retired at all.
+    case keptOwnersUnknown
     /// Deletion was asked for and there was nothing at the path.
     case alreadyGone
     /// Deletion was not asked for — "Move Launcher to Trash (keep login)".
@@ -62,13 +79,25 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             nil
         case let .keptSharedWith(launchers):
             Self.sharedNotice(displayName: displayName, launchers: launchers)
+        case let .keptWouldStrand(launchers):
+            Self.strandNotice(displayName: displayName, launchers: launchers)
         case .keptForDefaultProfile:
             RemovalNotice(
                 title: "Profile data was kept",
-                message: "\(displayName) used the default profile's own folder, so its login "
-                    + "and chat history are Claude's own — deleting them from here would sign "
-                    + "you out of Claude itself. The launcher is in the Trash; the data is "
-                    + "untouched."
+                message: "\(displayName)'s profile data folder is — or contains — the folder "
+                    + "Claude itself uses, so deleting it would take Claude's own login and "
+                    + "chat history with it and sign you out. The launcher is in the Trash; "
+                    + "the data is untouched."
+            )
+        case .keptOwnersUnknown:
+            RemovalNotice(
+                title: "Profile data was kept",
+                message: "\(displayName)'s launcher is in the Trash, but its profile data was "
+                    + "left alone: the launcher folder could not be read, so there was no way "
+                    + "to tell whether another profile also uses that data. The login and chat "
+                    + "history are still on disk. To have the app delete them, put the launcher "
+                    + "back from the Trash and remove it again once that folder can be read — "
+                    + "or delete the data by hand if you are sure nothing else uses it."
             )
         case let .purgeFailed(reason):
             RemovalNotice(
@@ -78,6 +107,22 @@ public enum ProfileDataOutcome: Sendable, Equatable {
                     + "chat history are still on disk."
             )
         }
+    }
+
+    /// The other decline, and the difference is the whole point: nothing of theirs would have
+    /// been deleted, so the remedy is to repoint them, never to remove them with their data.
+    private static func strandNotice(displayName: String, launchers: [String]) -> RemovalNotice? {
+        guard !launchers.isEmpty else { return nil }
+        let list = Sentences.list(launchers)
+        return RemovalNotice(
+            title: "Profile data was kept",
+            message: "\(list) reach their profile data through a shortcut inside "
+                + "\(displayName)'s profile data folder, so deleting that folder would have "
+                + "left them pointing at nothing — their login and chat history are not in "
+                + "there and would have survived, but Claude would open them signed out. The "
+                + "folder was left alone; point \(list) straight at the real folder to be able "
+                + "to delete it."
+        )
     }
 
     /// The refusal, named concretely enough to act on. It says which button does the deletion,

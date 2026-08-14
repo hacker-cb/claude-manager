@@ -39,7 +39,17 @@ public extension FileManager {
     /// for the caller that asks is the harmless direction: one diagnostic too many, rather than
     /// a profile directory silently unexamined.
     func visibleContents(ofDirectoryAt url: URL, skippingFlaggedHidden: Bool = false) -> [URL] {
-        let names = (try? contentsOfDirectory(atPath: url.path)) ?? []
+        listedContents(ofDirectoryAt: url, skippingFlaggedHidden: skippingFlaggedHidden) ?? []
+    }
+
+    /// The same listing, but `nil` where the directory could not be enumerated at all.
+    ///
+    /// The distinction matters wherever emptiness is used as evidence: "no launcher claims this
+    /// profile directory" decides whether a login is deleted, and an unlistable folder answers
+    /// that question the same way an empty one does. Callers that only display what they found
+    /// can keep using `visibleContents`.
+    func listedContents(ofDirectoryAt url: URL, skippingFlaggedHidden: Bool = false) -> [URL]? {
+        guard let names = try? contentsOfDirectory(atPath: url.path) else { return nil }
         return names
             .filter { !$0.hasPrefix(".") }
             .map { url.appendingPathComponent($0, isDirectory: true) }

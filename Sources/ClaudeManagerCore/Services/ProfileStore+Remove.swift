@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Outcome of removing a launcher.
@@ -40,16 +41,43 @@ public extension ProfileStore {
             throw ClaudeManagerError.profileRunning(name: profile.name, pid: pid)
         }
         // Refused *before* the launcher is trashed, unlike every other reason a purge does not
-        // happen. Those leave the data reachable: a launcher on the same directory, or one
-        // whose directory contains it, can still purge it later. This case cannot — purging
-        // the inner launcher deletes only the inner directory, and with the outer launcher in
-        // the Trash nothing in the app can ever offer to delete the rest. So the removal stops
-        // here instead, with both remedies named, and nothing has happened yet to undo.
-        if purgeProfile {
-            let nested = launchersNested(under: profile)
-            guard nested.isEmpty else {
+        // go through. The others leave the data reachable — a launcher on the same directory
+        // can still purge it later — while this one does not: afterwards no profile lists the
+        // directory at all, so nothing in the app can offer to finish the job. Stopping here
+        // leaves nothing to undo.
+        //
+        // Only where something is actually going to be deleted: with the data already gone, or
+        // with it belonging to the default profile, nothing is at stake whatever the scan says.
+        //
+        // Asked whenever a purge is requested, without first checking that the directory is
+        // there: `fileExists` answers "unreachable" — an unmounted volume, a parent that lost
+        // traversal — exactly as it answers "deleted", and skipping the check on that reading
+        // trashes the launcher, says nothing, and leaves the nested profile's data undeletable
+        // through the app once the volume is back.
+        var seenBeforeTrashing: [LauncherBundle.Discovered] = []
+        // Skipped where the purge is going to decline regardless: a data path that reaches
+        // Claude's own directory comes back `keptForDefaultProfile` having deleted nothing, so
+        // refusing here would only make such a launcher impossible to retire — while telling
+        // the user to remove every other profile first, which *would* destroy their data.
+        if purgeProfile, !PurgeReach(profile).reaches(configuration.defaultProfileUserDataPath) {
+            let scan = bundle.scan(installDirectory: configuration.installDirectory)
+            // Filtered here, while our bundle is still on disk: `read` follows symlinks, so an
+            // alias to it scans as a launcher of its own, and carrying that forward would make
+            // the profile decline against itself. Resolved paths answer that — two launchers
+            // may legitimately share a name *and* a data directory, so the marker cannot.
+            let ourBundle = PathUtils.canonicalPath(profile.appPath)
+            seenBeforeTrashing = scan.launchers.filter {
+                PathUtils.canonicalPath($0.appURL.path) != ourBundle
+            }
+            let nested = launchersNested(under: profile, among: scan.launchers)
+            guard nested.destroyed.isEmpty else {
                 throw ClaudeManagerError.profileDataHoldsAnother(
-                    name: profile.displayName, others: nested
+                    name: profile.displayName, others: nested.destroyed
+                )
+            }
+            guard nested.stranded.isEmpty else {
+                throw ClaudeManagerError.profileDataStrandsAnother(
+                    name: profile.displayName, others: nested.stranded
                 )
             }
         }
@@ -57,7 +85,9 @@ public extension ProfileStore {
         return RemovalResult(
             trashedAppURL: trashed,
             profilePath: profile.profilePath,
-            profileData: purgeProfile ? purgeProfileData(for: profile) : .notRequested
+            profileData: purgeProfile
+                ? purgeProfileData(for: profile, seenBefore: seenBeforeTrashing)
+                : .notRequested
         )
     }
 
@@ -70,37 +100,111 @@ public extension ProfileStore {
     /// runs, so a `removeItem` failure raised as an error reports the *whole* removal as
     /// failed while half of it already happened — and the half that did not is the half
     /// holding the credentials. It comes back as `purgeFailed` instead, carrying the reason.
-    private func purgeProfileData(for profile: Profile) -> ProfileDataOutcome {
+    private func purgeProfileData(
+        for profile: Profile,
+        seenBefore: [LauncherBundle.Discovered]
+    ) -> ProfileDataOutcome {
         // Never delete data another launcher still points at (the launcher we
         // just trashed is already gone from the scan).
-        let survivors = bundle.scan(installDirectory: configuration.installDirectory)
-        let sharing = survivors.filter {
-            Self.directoriesOverlap($0.marker.profile, profile.profilePath)
+        //
+        // The scan has to be *complete* before its emptiness means anything: an unlistable
+        // folder reports the same "no launchers" an empty one does, and reading that as "nobody
+        // else claims this directory" deletes a sibling's login. `Doctor` guards the same
+        // degradation. What this does *not* cover is a single bundle that could not be read —
+        // see `Scan.isComplete` for why that trade is deliberate.
+        let scan = bundle.scan(installDirectory: configuration.installDirectory)
+        let ownersKnown = scan.isComplete
+        // Everything either scan saw. A launcher observed before the launcher was trashed does
+        // not stop claiming its directory because the second read could not see it — a bundle
+        // that became unreadable in between, an unmounted volume — and forgetting it here is
+        // how the data it claims gets deleted. Our own launcher is in the Trash by now, so it
+        // is filtered out rather than counting as a rival.
+        let ourApp = profile.appURL.standardizedFileURL.path
+        var survivors = scan.launchers
+        var seenPaths = Set(survivors.map(\.appURL.standardizedFileURL.path))
+        for earlier in seenBefore {
+            let path = earlier.appURL.standardizedFileURL.path
+            // Our own bundle — and any alias of it — was already dropped from `seenBefore`
+            // while it still existed; this only guards the second scan's own view.
+            guard path != ourApp, seenPaths.insert(path).inserted else { continue }
+            survivors.append(earlier)
         }
+        let reach = PurgeReach(profile)
+        let sharing = survivors.filter { reach.covers($0.marker.profile) }
         // The default profile owns no launcher, so it appears in no scan and the sharing check
         // cannot see it — yet pointing a clone at its directory to reuse an existing login is
         // a supported thing to do (`AddResult.reusedProfileData` exists for it). Purging there
         // would take the user's primary Anthropic login and every chat in it, and even the
         // running check cannot object: Claude's own process carries no `--user-data-dir` for
         // `runningPID` to match.
-        let isDefaultProfileData = PathUtils
-            .sameDirectory(profile.profilePath, configuration.defaultProfileUserDataPath)
-        // Existence first, so a refusal is only reported where there is something to refuse
-        // over: with the directory already gone, "your login was kept" names credentials that
-        // are not there and sends the user to remove a launcher for nothing.
-        guard fileManager.fileExists(atPath: profile.profilePath) else {
+        // Asked as containment, not equality: the purge is a recursive `removeItem`, and the
+        // "Profile data" field is free text, so a profile can be created on an *ancestor* of
+        // Claude's own directory — `~/Library/Application Support`. Equality lets that through
+        // and the deletion takes the user's real Claude login, their whole chat history, and
+        // every other app's data in there, reported as a clean purge.
+        let isDefaultProfileData = reach.reaches(configuration.defaultProfileUserDataPath)
+        // Both of the answers below are known without a scan, so they come first: "there was
+        // nothing to delete" and "this is Claude's own directory" stay true however little we
+        // could see, and reporting the unknown instead would claim data was left behind that
+        // either does not exist or was never a candidate.
+        // `fileExists` answers "unreachable" — an unmounted volume, a parent that lost
+        // traversal — exactly as it answers "deleted", and `.alreadyGone` shows the user
+        // nothing at all. Told apart by `lstat`: only ENOENT is genuinely nothing there.
+        switch Self.pathState(profile.profilePath) {
+        case .unreachable where isDefaultProfileData:
+            // Nothing was going to be deleted whatever the state of the path, so the honest
+            // answer is the refusal, not a failure to do something never attempted.
+            return .keptForDefaultProfile
+        case .unreachable:
+            // Not `keptOwnersUnknown`: that one is about the *launcher* folder and sends the
+            // user to make it readable, which here is already true and would fix nothing. What
+            // could not be reached is the data itself, and `purgeFailed` is the outcome that
+            // says "still on disk" with a cause attached.
+            return .purgeFailed(reason: "its folder could not be reached")
+        case .present:
+            break
+        case .absent:
             // The overlay is swept even here — it is created independently of the data dir —
             // but not when the path is shared, where it is the survivor's overlay too, nor
-            // when it is the default profile's, where it is Claude's own config tier.
-            if sharing.isEmpty, !isDefaultProfileData {
+            // when it is the default profile's, where it is Claude's own config tier, nor when
+            // the scan was incomplete: `removeOverlay` deletes that path recursively, and its
+            // collision guard reads the very survivor list the scan could not complete. A `-3p`
+            // tier left behind is recoverable; a sibling whose user-data directory *is* that
+            // path is not.
+            if ownersKnown, sharing.isEmpty, !isDefaultProfileData {
                 sweepOverlay(for: profile, survivors: survivors)
             }
             return .alreadyGone
         }
         guard !isDefaultProfileData else { return .keptForDefaultProfile }
+        // A sharer that *was* seen is named, even where the scan is otherwise incomplete: the
+        // unknown is the weaker answer of the two, and reporting it instead would replace a
+        // launcher's name with "delete the folder by hand if you are sure nothing else uses
+        // it" — advice that destroys the very login this refusal exists to keep.
         guard sharing.isEmpty else {
-            return .keptSharedWith(launchers: sharing.map(\.profile.displayName))
+            // Told apart by what the deletion would actually have done to them — the two
+            // sentences differ, and one of the remedies is destructive if given for the wrong
+            // case. A sibling whose directory is genuinely inside this one loses its data; one
+            // that merely reached its own data through a shortcut in here loses the shortcut.
+            // Nothing is destroyed when our own path is a link: the unlink removes the
+            // shortcut and walks nowhere, so every sibling it affects loses a path, not bytes.
+            // Otherwise, overlap either way round — their directory inside ours means the
+            // recursion takes their data, ours inside theirs means it takes part of what their
+            // directory holds.
+            let unlinkOnly = Self.isSymbolicLink(profile.profileURL)
+            let destroyed = unlinkOnly ? [] : sharing.filter {
+                Self.directoriesOverlap(
+                    PathUtils.canonicalPath(profile.profilePath),
+                    PathUtils.canonicalPath($0.marker.profile),
+                    ignoringCase: Self.volumeIgnoresCase(at: profile.profileURL)
+                )
+            }
+            guard destroyed.isEmpty else {
+                return .keptSharedWith(launchers: destroyed.map(\.profile.displayName))
+            }
+            return .keptWouldStrand(launchers: sharing.map(\.profile.displayName))
         }
+        guard ownersKnown else { return .keptOwnersUnknown }
         do {
             try fileManager.removeItem(at: profile.profileURL)
         } catch {
@@ -114,58 +218,191 @@ public extension ProfileStore {
 
     /// Remove the `<profilePath>-3p` overlay sibling. Guards a name collision: if another
     /// launcher's user-data dir *is* that `-3p` path, it's that profile's data, not our
-    /// overlay — leave it alone. Best-effort (`removeOverlay` no-ops when absent).
+    /// overlay — leave it alone. `removeOverlay` deletes that directory whole, so missing the
+    /// collision costs the sibling its login and chat history; the paths are therefore
+    /// compared as directories, since the sibling records whichever spelling it was created
+    /// with. Best-effort (`removeOverlay` no-ops when absent).
     private func sweepOverlay(for profile: Profile, survivors: [LauncherBundle.Discovered]) {
         let overlayPath = ManagedConfigWriter
-            .localTierURL(forUserDataPath: profile.profilePath).standardizedFileURL.path
-        let overlayIsAnothersData = survivors.contains {
-            URL(fileURLWithPath: $0.marker.profile).standardizedFileURL.path == overlayPath
-        }
+            .localTierURL(forUserDataPath: profile.profilePath).path
+        // Asked exactly as the purge itself is asked, because `removeOverlay` deletes this
+        // path the same recursive way: a launcher whose data sits *inside* the `-3p` path is
+        // reached as surely as one whose data is that path, and an overlay path that is itself
+        // a link would only be unlinked. Equality alone missed both.
+        let reach = PurgeReach(path: overlayPath, url: URL(fileURLWithPath: overlayPath))
+        let overlayIsAnothersData = survivors.contains { reach.covers($0.marker.profile) }
         if !overlayIsAnothersData {
             try? managedConfigWriter.removeOverlay(userDataPath: profile.profilePath)
         }
     }
 
-    /// Display names of the launchers whose user-data directory sits **strictly inside**
-    /// `profile`'s — the case a purge cannot be talked out of afterwards. This runs before the
-    /// launcher is trashed, so it filters `profile` out of the scan itself rather than relying
-    /// on the removal having already happened.
-    private func launchersNested(under profile: Profile) -> [String] {
+    /// Launchers this purge would hurt, gathered before the launcher is trashed — so it
+    /// filters `profile` out of the scan itself rather than relying on the removal having
+    /// already happened.
+    ///
+    /// Two different harms, told apart because the remedy and the honest sentence differ.
+    ///
+    /// `destroyed` — the sibling's directory is physically inside this one, so the recursive
+    /// delete takes its login and chat history. `stranded` — the sibling only *spelled* its
+    /// path through a symlink inside this one, so the delete unlinks that link and its bytes
+    /// survive somewhere else, but its recorded path stops resolving.
+    ///
+    /// Both are refused before the launcher is trashed, and for the same reason: afterwards no
+    /// profile lists this directory, so nothing in the app can finish or undo the job.
+    private func launchersNested(
+        under profile: Profile,
+        among launchers: [LauncherBundle.Discovered]
+    ) -> (destroyed: [String], stranded: [String]) {
+        // A link-valued data path is never this case. Unlinking destroys nothing, so the
+        // refusal's own message — "deleting it would delete their login and chat history too,
+        // remove that launcher first" — would be false, and following its advice is what
+        // actually destroys that data. A sibling reached through the link is still seen, by
+        // `PurgeReach`, and comes back as the decline it really is.
+        guard !Self.isSymbolicLink(profile.profileURL) else { return ([], []) }
         let ourApp = profile.appURL.standardizedFileURL.path
-        return bundle.scan(installDirectory: configuration.installDirectory)
-            .filter { $0.appURL.standardizedFileURL.path != ourApp }
-            .filter { Self.directoryStrictlyContains(profile.profilePath, $0.marker.profile) }
-            .map(\.profile.displayName)
+        let ourLiteral = PurgeReach.literalPath(profile.profilePath)
+        let ourCanonical = PathUtils.canonicalPath(profile.profilePath)
+        let ignoringCase = Self.volumeIgnoresCase(at: profile.profileURL)
+        let others = launchers.filter { $0.appURL.standardizedFileURL.path != ourApp }
+        let destroyed = others.filter {
+            Self.directoryStrictlyContains(
+                ourCanonical,
+                PathUtils.canonicalPath($0.marker.profile),
+                ignoringCase: ignoringCase
+            )
+        }
+        let destroyedApps = Set(destroyed.map(\.appURL.standardizedFileURL.path))
+        let stranded = others
+            .filter { !destroyedApps.contains($0.appURL.standardizedFileURL.path) }
+            .filter {
+                // As recorded, *and* with their parent resolved and their own name left
+                // alone. The second form recognises `…/ProfilesLink/outer/moved` as the
+                // `…/outer/moved` shortcut this directory holds; the first keeps a sibling
+                // whose path runs through a shortcut deeper in, which resolving the parent
+                // would follow out of this directory.
+                Self.directoryStrictlyContains(
+                    ourLiteral,
+                    PurgeReach.literalPath($0.marker.profile),
+                    ignoringCase: ignoringCase
+                ) || Self.directoryStrictlyContains(
+                    ourLiteral,
+                    PurgeReach.linkIdentityPath($0.marker.profile),
+                    ignoringCase: ignoringCase
+                )
+            }
+        return (destroyed.map(\.profile.displayName), stranded.map(\.profile.displayName))
+    }
+
+    /// Whether the volume holding `url` treats names case-insensitively — the default on macOS.
+    ///
+    /// An unknown answer folds **nothing**. The volume can only be asked about a path that
+    /// exists, and a path that does not exist is one the purge will not delete anyway — so
+    /// folding there protects nothing while inventing collisions: on a case-sensitive volume
+    /// `…/work` and `…/Work` are two real directories, and treating them as one produces a
+    /// refusal that repeats on every attempt and advises deleting an unrelated profile's login.
+    internal static func volumeIgnoresCase(at url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames == false
+    }
+
+    /// What is at a path, with "nothing there" told apart from "cannot look".
+    ///
+    /// `fileExists` collapses the two, and they mean opposite things to a removal: an absent
+    /// directory is nothing to delete and nothing to say, while an unreachable one still holds
+    /// a login the app is about to lose its last way of deleting.
+    ///
+    /// The split this can draw is the one `errno` draws: a directory whose *parent* refuses
+    /// traversal comes back `.unreachable`. A path on a volume that is not mounted does not —
+    /// it answers `ENOENT`, exactly as a deleted directory does, all the way up its chain, and
+    /// nothing here can tell the two apart (a profiles directory that was never created answers
+    /// the same way, and treating that as unreachable would report a failure for a removal with
+    /// genuinely nothing to delete). That case is tracked separately.
+    enum PathState {
+        case present
+        case absent
+        case unreachable
+    }
+
+    internal static func pathState(_ path: String) -> PathState {
+        var info = stat()
+        guard lstat(path, &info) != 0 else { return .present }
+        return errno == ENOENT ? .absent : .unreachable
+    }
+
+    internal static func isSymbolicLink(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+    }
+
+    /// Whether `inner` is `outer` or sits below it — the asymmetric question, for "would
+    /// deleting `outer` reach `inner`".
+    internal static func directoryContains(
+        _ outer: String,
+        _ inner: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
+        let outerParts = components(outer)
+        let innerParts = components(inner)
+        guard innerParts.count >= outerParts.count else { return false }
+        return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
     /// Whether deleting one of these directories would take the other with it — the same path,
-    /// or one nested inside the other.
+    /// or one nested inside the other. The asymmetric half is `directoryContains`.
     ///
-    /// Raw string equality is not enough on either count. The profile path is free text in the
-    /// editor and only normalized (`PathUtils.absolutePath`), so one launcher's data can sit
-    /// *inside* another's: `removeItem` on the outer one is recursive and takes the inner
-    /// profile's Anthropic token and chat history with it, silently, since a scan filtered on
-    /// equality reports nobody sharing. Two spellings of one directory miss each other the
-    /// same way, which is why `sweepOverlay`'s own guard already standardizes both sides.
+    /// Raw string equality is not enough on either count. The profile path is free text when a
+    /// profile is created, so one launcher's data can sit *inside* another's: `removeItem` on
+    /// the outer one is recursive and takes the inner profile's Anthropic token and chat
+    /// history with it, silently, since a scan filtered on equality reports nobody sharing.
     ///
     /// Compared by path *component*, never by string prefix: `…/Profiles/work` is not inside
     /// `…/Profiles/wo`, though one string does begin with the other.
-    private static func directoriesOverlap(_ lhs: String, _ rhs: String) -> Bool {
+    ///
+    /// **Whichever spelling the caller passes in is the spelling compared** — this does no
+    /// resolving of its own. `PurgeReach` asks it three times over, with canonical paths and
+    /// with two literal forms, because those questions have different answers and each catches
+    /// a sibling the others miss; see its doc comment. A caller that assumes canonicalisation
+    /// happens here silently drops the two literal ones.
+    internal static func directoriesOverlap(
+        _ lhs: String,
+        _ rhs: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
         let left = components(lhs)
         let right = components(rhs)
-        let shared = zip(left, right).prefix { $0 == $1 }.count
+        let shared = zip(left, right).prefix { same($0, $1, ignoringCase: ignoringCase) }.count
         return shared == left.count || shared == right.count
     }
 
+    /// Component equality, folded the way the volume folds it. The canonical comparison gets
+    /// this from the file system for free — an existing path resolves to the name actually
+    /// stored — but the *literal* one cannot, and on a case-insensitive volume that leaves
+    /// `…/Outer/alias/inner` and `…/outer/Alias/inner` looking unrelated while both name one
+    /// directory reached through one link.
+    private static func same(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
+        ignoringCase ? lhs.caseInsensitiveCompare(rhs) == .orderedSame : lhs == rhs
+    }
+
+    /// Whole-path equality, folded the way the volume folds names — the same question `same`
+    /// answers per component.
+    internal static func samePath(_ lhs: String, _ rhs: String, ignoringCase: Bool) -> Bool {
+        same(lhs, rhs, ignoringCase: ignoringCase)
+    }
+
     /// Whether `inner` sits strictly below `outer` — the asymmetric half of the check above.
-    private static func directoryStrictlyContains(_ outer: String, _ inner: String) -> Bool {
+    private static func directoryStrictlyContains(
+        _ outer: String,
+        _ inner: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
         let outerParts = components(outer)
         let innerParts = components(inner)
         guard innerParts.count > outerParts.count else { return false }
-        return Array(innerParts.prefix(outerParts.count)) == outerParts
+        return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
+    /// Components of an **already canonical** path — every caller canonicalises first, so
+    /// doing it again here would pay for the file-system walk twice per comparison.
     private static func components(_ path: String) -> [String] {
-        URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        URL(fileURLWithPath: path).pathComponents
     }
 }
