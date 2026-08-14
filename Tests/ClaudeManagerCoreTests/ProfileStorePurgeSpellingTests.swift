@@ -223,12 +223,13 @@ struct ProfileStorePurgeSpellingTests {
             AddProfileRequest(name: env.name("moved"), profilePath: insideLink.path)
         ).profile
 
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(outerProfile, purgeProfile: true)
-        }
+        let result = try env.store.remove(outerProfile, purgeProfile: true)
 
+        // Declined, naming the sibling — not refused up front: recursion would unlink the link
+        // and walk no further, so the sibling loses its path, not its data, and a refusal
+        // telling the user to delete that profile first would destroy what was never at risk.
+        #expect(result.profileData == .keptSharedWith(launchers: [moved.displayName]))
         #expect(fm.fileExists(atPath: outer.path))
-        #expect(try #require(thrown.errorDescription).contains(moved.displayName))
     }
 
     /// The same link, recorded by two profiles under different spellings of its parent. The
@@ -396,19 +397,13 @@ struct ProfileStorePurgeSpellingTests {
 
         let outcome = Result { try env.store.remove(outerProfile, purgeProfile: true) }
 
+        let result = try outcome.get()
         if volumeIgnoresCase {
-            guard case let .failure(error) = outcome else {
-                Issue.record("expected a refusal naming \(cased.displayName)")
-                return
-            }
-            #expect(
-                try #require((error as? ClaudeManagerError)?.errorDescription)
-                    .contains(cased.displayName)
-            )
+            #expect(result.profileData == .keptSharedWith(launchers: [cased.displayName]))
             #expect(fm.fileExists(atPath: outer.path))
         } else {
             // On a case-sensitive volume the two paths really are different directories.
-            #expect(throws: Never.self) { try outcome.get() }
+            #expect(result.profileData == .purged)
         }
     }
 }
