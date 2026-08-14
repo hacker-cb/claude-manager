@@ -32,6 +32,16 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
     /// launchers are on disk pointing at one profile — see `update`. Distinct from
     /// `renameUndone` because the state, and therefore the remedy, is the opposite one.
     case renameLeftBothLaunchers(oldPath: String, newPath: String, reason: String)
+    /// A build could not establish the name the installed launcher is stored under, so it could
+    /// not put it under the requested one — see `alignInstalledSpelling`. Raised instead of
+    /// carrying on, because the caller has already treated a change of spelling as *not* a
+    /// rename: carrying on writes the bundle under its old name and reports the new one.
+    case launcherSpellingUnreadable(path: String)
+    /// A build renamed the installed launcher to the requested spelling, failed at the swap,
+    /// and could not put the name back — so the bundle answers to the new name while its
+    /// contents are still the old ones. Reported rather than swallowed: the edit did not land,
+    /// but something about the launcher did change, and only saying so lets the user fix it.
+    case launcherLeftUnderNewName(path: String, previousPath: String, reason: String)
     case invalidProfileName(String)
     case invalidDisplayName(String)
     case invalidBundleID(String)
@@ -89,6 +99,17 @@ public enum ClaudeManagerError: Error, LocalizedError, Equatable {
                 + "so this profile now has two launchers — the one just named above, and "
                 + "\(PathUtils.abbreviatingHome(newPath)). Move the first to the Trash in "
                 + "Finder; until you do, both open this profile and either can start it."
+        case let .launcherSpellingUnreadable(path):
+            return "The launcher at \(PathUtils.abbreviatingHome(path)) is there, but the name "
+                + "it is stored under could not be read, so it could not be renamed to match. "
+                + "Nothing was changed. Try again once that folder can be read."
+        case let .launcherLeftUnderNewName(path, previousPath, reason):
+            return "The edit was not applied: \(Sentences.terminated(reason)) The launcher had "
+                + "already been renamed to \(PathUtils.abbreviatingHome(path)) by then and "
+                + "could not be renamed back, so it is still the launcher it was — same "
+                + "profile, same settings — under the new name. Rename it to "
+                + "\(PathUtils.abbreviatingHome(previousPath)) in Finder, or make the edit "
+                + "again to bring the two into line."
         case let .profileDataHoldsAnother(name, others):
             let list = Sentences.list(others)
             return "\"\(name)\"'s profile data folder contains the data for \(list), so "

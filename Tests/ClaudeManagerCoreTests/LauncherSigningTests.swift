@@ -105,11 +105,38 @@ struct LauncherSigningTests {
         #expect(CodeSigner(runner: SystemCommandRunner()).isValidlySigned(bundleURL: appURL))
     }
 
-    /// A launcher rebuilt under another spelling of its own name is renamed rather than
-    /// replaced, and must come out of it executable. The ad-hoc seal spans the bundle's
-    /// *contents*, not the name of the directory holding them — asserted here rather than
-    /// assumed, because getting it wrong is invisible until macOS kills the launcher seconds
-    /// after it reaches the Dock and the user reports a profile that "hangs and never opens".
+    /// The claim `alignInstalledSpelling` rests on, and that CLAUDE.md states as measured: a
+    /// **signed** bundle survives being renamed. That is what lets a rename sit below the
+    /// signing call at all, so it is asserted against a bundle that was signed and then renamed
+    /// — not against one rebuilt afterwards, where `replaceItemAt` installs a fresh staging copy
+    /// and the seal under test would be that copy's, never the renamed bundle's.
+    ///
+    /// Both directions, because the rule is about renaming and not about case: getting it wrong
+    /// is invisible until macOS kills the launcher seconds after it reaches the Dock and the
+    /// user reports a profile that "hangs and never opens".
+    @Test
+    func aSignedLauncherSurvivesBeingRenamed() throws {
+        let dir = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: dir) }
+        let profile = makeProfile(installDir: dir)
+        try LauncherBundle().build(
+            profile: profile, realBinaryPath: realBinary, icnsData: Data("i".utf8)
+        )
+        let signer = CodeSigner(runner: SystemCommandRunner())
+        let installed = URL(fileURLWithPath: profile.appPath)
+
+        let shouted = dir.appendingPathComponent("\(profile.displayName.uppercased()).app")
+        try fm.moveItem(at: installed, to: shouted)
+        #expect(signer.isValidlySigned(bundleURL: shouted))
+
+        let elsewhere = dir.appendingPathComponent("Totally Different.app")
+        try fm.moveItem(at: shouted, to: elsewhere)
+        #expect(signer.isValidlySigned(bundleURL: elsewhere))
+    }
+
+    /// And the whole step in context: rebuilding a launcher under another spelling of its own
+    /// name renames the installed bundle before swapping the new one in, and what ends up
+    /// installed has to be executable.
     ///
     /// Gated on the volume: where `Work.app` and `WORK.app` are two files this is an ordinary
     /// build at a fresh path, which the cases above already cover.

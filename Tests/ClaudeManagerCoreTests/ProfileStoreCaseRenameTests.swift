@@ -158,9 +158,11 @@ struct ProfileStoreCaseRenameTests {
         }
 
         // The collision guard is what refused, named by its own case — not merely "something
-        // threw", which a validation failure or a marker mismatch would satisfy too.
-        #expect(thrown == .launcherAlreadyExists(path: env.installDir
-                .appendingPathComponent("\(edits.displayName).app").path))
+        // threw", which a validation failure or a marker mismatch would satisfy too. And it
+        // names the launcher **as the volume stores it**: the message tells the user to remove
+        // that file in Finder, and the spelling they typed is not one that exists there.
+        #expect(thrown == .launcherAlreadyExists(path: second.appPath))
+        #expect(thrown.errorDescription?.contains(second.displayName) == true)
         // Both launchers stand, under the names they had, and nobody's data was touched.
         #expect(try installedNames(in: env) == [
             "\(first.displayName).app", "\(second.displayName).app"

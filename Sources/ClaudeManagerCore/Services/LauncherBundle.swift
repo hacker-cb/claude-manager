@@ -220,7 +220,24 @@ public struct LauncherBundle {
                 // carrying the *old* contents, so the edit is reported as failed while the
                 // bundle on disk answers to a name its own marker does not know — the split
                 // identity this whole path exists to close, arrived at from the other side.
-                if let spelledBefore { try? fileManager.moveItem(at: appURL, to: spelledBefore) }
+                //
+                // A restore that fails is **said out loud**, not swallowed. The failures that
+                // reach here are correlated — a directory that lost write permission, a volume
+                // that filled or went away fails both the swap and the move back — so the one
+                // case the restore exists for is the one where it is most likely to fail too,
+                // and reporting only "the edit failed" would leave a launcher renamed under a
+                // report that nothing changed.
+                if let spelledBefore {
+                    do {
+                        try fileManager.moveItem(at: appURL, to: spelledBefore)
+                    } catch let restoreError {
+                        throw ClaudeManagerError.launcherLeftUnderNewName(
+                            path: appURL.path,
+                            previousPath: spelledBefore.path,
+                            reason: Sentences.reason(error) + " " + Sentences.reason(restoreError)
+                        )
+                    }
+                }
                 throw error
             }
         } else {

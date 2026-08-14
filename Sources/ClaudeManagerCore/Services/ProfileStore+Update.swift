@@ -64,7 +64,14 @@ public extension ProfileStore {
         let renaming = updated.appPath != original.appPath
             && !PathUtils.sameFile(original.appPath, updated.appPath)
         if renaming, fileManager.fileExists(atPath: updated.appPath) {
-            throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
+            // Named by the spelling the volume stores, not the one just typed. The message
+            // tells the user to remove it in Finder, and on a case-insensitive volume a
+            // rename onto `CLAUDE WORK.app` collides with a file actually called `Claude
+            // Work.app` — so echoing the request back sends them looking for a name that is
+            // not there, in the one sentence that says which of their profiles is in the way.
+            throw ClaudeManagerError.launcherAlreadyExists(
+                path: PathUtils.spellingOnDisk(updated.appPath) ?? updated.appPath
+            )
         }
         // A launcher the user put out of sight stays out of sight across an edit. `build`
         // carries the flag itself, but only for a bundle it *replaces* — a rename installs at

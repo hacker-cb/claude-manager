@@ -38,16 +38,26 @@ extension LauncherBundle {
     /// `replaceItemAt` behaves as it always did, rather than leaving a caller that has already
     /// acted on the promise of a rename.
     ///
-    /// Returns the URL the bundle was reachable at **before** this call, or `nil` when nothing
-    /// was renamed — the caller needs it to put the name back if the swap then fails, since this
-    /// is the one part of a failed build that does not undo itself.
+    /// Returns the URL the bundle was reachable at **before** this call, or `nil` when it was
+    /// already stored under the requested name. The caller needs it to put the name back if the
+    /// swap then fails, since this is the one part of a failed build that does not undo itself.
+    ///
+    /// The two ways this cannot do its job — the volume will not say what the name is, and the
+    /// path turning out to open some other file — **throw** rather than return quietly. The
+    /// caller has by then classified a change of spelling as *not* a rename and switched off the
+    /// destination check, the retire step and the hidden-flag transfer, all on the promise kept
+    /// here; returning `nil` lets `replaceItemAt` write the bundle under its old name while the
+    /// operation reports the new one, which is the split identity this exists to prevent, minus
+    /// any error saying so. Thrown from *before* the swap, so nothing has changed yet.
     func alignInstalledSpelling(with appURL: URL) throws -> URL? {
-        let requested = appURL.lastPathComponent
-        guard let installed = (try? appURL.resourceValues(forKeys: [.nameKey]))?.name,
-              installed != requested
-        else { return nil }
-        let onDisk = appURL.deletingLastPathComponent().appendingPathComponent(installed)
-        guard PathUtils.sameFile(onDisk.path, appURL.path) else { return nil }
+        guard let stored = PathUtils.spellingOnDisk(appURL.path) else {
+            throw ClaudeManagerError.launcherSpellingUnreadable(path: appURL.path)
+        }
+        guard stored != appURL.path else { return nil }
+        guard PathUtils.sameFile(stored, appURL.path) else {
+            throw ClaudeManagerError.launcherSpellingUnreadable(path: appURL.path)
+        }
+        let onDisk = URL(fileURLWithPath: stored)
         try fileManager.moveItem(at: onDisk, to: appURL)
         return onDisk
     }
