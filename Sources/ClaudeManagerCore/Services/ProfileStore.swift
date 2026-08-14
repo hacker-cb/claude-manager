@@ -117,20 +117,21 @@ public struct ProfileStore {
     ///   for the literal path, so writing back a different spelling of the same directory
     ///   would hide a live instance from `stop`, `list` and `remove`.
     ///
-    /// The launcher's **presentation** — the spelling of its bundle path, and the display name
-    /// inside it — is likewise adopted from disk rather than from the caller, which is what
-    /// makes `rebuild` "regenerate from the bundle's own marker" true rather than nearly true.
-    /// `build` writes both from the profile it is handed, so a `Profile` captured before a
-    /// rename in place — a row's context menu, a detail pane, any value held across the refresh
-    /// — would otherwise have `rebuild` rename the launcher *back* and rewrite `CFBundleName`
-    /// with it, undoing an edit the user made and leaving a running instance showing the old
-    /// name with no restart nudge, since a rebuild reports none. Before an in-place rename was
-    /// possible this was unreachable: a rename retired the old bundle, so a stale path resolved
-    /// to nothing and `rebuild` threw `launcherNotFound`. Now it resolves to the same file, and
-    /// the answer to "which launcher is this" has to come from the volume.
+    ///   Everything else the launcher records — display name, label, colour, bundle id — is
+    ///   adopted the same way, which is what makes `rebuild`'s "regenerates from the bundle's
+    ///   own marker" true rather than nearly true. `build` writes all of it from the profile it
+    ///   is handed, so a `Profile` captured before an edit — a row's context menu, a detail
+    ///   pane, any value held across the refresh — would have `rebuild` write those older values
+    ///   back, undoing as much of the edit as that value is stale. The bundle path is settled
+    ///   from the volume's spelling of it for the same reason: after a rename in place the
+    ///   pre-rename path still opens the same file, so the rebuild would rename the launcher
+    ///   *back* and rewrite `CFBundleName` with it, leaving a running instance showing the old
+    ///   name and no restart nudge, since a rebuild reports none. Before an in-place rename was
+    ///   possible none of this was reachable: a rename retired the old bundle, so a stale path
+    ///   resolved to nothing and `rebuild` threw `launcherNotFound`.
     ///
-    /// This takes nothing away from `update`: an edit's new display name arrives in
-    /// `ProfileEdits` and is applied to the profile this returns, never read back from it.
+    /// This takes nothing away from `update`: an edit's new values arrive in `ProfileEdits` and
+    /// are applied to the profile this returns, never read back from it.
     func profileMatchingItsLauncher(_ profile: Profile) throws -> Profile {
         guard let installed = bundle.readMarker(at: profile.appURL) else {
             guard !fileManager.fileExists(atPath: profile.appPath) else {
@@ -159,13 +160,17 @@ public struct ProfileStore {
                 installedPath: installed.marker.profile
             )
         }
+        // Everything the launcher itself records, taken from the launcher — the whole profile
+        // rather than a field or two of it, since any of them stale reverts that much of an
+        // edit. Only the bundle path is rebuilt, from the volume's own spelling of it.
+        let onDisk = installed.profile
         return Profile(
-            name: profile.name,
-            displayName: installed.displayName,
-            label: profile.label,
-            color: profile.color,
-            profilePath: installed.marker.profile,
-            bundleID: profile.bundleID,
+            name: onDisk.name,
+            displayName: onDisk.displayName,
+            label: onDisk.label,
+            color: onDisk.color,
+            profilePath: onDisk.profilePath,
+            bundleID: onDisk.bundleID,
             appPath: PathUtils.spellingOnDisk(profile.appPath) ?? profile.appPath
         )
     }

@@ -279,13 +279,13 @@ struct ProfileStoreCaseRenameTests {
         #expect(try Data(contentsOf: token) == Data("secret".utf8))
     }
 
-    /// A `Profile` captured before the rename — a row's context menu, a detail pane — must not
-    /// undo it. `build` installs under the spelling its profile carries, and after a rename in
-    /// place the pre-rename path still opens the same bundle, so nothing threw the way it used
-    /// to: the launcher was renamed back and `CFBundleName` rewritten with it, silently
-    /// reverting an edit the user made.
+    /// A `Profile` captured before the edit — a row's context menu, a detail pane — must not undo
+    /// it. `build` writes the bundle's name, marker and badge from the profile it is handed, and
+    /// after a rename in place the pre-rename path still opens the same bundle, so nothing threw
+    /// the way it used to: the launcher was renamed back, `CFBundleName` rewritten with it, and
+    /// as much of the rest of the edit reverted as the stale value carried.
     @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
-    func aRebuildFromAStaleProfileDoesNotUndoARenameInPlace() throws {
+    func aRebuildFromAStaleProfileDoesNotUndoAnEditMadeInPlace() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -294,12 +294,37 @@ struct ProfileStoreCaseRenameTests {
         let stale = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         var edits = ProfileEdits(stale)
         edits.displayName = stale.displayName.uppercased()
+        edits.color = .named("red")
+        edits.label = "ZZ"
         let renamed = try env.store.update(stale, applying: edits).profile
 
         try env.store.rebuild(stale)
 
         #expect(try installedNames(in: env) == ["\(renamed.displayName).app"])
         #expect(env.store.list().map(\.profile.displayName) == [renamed.displayName])
+        // The rename is the visible half; every other edited field rides on the same value.
+        let discovered = try #require(LauncherBundle().readMarker(at: renamed.appURL))
+        #expect(discovered.marker.color == "red")
+        #expect(discovered.marker.label == "ZZ")
+    }
+
+    /// The swap is the last thing that can fail after the bundle has been renamed, and the rename
+    /// is the one part of a failed build that does not undo itself. Left in place, the launcher
+    /// answers to the new name while its marker still holds the old one — the same split
+    /// identity, reached from the other side.
+    @Test(.enabled(if: volumeFoldsCase(at: FileManager.default.temporaryDirectory)))
+    func aFailedSwapPutsTheSpellingBack() throws {
+        let env = try makeStoreEnv(fileManager: ReplaceRefusingFileManager())
+        defer { try? fm.removeItem(at: env.root) }
+        let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
+        var edits = ProfileEdits(original)
+        edits.displayName = original.displayName.uppercased()
+
+        #expect(throws: (any Error).self) { try env.store.update(original, applying: edits) }
+
+        #expect(try installedNames(in: env) == ["\(original.displayName).app"])
+        let discovered = try #require(LauncherBundle().readMarker(at: original.appURL))
+        #expect(discovered.displayName == original.displayName)
     }
 
     /// The rename runs **before** the atomic swap, so its failure is like every other failure in
