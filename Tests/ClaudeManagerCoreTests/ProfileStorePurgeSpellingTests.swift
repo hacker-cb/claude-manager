@@ -323,6 +323,40 @@ struct ProfileStorePurgeSpellingTests {
         #expect(fm.fileExists(atPath: alias.path))
     }
 
+    /// The link being unlinked is an entry in someone else's directory: a launcher that owns
+    /// the link's physical parent owns the link too, so removing it changes that profile's
+    /// data. Reached here through an aliased parent, which is what puts the two paths beyond a
+    /// literal comparison.
+    @Test
+    func removingALinkSeesTheLauncherOwningItsParent() throws {
+        let env = try makeStoreEnv()
+        defer {
+            try? fm.removeItem(at: env.root)
+            Fixture.purgeTrash(displayNamePrefix: env.display("alias"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("parent"))
+        }
+        let real = env.profilesDir.appendingPathComponent("real")
+        try fm.createDirectory(at: real, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: env.profilesDir.appendingPathComponent("alias"), withDestinationURL: real
+        )
+        // The purged profile reaches its link through an alias of the parent directory.
+        let aliasByLink = try linkedProfilesDir(env).appendingPathComponent("alias")
+
+        let aliasProfile = try env.store.add(
+            AddProfileRequest(name: env.name("alias"), profilePath: aliasByLink.path)
+        ).profile
+        // And this one owns the directory the link physically lives in.
+        let parent = try env.store.add(
+            AddProfileRequest(name: env.name("parent"), profilePath: env.profilesDir.path)
+        ).profile
+
+        let result = try env.store.remove(aliasProfile, purgeProfile: true)
+
+        #expect(result.profileData == .keptSharedWith(launchers: [parent.displayName]))
+        #expect(fm.fileExists(atPath: env.profilesDir.appendingPathComponent("alias").path))
+    }
+
     /// The literal question has to fold case the way the volume does. Here the sibling is
     /// reached through a link *inside* the purged directory — so the canonical comparison
     /// resolves it out of containment — and records the path in another case, which a plain

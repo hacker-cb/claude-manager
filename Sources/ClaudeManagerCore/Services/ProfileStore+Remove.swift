@@ -267,8 +267,14 @@ public extension ProfileStore {
                     ) { return true }
                     probe = probe.deletingLastPathComponent()
                 }
+                // And the link *is* an entry in its own parent, so a launcher owning that
+                // parent owns it: unlinking changes that profile's directory. Asked with the
+                // parent resolved and the link's own name left alone, so the target — a
+                // different place, which this removal does not touch — is not mistaken for it.
                 return ProfileStore.directoriesOverlap(
                     literal, Self.literalPath(other), ignoringCase: ignoringCase
+                ) || ProfileStore.directoriesOverlap(
+                    linkIdentity, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
                 )
             }
             return ProfileStore.directoriesOverlap(
