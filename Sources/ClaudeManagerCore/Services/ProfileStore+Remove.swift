@@ -100,8 +100,12 @@ public extension ProfileStore {
         // would take the user's primary Anthropic login and every chat in it, and even the
         // running check cannot object: Claude's own process carries no `--user-data-dir` for
         // `runningPID` to match.
-        let isDefaultProfileData = PathUtils
-            .sameDirectory(profile.profilePath, configuration.defaultProfileUserDataPath)
+        // Asked as containment, not equality: the purge is a recursive `removeItem`, and the
+        // "Profile data" field is free text, so a profile can be created on an *ancestor* of
+        // Claude's own directory — `~/Library/Application Support`. Equality lets that through
+        // and the deletion takes the user's real Claude login, their whole chat history, and
+        // every other app's data in there, reported as a clean purge.
+        let isDefaultProfileData = reach.covers(configuration.defaultProfileUserDataPath)
         // Both of the answers below are known without a scan, so they come first: "there was
         // nothing to delete" and "this is Claude's own directory" stay true however little we
         // could see, and reporting the unknown instead would claim data was left behind that
@@ -167,25 +171,27 @@ public extension ProfileStore {
         under profile: Profile,
         among launchers: [LauncherBundle.Discovered]
     ) -> [String] {
+        // A link-valued data path is never this case. Unlinking destroys nothing, so the
+        // refusal's own message — "deleting it would delete their login and chat history too,
+        // remove that launcher first" — would be false, and following its advice is what
+        // actually destroys that data. A sibling reached through the link is still seen, by
+        // `PurgeReach`, and comes back as the decline it really is.
+        guard !Self.isSymbolicLink(profile.profileURL) else { return [] }
         let ourApp = profile.appURL.standardizedFileURL.path
-        // Strictly *inside*, asked both ways for the reasons `PurgeReach` sets out: a sibling
-        // can sit under this directory by canonical path (another spelling of it) or only by
-        // the path it recorded (through a symlink inside it). A link-valued path of our own
-        // contains nothing — unlinking it walks nowhere — so only the literal question applies.
-        let isLink = Self.isSymbolicLink(profile.profileURL)
         let ourLiteral = PurgeReach.literalPath(profile.profilePath)
         let ourCanonical = PathUtils.canonicalPath(profile.profilePath)
         let ignoringCase = Self.volumeIgnoresCase(at: profile.profileURL)
         return launchers
             .filter { $0.appURL.standardizedFileURL.path != ourApp }
             .filter {
-                let literal = Self.directoryStrictlyContains(
+                // Both questions, for the reasons `PurgeReach` sets out: a sibling can sit
+                // under this directory by canonical path (another spelling of it) or only by
+                // the path it recorded (through a symlink inside it).
+                Self.directoryStrictlyContains(
                     ourLiteral,
                     PurgeReach.literalPath($0.marker.profile),
                     ignoringCase: ignoringCase
-                )
-                guard !isLink else { return literal }
-                return literal || Self.directoryStrictlyContains(
+                ) || Self.directoryStrictlyContains(
                     ourCanonical, PathUtils.canonicalPath($0.marker.profile)
                 )
             }
@@ -210,9 +216,7 @@ public extension ProfileStore {
     /// already gone, and none where it is the default profile's, which is refused outright.
     private func purgeHasACandidate(_ profile: Profile) -> Bool {
         fileManager.fileExists(atPath: profile.profilePath)
-            && !PathUtils.sameDirectory(
-                profile.profilePath, configuration.defaultProfileUserDataPath
-            )
+            && !PurgeReach(profile).covers(configuration.defaultProfileUserDataPath)
     }
 
     /// Whether purging one profile's data would reach the directory another one records.

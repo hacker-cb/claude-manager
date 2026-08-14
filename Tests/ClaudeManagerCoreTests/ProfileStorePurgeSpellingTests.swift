@@ -160,9 +160,14 @@ struct ProfileStorePurgeSpellingTests {
 
     /// Unlinking a link strands whatever was spelled *through* it. The sibling's bytes survive
     /// under the target, but its recorded path leads nowhere afterwards — so it is still what
-    /// this removal affects, and the refusal has to see it even though nothing is destroyed.
+    /// this removal affects, and the purge declines rather than proceeding.
+    ///
+    /// A **decline**, not the up-front refusal the nested case gets: nothing is destroyed here,
+    /// and that refusal's message ("deleting it would delete their login and chat history too,
+    /// remove that launcher first") would be false — and following its advice is what would
+    /// actually destroy the sibling's data.
     @Test
-    func removingALinkIsRefusedWhenASiblingSpelledItsPathThroughIt() throws {
+    func removingALinkDeclinesWhenASiblingSpelledItsPathThroughIt() throws {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
@@ -184,12 +189,10 @@ struct ProfileStorePurgeSpellingTests {
             )
         ).profile
 
-        let thrown = try #require(throws: ClaudeManagerError.self) {
-            try env.store.remove(aliasProfile, purgeProfile: true)
-        }
+        let result = try env.store.remove(aliasProfile, purgeProfile: true)
 
+        #expect(result.profileData == .keptSharedWith(launchers: [under.displayName]))
         #expect(fm.fileExists(atPath: alias.path))
-        #expect(try #require(thrown.errorDescription).contains(under.displayName))
     }
 
     /// A sibling can sit under the purged directory only by the path it *recorded* — through a
