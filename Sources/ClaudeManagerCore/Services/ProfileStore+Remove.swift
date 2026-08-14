@@ -105,7 +105,7 @@ public extension ProfileStore {
         // Claude's own directory — `~/Library/Application Support`. Equality lets that through
         // and the deletion takes the user's real Claude login, their whole chat history, and
         // every other app's data in there, reported as a clean purge.
-        let isDefaultProfileData = reach.covers(configuration.defaultProfileUserDataPath)
+        let isDefaultProfileData = reach.reaches(configuration.defaultProfileUserDataPath)
         // Both of the answers below are known without a scan, so they come first: "there was
         // nothing to delete" and "this is Claude's own directory" stay true however little we
         // could see, and reporting the unknown instead would claim data was left behind that
@@ -216,7 +216,7 @@ public extension ProfileStore {
     /// already gone, and none where it is the default profile's, which is refused outright.
     private func purgeHasACandidate(_ profile: Profile) -> Bool {
         fileManager.fileExists(atPath: profile.profilePath)
-            && !PurgeReach(profile).covers(configuration.defaultProfileUserDataPath)
+            && !PurgeReach(profile).reaches(configuration.defaultProfileUserDataPath)
     }
 
     /// Whether purging one profile's data would reach the directory another one records.
@@ -255,6 +255,25 @@ public extension ProfileStore {
             canonical = PathUtils.canonicalPath(path)
             linkIdentity = ProfileStore.isSymbolicLink(url) ? Self.linkIdentityPath(path) : nil
             ignoringCase = ProfileStore.volumeIgnoresCase(at: url)
+        }
+
+        /// Whether purging this profile would reach `other` — **directionally**. `covers` asks
+        /// whether the two overlap either way round, which is the right question for a sibling
+        /// (deleting a directory inside theirs takes part of their data). It is the wrong one
+        /// for a directory this removal must never touch: a profile at `<default>/moved/work`,
+        /// where `moved` is a link to another volume, overlaps the default profile's path
+        /// lexically while `removeItem` resolves the link and deletes something else entirely.
+        /// Refusing there strands the profile's own data for no reason.
+        func reaches(_ other: String) -> Bool {
+            let theirLiteral = Self.literalPath(other)
+            guard linkIdentity == nil else {
+                // Unlinking reaches the link itself and whatever was spelled through it.
+                return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
+            }
+            return ProfileStore.directoryContains(literal, theirLiteral, ignoringCase: ignoringCase)
+                || ProfileStore.directoryContains(
+                    canonical, PathUtils.canonicalPath(other), ignoringCase: ignoringCase
+                )
         }
 
         func covers(_ other: String) -> Bool {
@@ -322,6 +341,19 @@ public extension ProfileStore {
             URL(fileURLWithPath: lhs).standardizedFileURL.path,
             URL(fileURLWithPath: rhs).standardizedFileURL.path
         )
+    }
+
+    /// Whether `inner` is `outer` or sits below it — the asymmetric question, for "would
+    /// deleting `outer` reach `inner`".
+    static func directoryContains(
+        _ outer: String,
+        _ inner: String,
+        ignoringCase: Bool = false
+    ) -> Bool {
+        let outerParts = components(outer)
+        let innerParts = components(inner)
+        guard innerParts.count >= outerParts.count else { return false }
+        return zip(outerParts, innerParts).allSatisfy { same($0, $1, ignoringCase: ignoringCase) }
     }
 
     static func directoriesOverlap(

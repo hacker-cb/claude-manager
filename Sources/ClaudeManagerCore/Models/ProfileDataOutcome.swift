@@ -32,10 +32,11 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// take their login and history with it. Carries their display names because the remedy is
     /// per-launcher.
     case keptSharedWith(launchers: [String])
-    /// Deletion was asked for and declined because the directory is the **default profile's**
-    /// own — the one Claude itself uses. It owns no launcher, so it appears in no scan and
-    /// `keptSharedWith` cannot name it; pointing a clone at it to reuse an existing login is
-    /// a supported thing to do, and purging from there would sign the user out of Claude.
+    /// Deletion was asked for and declined because the deletion would reach the **default
+    /// profile's** directory — the one Claude itself uses. Either the profile points at it (a
+    /// supported way to reuse an existing login) or its own directory *contains* it, which the
+    /// free-text path field allows. It owns no launcher, so it appears in no scan and
+    /// `keptSharedWith` cannot name it; purging from there would sign the user out of Claude.
     case keptForDefaultProfile
     /// Deletion was asked for and declined because **whether anyone else uses this directory
     /// could not be established**: the launcher folder could not be listed, and that is where
@@ -74,10 +75,10 @@ public enum ProfileDataOutcome: Sendable, Equatable {
         case .keptForDefaultProfile:
             RemovalNotice(
                 title: "Profile data was kept",
-                message: "\(displayName) used the default profile's own folder, so its login "
-                    + "and chat history are Claude's own — deleting them from here would sign "
-                    + "you out of Claude itself. The launcher is in the Trash; the data is "
-                    + "untouched."
+                message: "\(displayName)'s profile data folder is — or contains — the folder "
+                    + "Claude itself uses, so deleting it would take Claude's own login and "
+                    + "chat history with it and sign you out. The launcher is in the Trash; "
+                    + "the data is untouched."
             )
         case .keptOwnersUnknown:
             RemovalNotice(
@@ -85,9 +86,9 @@ public enum ProfileDataOutcome: Sendable, Equatable {
                 message: "\(displayName)'s launcher is in the Trash, but its profile data was "
                     + "left alone: the launcher folder could not be read, so there was no way "
                     + "to tell whether another profile also uses that data. The login and chat "
-                    + "history are still on disk — make that folder readable and remove the "
-                    + "profile again, or delete the data by hand if you are sure nothing else "
-                    + "uses it."
+                    + "history are still on disk. To have the app delete them, put the launcher "
+                    + "back from the Trash and remove it again once that folder can be read — "
+                    + "or delete the data by hand if you are sure nothing else uses it."
             )
         case let .purgeFailed(reason):
             RemovalNotice(

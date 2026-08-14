@@ -208,7 +208,7 @@ struct ProfileStoreRemoveTests {
         #expect(fm.fileExists(atPath: token.path))
         #expect(!fm.fileExists(atPath: clone.appPath)) // the launcher itself did go
         let notice = try #require(result.profileData.notice(forRemovalOf: clone.displayName))
-        #expect(notice.message.contains("sign you out of Claude itself"))
+        #expect(notice.message.contains("sign you out"))
     }
 
     /// Pointing at the default profile's directory when that directory is already gone is
