@@ -38,10 +38,14 @@ public enum ProfileDataOutcome: Sendable, Equatable {
     /// a supported thing to do, and purging from there would sign the user out of Claude.
     case keptForDefaultProfile
     /// Deletion was asked for and declined because **whether anyone else uses this directory
-    /// could not be established**: the launcher folder could not be listed, and that is where
-    /// the answer lives. An empty scan is what an unreadable folder and an empty one look like
-    /// from the inside, so treating it as "nobody else claims this" deletes a sibling's login
-    /// on a folder that was merely renamed, unmounted, or had its permissions changed.
+    /// could not be established** — the launcher folder could not be listed, or a bundle in it
+    /// could not be read, and that is where the answer lives. An empty scan is what an
+    /// unreadable folder and an empty one look like from the inside, so treating it as "nobody
+    /// else claims this" deletes a sibling's login over a folder that was merely renamed,
+    /// unmounted, or had its permissions changed. Reached whether that was already the case
+    /// before the removal or became so during it — the removal is not refused over it, since
+    /// the folder is normally `/Applications` and one unreadable stranger there would otherwise
+    /// block every profile's data deletion for good.
     case keptOwnersUnknown
     /// Deletion was asked for and there was nothing at the path.
     case alreadyGone
@@ -80,10 +84,10 @@ public enum ProfileDataOutcome: Sendable, Equatable {
             RemovalNotice(
                 title: "Profile data was kept",
                 message: "\(displayName)'s launcher is in the Trash, but its profile data was "
-                    + "left alone: a launcher stopped being readable mid-removal, so "
-                    + "there was no way to tell whether another profile also uses that data. "
-                    + "The login and chat history are still on disk — delete that folder by "
-                    + "hand if you are sure nothing else uses it."
+                    + "left alone: not every launcher could be read, so there was no way to "
+                    + "tell whether another profile also uses that data. The login and chat "
+                    + "history are still on disk — delete that folder by hand if you are sure "
+                    + "nothing else uses it."
             )
         case let .purgeFailed(reason):
             RemovalNotice(
