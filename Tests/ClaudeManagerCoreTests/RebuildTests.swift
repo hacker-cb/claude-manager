@@ -6,8 +6,9 @@ import Testing
 struct LauncherRebuildTests {
     let fm = FileManager.default
 
-    /// The badge resource this launcher actually points at, read through its own
-    /// `CFBundleIconFile` — the name is content-addressed, so no literal would find it.
+    /// The badge resource this launcher actually points at, located the one way that works:
+    /// through its own `CFBundleIconFile`, since the name is content-addressed. `Fixture`
+    /// resolves it for reading; this returns the URL, so a test can overwrite it.
     private func installedIconURL(of profile: Profile) -> URL? {
         let info = RealClaude.plist(at: profile.appURL.appendingPathComponent("Contents/Info.plist"))
         guard let name = LauncherBundle

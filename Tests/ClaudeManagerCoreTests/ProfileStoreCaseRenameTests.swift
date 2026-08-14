@@ -64,10 +64,7 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
-            // Only the original spelling can ever reach the Trash — on a case-sensitive
-            // volume, where the rename is an ordinary one. The new spelling names precisely
-            // the launcher this fix keeps *out* of it.
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("work")) // see `installedNames`
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         // Stands in for the Anthropic token and the chat history.
@@ -93,10 +90,7 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
-            // Only the original spelling can ever reach the Trash — on a case-sensitive
-            // volume, where the rename is an ordinary one. The new spelling names precisely
-            // the launcher this fix keeps *out* of it.
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("work")) // see `installedNames`
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         var edits = ProfileEdits(original)
@@ -200,10 +194,7 @@ struct ProfileStoreCaseRenameTests {
         let env = try makeStoreEnv()
         defer {
             try? fm.removeItem(at: env.root)
-            // Only the original spelling can ever reach the Trash — on a case-sensitive
-            // volume, where the rename is an ordinary one. The new spelling names precisely
-            // the launcher this fix keeps *out* of it.
-            Fixture.purgeTrash(displayNamePrefix: env.display("work"))
+            Fixture.purgeTrash(displayNamePrefix: env.display("work")) // see `installedNames`
         }
         let original = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         let shouted = original.displayName.uppercased()
@@ -213,7 +204,10 @@ struct ProfileStoreCaseRenameTests {
         )).profile
 
         #expect(try installedNames(in: env) == ["\(shouted).app"])
+        // Reported under the name on disk, which is what `Profile.id` is: the create path leans
+        // on the same rename an edit does, so it has to report the same way.
         #expect(rebuilt.appPath == env.installDir.appendingPathComponent("\(shouted).app").path)
+        #expect(env.store.list().map(\.profile.appPath) == [rebuilt.appPath])
     }
 
     /// The same rename where the volume's folding is not the one a case rule would guess. APFS

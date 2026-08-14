@@ -107,7 +107,9 @@ short form:
   launcher is not on disk — a supported state — and `build` will have created a bundle the old
   spelling then folds onto. The other half is in `build`: `replaceItemAt` writes into the file
   already at the path and **keeps that file's name** (measured), so `alignInstalledSpelling`
-  renames the installed bundle to the requested spelling first. Without it the launcher's file
+  renames the installed bundle to the requested spelling first — and `build` returns
+  `BuildResult.appPath`, where the bundle actually ended up, rather than leaving each caller to
+  re-derive it from a later lookup of its own. Without it the launcher's file
   says one thing while `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s
   deliberate `==` on the bundle path quietly stops matching. For the same reason
   `profileMatchingItsLauncher` takes the bundle's spelling **and everything else the launcher
@@ -119,7 +121,8 @@ short form:
   can then be neither edited, rebuilt nor deleted. What must not happen is *assuming* the rename
   landed: `update` reports the spelling the bundle actually ended up with. And every message
   naming an occupied path names it as the volume stores it (`add` and `update` alike) — the text
-  sends the user to Finder, and the spelling they typed is not what anything there is called. **Which spellings fold is the volume's answer,
+  sends the user to Finder, and the spelling they typed is not what anything there is called.
+  **Which spellings fold is the volume's answer,
   never `lowercased()`:** APFS opens `Σ.app`, `σ.app` and `ς.app` as one file, while
   `"Σ".lowercased()` is `σ` and `"ς".lowercased()` is `ς` — so a guard phrased as "these differ
   only in case" declines exactly where the collision is real. Every side asks identity instead.

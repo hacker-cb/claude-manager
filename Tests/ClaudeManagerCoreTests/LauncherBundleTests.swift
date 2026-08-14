@@ -67,12 +67,18 @@ struct LauncherBundleTests {
         let bundle = LauncherBundle(runner: stubbedSigningRunner())
         let profile = makeProfile(installDir: dir)
         // First build: no prior icon at this path → reported as changed.
-        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)))
+        #expect(try bundle.build(
+            profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)
+        ).iconChanged)
         // Same bytes again → unchanged (a wrapper-format bump / script fix leaves the icon
         // byte-identical, so no Dock refresh is needed).
-        #expect(try !bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)))
+        #expect(try !bundle.build(
+            profile: profile, realBinaryPath: realBinary, icnsData: Data("A".utf8)
+        ).iconChanged)
         // Different bytes → changed.
-        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: Data("B".utf8)))
+        #expect(try bundle.build(
+            profile: profile, realBinaryPath: realBinary, icnsData: Data("B".utf8)
+        ).iconChanged)
     }
 
     /// The badge resource is named after its own bytes, which is what makes an edited icon
@@ -165,12 +171,16 @@ struct LauncherBundleTests {
             .write(to: infoURL)
 
         // The name moves Badge.icns -> Badge-<hash>.icns, so this counts as changed.
-        #expect(try bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns))
+        #expect(try bundle.build(
+            profile: profile, realBinaryPath: realBinary, icnsData: icns
+        ).iconChanged)
         #expect(try #require(RealClaude.plist(at: infoURL))["CFBundleIconFile"] as? String
             == LauncherBundle.iconFileName(for: icns))
         // Migrated: a second rebuild of the same badge is genuinely unchanged again, so the
         // name check costs no spurious refresh once a launcher is on the new format.
-        #expect(try !bundle.build(profile: profile, realBinaryPath: realBinary, icnsData: icns))
+        #expect(try !bundle.build(
+            profile: profile, realBinaryPath: realBinary, icnsData: icns
+        ).iconChanged)
     }
 
     @Test

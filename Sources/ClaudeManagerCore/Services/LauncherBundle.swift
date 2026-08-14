@@ -122,11 +122,11 @@ public struct LauncherBundle {
     }
 
     /// (Re)create the launcher bundle for `profile`. Overwrites an existing bundle
-    /// at the same path — callers enforce the force/running policy first. Returns whether
-    /// the badge icon actually changed vs. what was installed at this path, so a caller
-    /// can skip the screen-flashing Dock refresh when it didn't.
+    /// at the same path — callers enforce the force/running policy first.
     @discardableResult
-    public func build(profile: Profile, realBinaryPath: String, icnsData: Data) throws -> Bool {
+    public func build(
+        profile: Profile, realBinaryPath: String, icnsData: Data
+    ) throws -> BuildResult {
         let appURL = profile.appURL
         let iconFileName = Self.iconFileName(for: icnsData)
 
@@ -210,8 +210,13 @@ public struct LauncherBundle {
             )
         }
 
+        var spellingCertain = true
         if fileManager.fileExists(atPath: appURL.path) {
-            let spelledBefore = try alignInstalledSpelling(with: appURL)
+            let alignment = try alignInstalledSpelling(with: appURL)
+            if case .unknown = alignment { spellingCertain = false }
+            let spelledBefore: URL? = if case let .renamed(from) = alignment {
+                from
+            } else { nil }
             // Which file the rename left here, so the undo below can tell it apart from the one
             // the swap would install. Read after the rename, before the swap.
             let renamedBundle = PathUtils.fileIdentity(appURL.path)
@@ -260,7 +265,15 @@ public struct LauncherBundle {
         // bits, which the seal does not span — its doc says why the obvious API is not usable
         // here, and that the two are not interchangeable.
         if wasHidden { HiddenFlag.set(at: appURL) }
-        return iconChanged
+        // Where the bundle ended up, established here rather than guessed at by each caller.
+        // Certain in every case but one: a build that could not read the installed name did not
+        // rename anything, so `replaceItemAt` kept whatever name was already there — and that
+        // name is precisely what could not be read.
+        return BuildResult(
+            iconChanged: iconChanged,
+            appPath: PathUtils.spellingOnDisk(appURL.path) ?? appURL.path,
+            spellingCertain: spellingCertain
+        )
     }
 
     /// Whether the badge this build is about to write differs from what the bundle

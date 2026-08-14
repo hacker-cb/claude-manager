@@ -95,9 +95,10 @@ public extension ProfileStore {
             color: updated.color,
             style: configuration.badgeStyle
         )
-        let iconChanged = try bundle.build(
+        let built = try bundle.build(
             profile: updated, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
         )
+        let iconChanged = built.iconChanged
 
         // The rename's second half — retiring the old bundle. If it fails, the edit is undone
         // rather than left half-applied.
@@ -166,13 +167,15 @@ public extension ProfileStore {
         // promise instead of checking it. The display name is untouched: that one did land, in
         // the marker.
         //
-        // Where the volume will not say, the fallback splits on the same fact `renaming` does.
-        // A real rename installed at a path of its own, so the requested spelling is what is
-        // there. A rename **in place** did not: the only step that would have changed the name
-        // is the one that reads it, so a lookup failing here means that step failed too and the
-        // bundle is still under `original`'s spelling — which is known, and is the answer.
-        let appliedPath = PathUtils.spellingOnDisk(updated.appPath)
-            ?? (renaming ? updated.appPath : original.appPath)
+        // `build` establishes it, so this is not a second guess at what it did: it says where
+        // the bundle is, and whether it could tell. Where it could not, the fallback splits on
+        // the same fact `renaming` does — a real rename installed at a path of its own, so the
+        // requested spelling is what is there; a rename in place did not, and the only step that
+        // would have changed the name is the one that could not read it, so the bundle is still
+        // under `original`'s spelling, which is known.
+        let appliedPath = built.spellingCertain
+            ? built.appPath
+            : (renaming ? updated.appPath : original.appPath)
         let applied = Profile(
             name: updated.name,
             displayName: updated.displayName,

@@ -331,7 +331,7 @@ public struct ProfileStore {
         let profileDirExisted = fileManager.fileExists(atPath: profile.profilePath)
         try fileManager.createDirectory(at: profile.profileURL, withIntermediateDirectories: true)
 
-        let iconChanged: Bool
+        let built: LauncherBundle.BuildResult
         do {
             let icns = try iconPipeline.makeBadgeICNS(
                 realClaude: realClaude,
@@ -339,7 +339,7 @@ public struct ProfileStore {
                 color: profile.color,
                 style: configuration.badgeStyle
             )
-            iconChanged = try bundle.build(
+            built = try bundle.build(
                 profile: profile, realBinaryPath: realClaude.binaryURL.path, icnsData: icns
             )
         } catch {
@@ -353,20 +353,35 @@ public struct ProfileStore {
             throw error
         }
 
+        // Under the spelling the launcher actually landed with. A forced create over an
+        // installed bundle depends on the same rename an edit does — `replaceItemAt` keeps the
+        // replaced file's name — so returning the requested spelling here would hand back a
+        // `Profile.id` (which *is* `appPath`) that no scan will ever produce, and key the icon
+        // cache and the trashed-twin probe on it too.
+        let installed = Profile(
+            name: profile.name,
+            displayName: profile.displayName,
+            label: profile.label,
+            color: profile.color,
+            profilePath: profile.profilePath,
+            bundleID: profile.bundleID,
+            appPath: built.appPath
+        )
+
         // Register so Finder/LaunchServices pick up the icon — never flash the screen. A
         // pinned tile can only be stale when a bundle was already here (forced rebuild or a
         // trashed twin) *and* the icon changed; that tile is repainted by the app's opt-in
         // "Refresh Dock now". A brand-new path has nothing cached.
-        iconCache.register(appURL: profile.appURL)
+        iconCache.register(appURL: installed.appURL)
         let dockRefreshPending =
-            iconChanged && (request.force || bundle.hasTrashedTwin(appURL: profile.appURL))
+            built.iconChanged && (request.force || bundle.hasTrashedTwin(appURL: installed.appURL))
 
         // Pre-seed the clone's managed-config overlay (disable its updater). Best-effort:
         // a config hiccup must never fail launcher creation — Doctor surfaces a miss.
-        try? reconcileManagedConfig(for: profile)
+        try? reconcileManagedConfig(for: installed)
 
         return AddResult(
-            profile: profile, reusedProfileData: reused, dockRefreshPending: dockRefreshPending
+            profile: installed, reusedProfileData: reused, dockRefreshPending: dockRefreshPending
         )
     }
 
