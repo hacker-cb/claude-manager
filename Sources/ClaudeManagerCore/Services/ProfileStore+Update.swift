@@ -49,13 +49,23 @@ public extension ProfileStore {
         )
 
         let renaming = updated.appPath != original.appPath
-        if renaming, fileManager.fileExists(atPath: updated.appPath) {
+        // Whether the destination is *occupied* is a question about files, and `fileExists`
+        // answers about paths. On a case-insensitive volume — macOS's default — `WORK.app` is
+        // the very bundle this profile already owns when `Work.app` is installed, so the check
+        // used to find the profile's own launcher and refuse the edit on its behalf: renaming a
+        // profile to another capitalisation of its name was impossible from the app at all.
+        // Asking the file system for identity instead keeps the guard exactly as strong where
+        // it matters — on a case-sensitive volume those are two files and the second is a
+        // stranger's, which `sameFile` reports as such.
+        let renamingInPlace = renaming && PathUtils.sameFile(original.appPath, updated.appPath)
+        if renaming, !renamingInPlace, fileManager.fileExists(atPath: updated.appPath) {
             throw ClaudeManagerError.launcherAlreadyExists(path: updated.appPath)
         }
         // A launcher the user put out of sight stays out of sight across an edit. `build`
         // carries the flag itself, but only for a bundle it *replaces* — a rename installs at
         // a path that does not exist yet, so the flag has to come from the bundle being
-        // retired, and only this side knows both paths.
+        // retired, and only this side knows both paths. A rename in place is not that: the
+        // bundle at the new spelling is the one `build` replaced, flag and all.
         let wasHidden = HiddenFlag.isSet(at: original.appURL)
 
         try ensureInstallDirectoryWritable()
@@ -93,7 +103,13 @@ public extension ProfileStore {
         // `renaming` means the new path was empty (the guard above), so the rollback removes
         // only what this call wrote; the icon-cache registration and the managed-config
         // overlay happen below, so neither has run yet.
-        if renaming, fileManager.fileExists(atPath: original.appPath) {
+        //
+        // **Never on a rename in place.** There the old path and the new one are one file, so
+        // the bundle this would retire is the one `build` has just written under its new name:
+        // trashing it leaves the profile with no launcher at all, and the data directory it
+        // still owns with nothing in the app pointing at it. Nothing is left over to retire
+        // either — `build` renamed the bundle rather than adding a second one.
+        if renaming, !renamingInPlace, fileManager.fileExists(atPath: original.appPath) {
             do {
                 _ = try bundle.moveToTrash(appURL: original.appURL)
             } catch {
@@ -104,15 +120,18 @@ public extension ProfileStore {
             }
         }
 
-        if renaming, wasHidden { HiddenFlag.set(at: updated.appURL) }
+        if renaming, !renamingInPlace, wasHidden { HiddenFlag.set(at: updated.appURL) }
 
         // Register so the new icon is picked up on next fetch — never flash the screen. A
         // pinned tile can be stale only for an in-place edit (or a rename onto a trashed
         // twin) that changed the icon; it is repainted by the app's opt-in refresh. A
         // fresh rename path has nothing cached.
+        // A rename in place counts with the in-place edits, not with the renames: the file at
+        // the new spelling is the one that was already here, and the volume opens both
+        // spellings as one path — so whatever a pinned tile cached, it cached for this bundle.
         iconCache.register(appURL: updated.appURL)
-        let dockRefreshPending =
-            iconChanged && (!renaming || bundle.hasTrashedTwin(appURL: updated.appURL))
+        let dockRefreshPending = iconChanged
+            && (!renaming || renamingInPlace || bundle.hasTrashedTwin(appURL: updated.appURL))
         // Seed the (possibly relocated) profile's overlay, as add/rebuild do.
         try? reconcileManagedConfig(for: updated)
         // The nudge names the *edited* profile, so it carries the updated value: after a

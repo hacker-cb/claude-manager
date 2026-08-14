@@ -48,7 +48,11 @@ short form:
   *execute* an unsigned `.app` (AppleSystemPolicy kills it seconds after it appears in
   the Dock), so `LauncherBundle.build` signs via `CodeSigner` as its final step — on the
   staging copy, before the atomic swap. The seal covers the script, Info.plist and icon:
-  never add a write below that call, and never sign anywhere but `build`.
+  never add a write below that call, and never sign anywhere but `build`. The two steps that
+  *are* below it write nothing **into** the bundle: `HiddenFlag.set` sets the inode's own flag
+  bits, and `matchInstalledSpelling` renames the bundle's directory. `codesign --verify
+  --strict` passes across both — measured, for a case-only rename and a wholesale one alike —
+  and neither is licence to move anything else down there.
 - **Never turn signing off for the app's own build either.** The same execution policy
   applies one level up: `make build-app` (and CI, which builds through it) takes the ad-hoc
   identity `project.yml` declares (`CODE_SIGN_IDENTITY: "-"`), and putting
@@ -85,6 +89,19 @@ short form:
   walking it, so containment there is not containment at all: `PurgeReach` says so, and getting
   it wrong refuses the removal *and* advises deleting the profile whose data is actually at
   risk.
+- **"Is something already at this path?" is a question about files, not strings.** `fileExists`
+  folds case on the default macOS volume, so it answers *yes* for `WORK.app` while the profile's
+  own `Work.app` is what it found — which is how renaming a profile to another capitalisation of
+  its name came to be refused on behalf of the very launcher being renamed. `update` asks
+  `PathUtils.sameFile` (`lstat` identity — `st_dev` + `st_ino`, so a symlink counts as itself)
+  and treats that as a rename **in place**: the old bundle is never trashed, because it *is* the
+  new one, and trashing it leaves the profile with no launcher at all. On a case-sensitive volume
+  the same two paths are two files and the guard refuses exactly as before — the volume decides,
+  not a rule stated here. The other half is in `build`: `replaceItemAt` writes into the file
+  already at the path and **keeps that file's name** (measured), so it finishes by renaming the
+  bundle to the spelling it was asked for. Without that the launcher's file says one thing while
+  `Profile.id` — which *is* `appPath` — says another, and `liveRewrite`'s deliberate `==` on the
+  bundle path quietly stops matching.
 - **Never enumerate a directory with `contentsOfDirectory(at:)` — it loses a path's spelling
   twice over.** It resolves symlinks in the URLs it returns, *and* it throws `ENOTDIR` when the
   directory handed to it is itself a symlink; the `atPath` overload does neither. Both

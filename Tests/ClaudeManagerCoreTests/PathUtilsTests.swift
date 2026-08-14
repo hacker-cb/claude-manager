@@ -86,4 +86,40 @@ struct PathUtilsTests {
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
         #expect(PathUtils.sameDirectory(viaLink.path, target.path)) // and after
     }
+
+    /// Identity comes from the file system, and it is what tells a rename in place from a rename
+    /// onto a stranger. Both readings of `…/Work` vs `…/WORK` are correct — on one volume they
+    /// are one file, on the other two — and nothing in the strings distinguishes them, so this
+    /// asserts against what the volume itself does.
+    @Test
+    func sameFileFollowsTheVolumeOnCase() throws {
+        let fm = FileManager.default
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let upper = root.appendingPathComponent("Work")
+        try Data("x".utf8).write(to: upper)
+        let lower = root.appendingPathComponent("work")
+        let volumeIgnoresCase = fm.fileExists(atPath: lower.path)
+
+        #expect(PathUtils.sameFile(upper.path, lower.path) == volumeIgnoresCase)
+        #expect(PathUtils.sameFile(upper.path, upper.path))
+    }
+
+    /// The two ways this must answer "no", both of which a caller reads as licence to write:
+    /// a path with nothing at it, and a symlink weighed against the file it points at. A link
+    /// and its target are two entries — moving one is not moving the other.
+    @Test
+    func sameFileSaysNoWithoutBothSidesOnDisk() throws {
+        let fm = FileManager.default
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let target = root.appendingPathComponent("target")
+        try Data("x".utf8).write(to: target)
+        let link = root.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+
+        #expect(!PathUtils.sameFile(target.path, root.appendingPathComponent("absent").path))
+        #expect(!PathUtils.sameFile(link.path, target.path))
+        #expect(PathUtils.sameFile(link.path, link.path))
+    }
 }

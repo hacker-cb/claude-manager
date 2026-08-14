@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Small path/string helpers used across services. All but `canonicalPath` (and the
@@ -78,6 +79,31 @@ public enum PathUtils {
     /// spellings. (Containment is a different question, and `ProfileStore+Remove` owns it.)
     public static func sameDirectory(_ lhs: String, _ rhs: String) -> Bool {
         canonicalPath(lhs) == canonicalPath(rhs)
+    }
+
+    /// Whether two paths are **one and the same file** — asked of the file system, because
+    /// neither the strings nor `fileExists` can answer it.
+    ///
+    /// The case that needs it: renaming a launcher to another spelling of its own name.
+    /// `…/Work.app` and `…/WORK.app` are one bundle on a case-insensitive volume — macOS's
+    /// default — so `fileExists` reports the destination "taken" and what it has found is the
+    /// profile's own launcher. On a case-sensitive volume those same two paths are two files,
+    /// and a rename must not be allowed to write over the second. The strings are identical in
+    /// both worlds; only the volume knows which one it is, so this asks it.
+    ///
+    /// `canonicalPath` deliberately does **not** cover this. It folds case only as far as an
+    /// *existing* directory lets it, and it answers about paths — two spellings of one place.
+    /// This answers about the thing at the end of them, which is what a rename acts on.
+    ///
+    /// `lstat`, so a symlink counts as itself rather than as its target: a launcher and a link
+    /// pointing at it are two entries, and treating them as one would have a rename delete the
+    /// bundle it was meant to preserve. False whenever either side cannot be statted — a
+    /// missing answer is never "yes, the same file", and every caller acts on `true`.
+    public static func sameFile(_ lhs: String, _ rhs: String) -> Bool {
+        var left = stat()
+        var right = stat()
+        guard lstat(lhs, &left) == 0, lstat(rhs, &right) == 0 else { return false }
+        return left.st_dev == right.st_dev && left.st_ino == right.st_ino
     }
 
     /// Escape a literal string so it can be embedded in an extended regular

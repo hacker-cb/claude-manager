@@ -212,6 +212,7 @@ public struct LauncherBundle {
 
         if fileManager.fileExists(atPath: appURL.path) {
             _ = try fileManager.replaceItemAt(appURL, withItemAt: tempURL)
+            try matchInstalledSpelling(to: appURL)
         } else {
             try fileManager.moveItem(at: tempURL, to: appURL)
         }
@@ -220,6 +221,38 @@ public struct LauncherBundle {
         // here, and that the two are not interchangeable.
         if wasHidden { HiddenFlag.set(at: appURL) }
         return iconChanged
+    }
+
+    /// Finish what `replaceItemAt` leaves undone: put the bundle under the name it was built
+    /// for.
+    ///
+    /// That call writes into the file **already at the path and keeps that file's name**
+    /// (measured, not inferred from the docs). On a case-insensitive volume `WORK.app` *is* the
+    /// installed `Work.app`, so a build asked for a new spelling would write every byte it
+    /// promised and return with the old name still on disk — and the rest of the app takes
+    /// `profile.appPath` at its word. `Profile.id` is that path; `update` re-derives it from the
+    /// display name and compares; `liveRewrite` matches the scanned bundle against it. So the
+    /// quiet version of this is a launcher whose marker says one name and whose file says
+    /// another: one bundle under two identities, which is the shape `scan` was fixed to stop
+    /// producing. It also reaches `add(force:)`, where re-creating a profile under a new
+    /// spelling silently kept the old one.
+    ///
+    /// Below the ad-hoc signing call, and allowed to be, on the same terms as `HiddenFlag`:
+    /// this renames the bundle's *directory* rather than writing anything into it, and the seal
+    /// spans the contents — `codesign --verify --strict` passes across a rename, measured for a
+    /// case-only change and a wholesale one alike.
+    ///
+    /// Only a difference of **case** is ever acted on. `nameKey` answers with the name the
+    /// volume actually stores, so a name differing any other way would mean this path opened a
+    /// file that is not the one just written, and moving *that* is not this function's business.
+    private func matchInstalledSpelling(to appURL: URL) throws {
+        let requested = appURL.lastPathComponent
+        guard let installed = (try? appURL.resourceValues(forKeys: [.nameKey]))?.name,
+              installed != requested,
+              installed.lowercased() == requested.lowercased()
+        else { return }
+        let onDisk = appURL.deletingLastPathComponent().appendingPathComponent(installed)
+        try fileManager.moveItem(at: onDisk, to: appURL)
     }
 
     /// Whether the badge this build is about to write differs from what the bundle
