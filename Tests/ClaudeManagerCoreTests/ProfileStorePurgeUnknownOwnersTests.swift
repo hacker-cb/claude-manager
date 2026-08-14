@@ -121,6 +121,10 @@ struct ProfileStorePurgeUnknownOwnersTests {
     /// traversal — answers `fileExists` exactly as a deleted one does. Reported as
     /// `.alreadyGone` it says nothing at all, so the user is left believing a login that is
     /// still on that disk was destroyed, with the launcher that could delete it in the Trash.
+    ///
+    /// Reported as `purgeFailed`, not `keptOwnersUnknown`: the launcher folder is perfectly
+    /// readable here, so a message sending the user to fix *that* names a remedy that changes
+    /// nothing.
     @Test(.enabled(if: getuid() != 0, "needs a non-root user for permission bits to bite"))
     func unreachableDataIsNotReportedAsAlreadyGone() throws {
         let env = try makeStoreEnv()
@@ -138,8 +142,13 @@ struct ProfileStorePurgeUnknownOwnersTests {
 
         let result = try env.store.remove(profile, purgeProfile: true)
 
-        #expect(result.profileData == .keptOwnersUnknown)
-        #expect(result.profileData.notice(forRemovalOf: profile.displayName) != nil)
+        guard case let .purgeFailed(reason) = result.profileData else {
+            Issue.record("expected purgeFailed, got \(result.profileData)")
+            return
+        }
+        #expect(reason.contains("could not be reached"))
+        let notice = try #require(result.profileData.notice(forRemovalOf: profile.displayName))
+        #expect(notice.message.contains("still on disk"))
     }
 
     /// An unlistable launcher folder makes the scan report no launchers, which is what an empty

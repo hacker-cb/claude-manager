@@ -152,7 +152,11 @@ public extension ProfileStore {
         // nothing at all. Told apart by `lstat`: only ENOENT is genuinely nothing there.
         switch Self.pathState(profile.profilePath) {
         case .unreachable:
-            return .keptOwnersUnknown
+            // Not `keptOwnersUnknown`: that one is about the *launcher* folder and sends the
+            // user to make it readable, which here is already true and would fix nothing. What
+            // could not be reached is the data itself, and `purgeFailed` is the outcome that
+            // says "still on disk" with a cause attached.
+            return .purgeFailed(reason: "its folder could not be reached")
         case .present:
             break
         case .absent:
