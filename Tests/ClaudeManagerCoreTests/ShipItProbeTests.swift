@@ -115,6 +115,41 @@ struct ShipItProbeTests {
         #expect(arguments.last?.contains("com\\.anthropic\\.claudefordesktop\\.ShipIt") == true)
     }
 
+    // MARK: - Age
+
+    @Test
+    func readsHowLongTheInstallerHasBeenRunning() {
+        let probe = makeProbe(stderrPath: "/nonexistent") { executable, args in
+            if executable == CoreConstants.pgrepPath {
+                return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+            }
+            if executable == CoreConstants.psPath, args.contains("etimes=") {
+                #expect(args.contains("4242")) // asks about the pid pgrep just reported
+                return CommandOutput(exitCode: 0, standardOutput: " 1800\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+        #expect(probe.runningFor() == 1800)
+    }
+
+    @Test
+    func ageIsNilWithoutARunningInstaller() {
+        #expect(makeProbe(stderrPath: "/nonexistent").runningFor() == nil)
+    }
+
+    @Test
+    func ageIsNilWhenThereIsNoPIDToAskAbout() {
+        // Exit 0 with an unreadable capture still counts as *running*, but there is no pid
+        // to measure — the health check must not invent one.
+        let probe = makeProbe(stderrPath: "/nonexistent") { executable, _ in
+            executable == CoreConstants.pgrepPath
+                ? CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+                : idleStub(executable, [])
+        }
+        #expect(probe.isRunning())
+        #expect(probe.runningFor() == nil)
+    }
+
     // MARK: - Failure reason
 
     @Test

@@ -97,6 +97,22 @@ public struct ShipItProbe {
         }
     }
 
+    /// How long the installer has been running, or `nil` when it is not running (or its age
+    /// can't be read — an unknown liveness included, since there is no pid to ask about).
+    ///
+    /// The age is the whole question a health check has: a swap is 3–5 s and even the
+    /// pathological ones stayed under a minute, so an installer measured in *minutes* is not
+    /// installing — it is waiting for profiles to close, which it will do indefinitely and
+    /// silently. `ps -o etimes=` reports whole seconds since start.
+    public func runningFor() -> TimeInterval? {
+        guard case let .running(pid) = liveness() else { return nil }
+        guard let output = try? runner.run(CoreConstants.psPath, ["-o", "etimes=", "-p", String(pid)]),
+              output.succeeded,
+              let seconds = TimeInterval(output.trimmedOutput)
+        else { return nil }
+        return seconds
+    }
+
     /// Current size of ShipIt's `stderr` log, to be passed back to ``failureReason(since:)``.
     /// Zero when the log is missing — a log created later is then read from its start.
     public func stderrOffset() -> UInt64 {

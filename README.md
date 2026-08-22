@@ -170,6 +170,8 @@ Open the **Doctor** tab for a health report. Common findings:
 | _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
 | _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
 | _Claude vX staged but not applied — N running instance(s) block the swap_ | Click **Apply to all profiles** (window banner) or **Apply Claude vX to all profiles** (menu bar) to quit, install, and reopen everything at once. |
+| _Claude's installer has been waiting N min_ | The installer is blocked, not working — it waits for every profile to quit, indefinitely. Same fix: **Apply to all profiles**. |
+| _The last install attempt didn't complete_ | What Claude's installer reported the last time it tried. Usually "a Claude instance was running" — apply again with everything closed. |
 | _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
 | _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |

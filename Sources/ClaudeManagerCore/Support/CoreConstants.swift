@@ -139,6 +139,14 @@ public enum CoreConstants {
             .path
     }
 
+    /// How long Claude's installer has to be running before Doctor calls it stuck.
+    ///
+    /// A swap is 3–5 s, and the worst measured under disk contention was 57 s. Ten minutes
+    /// is therefore two orders of magnitude past "installing" and can only mean ShipIt is
+    /// waiting for every Claude instance to quit — which it does **indefinitely and
+    /// silently**, the failure mode that ran unnoticed for nine days.
+    public static let shipItStuckSeconds: TimeInterval = 600
+
     // MARK: - Plan-usage statistics
 
     /// On-disk schema version for the usage-history SQLite store. **Bump when the stored

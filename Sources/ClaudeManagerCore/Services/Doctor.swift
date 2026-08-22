@@ -79,13 +79,14 @@ public struct Doctor {
     /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
     /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
     private func stagedUpdateDiagnostics() -> [Diagnostic] {
-        guard let realClaude,
-              let staged = StagedUpdateProbe(
-                  realClaude: realClaude,
-                  shipItStatePath: configuration.shipItStatePath,
-                  fileManager: fileManager
-              ).probe()
-        else { return [] }
+        guard let realClaude else { return [] }
+        let staged = StagedUpdateProbe(
+            realClaude: realClaude,
+            shipItStatePath: configuration.shipItStatePath,
+            fileManager: fileManager
+        ).probe()
+        let installer = installerDiagnostics(realClaude: realClaude, staged: staged)
+        guard let staged else { return installer }
         // Count only real-Claude instances (default + clones exec the real binary) — not
         // Claude Manager's own process, whose path also contains "Claude".
         let running = processProbe.allClaudeMains()
@@ -98,7 +99,48 @@ public struct Doctor {
             severity: .warning,
             title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
             detail: "Use “Apply to all profiles” to quit every profile, swap, and reopen"
-        )]
+        )] + installer
+    }
+
+    /// What Claude's own installer is doing, and how its last attempt ended.
+    ///
+    /// Both rows exist because this failure is otherwise **completely silent**: ShipIt waits
+    /// for zero instances indefinitely, writing only to its own log, so a machine can sit for
+    /// days with an update that will never install and no surface saying so. The user's first
+    /// hint was the default profile restarting itself at 4 am.
+    private func installerDiagnostics(realClaude: RealClaude, staged: StagedUpdate?) -> [Diagnostic] {
+        let probe = ShipItProbe(
+            bundleID: realClaude.bundleIdentifier(fileManager: fileManager)
+                ?? CoreConstants.realClaudeBundleIDs[0],
+            stderrPath: CoreConstants.shipItStderrPath(forStatePath: configuration.shipItStatePath),
+            // The caller's runner, never a fresh `SystemCommandRunner` — same reason the
+            // init refuses to default `bundle` and `codeSigner`.
+            runner: processProbe.runner,
+            fileManager: fileManager
+        )
+        var rows: [Diagnostic] = []
+
+        if let age = probe.runningFor(), age >= CoreConstants.shipItStuckSeconds {
+            let minutes = Int(age / 60)
+            rows.append(Diagnostic(
+                severity: .warning,
+                title: "Claude's installer has been waiting \(minutes) min",
+                detail: "ShipIt can't swap Claude.app while any profile runs, and it waits "
+                    + "indefinitely. Use “Apply to all profiles”."
+            ))
+        }
+
+        // Only worth saying while something is still armed — there is then a failure the user
+        // is actually living with. Read over the whole log (no offset), so word it as the last
+        // recorded attempt rather than as something happening now.
+        if staged != nil, let reason = probe.failureReason(since: 0) {
+            rows.append(Diagnostic(
+                severity: .warning,
+                title: "The last install attempt didn't complete",
+                detail: "ShipIt reported: \(reason)."
+            ))
+        }
+        return rows
     }
 
     // MARK: - Individual checks
