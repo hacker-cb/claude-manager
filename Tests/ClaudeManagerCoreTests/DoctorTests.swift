@@ -424,41 +424,4 @@ struct DoctorTests {
     }
 }
 
-/// Staged-update diagnostics, kept in their own suite so `DoctorTests` stays within the
-/// type-body-length budget. Reuses the top-level `DoctorScene` helpers.
-struct DoctorStagedUpdateTests {
-    let fm = FileManager.default
-
-    /// Arm a staged newer bundle (`stagedVersion`) referenced by the scene's ShipItState.
-    private func armStagedUpdate(_ scene: DoctorScene, stagedVersion: String) throws {
-        let bundle = scene.root.appendingPathComponent("update.X/Claude.app")
-        let contents = bundle.appendingPathComponent("Contents")
-        try fm.createDirectory(at: contents, withIntermediateDirectories: true)
-        try PropertyListSerialization
-            .data(fromPropertyList: ["CFBundleShortVersionString": stagedVersion], format: .xml, options: 0)
-            .write(to: contents.appendingPathComponent("Info.plist"))
-        try JSONSerialization
-            .data(withJSONObject: ["updateBundleURL": bundle.absoluteString])
-            .write(to: URL(fileURLWithPath: scene.shipItStatePath))
-    }
-
-    @Test
-    func warnsWhenUpdateStagedButNotApplied() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        try armStagedUpdate(scene, stagedVersion: "9.9.10") // installed is 9.9.9
-
-        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
-        #expect(diags.contains {
-            $0.severity == .warning && $0.title.contains("staged but not applied")
-        })
-    }
-
-    @Test
-    func noStagedUpdateNoWarning() throws {
-        let scene = try makeDoctorScene()
-        defer { try? fm.removeItem(at: scene.root) }
-        let diags = runDoctor(scene, runner: RecordingCommandRunner(handler: idleStub))
-        #expect(!diags.contains { $0.title.contains("staged but not applied") })
-    }
-}
+// Staged-update diagnostics, kept in their own suite so `DoctorTests` stays within the

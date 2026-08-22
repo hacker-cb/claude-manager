@@ -97,6 +97,50 @@ public struct ShipItProbe {
         }
     }
 
+    /// How long the installer has been running, or `nil` when it is not running (or its age
+    /// can't be read — an unknown liveness included, since there is no pid to ask about).
+    ///
+    /// The age is the whole question a health check has: a swap is 3–5 s and even the
+    /// pathological ones stayed under a minute, so an installer measured in *minutes* is not
+    /// installing — it is waiting for profiles to close, which it will do indefinitely and
+    /// silently.
+    ///
+    /// **`etime`, not `etimes`.** The seconds-only `etimes` keyword is a GNU/procps
+    /// extension; Darwin's `ps` rejects it outright (`ps: etimes: keyword not found`, exit 1),
+    /// which would have made this return `nil` forever and the diagnostic never fire. BSD
+    /// `etime` formats as `[[dd-]hh:]mm:ss`, so it is parsed here.
+    public func runningFor() -> TimeInterval? {
+        guard case let .running(pid) = liveness() else { return nil }
+        guard let output = try? runner.run(CoreConstants.psPath, ["-o", "etime=", "-p", String(pid)]),
+              output.succeeded
+        else { return nil }
+        return Self.elapsedSeconds(fromETime: output.trimmedOutput)
+    }
+
+    /// Parse BSD `ps` elapsed time — `mm:ss`, `hh:mm:ss`, or `dd-hh:mm:ss`.
+    /// Returns `nil` for anything that doesn't fit, so a format change degrades to "no
+    /// reading" rather than to a wrong number.
+    static func elapsedSeconds(fromETime text: String) -> TimeInterval? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        let daySplit = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard daySplit.count <= 2 else { return nil }
+        var days = 0.0
+        if daySplit.count == 2 {
+            guard let parsed = Double(daySplit[0]) else { return nil }
+            days = parsed
+        }
+        let clock = daySplit.count == 2 ? daySplit[1] : daySplit[0]
+        let parts = clock.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2 ... 3).contains(parts.count) else { return nil }
+        var clockSeconds = 0.0
+        for part in parts {
+            guard let value = Double(part) else { return nil }
+            clockSeconds = clockSeconds * 60 + value
+        }
+        return days * 86400 + clockSeconds
+    }
+
     /// Current size of ShipIt's `stderr` log, to be passed back to ``failureReason(since:)``.
     /// Zero when the log is missing — a log created later is then read from its start.
     public func stderrOffset() -> UInt64 {
@@ -110,28 +154,53 @@ public struct ShipItProbe {
     /// Scanning only past `offset` is what makes the answer belong to *this* attempt: the
     /// log is append-only and never rotated, so its tail otherwise holds failures from days
     /// ago that would be reported as though they had just happened.
+    /// Scanned backwards, and **a success ends the scan**. The log interleaves attempts, so a
+    /// failure followed by a completed install is history, not a current problem: reporting
+    /// the older failure would tell the user their last attempt didn't complete when it did.
+    /// Whichever terminal line comes last is the answer.
     public func failureReason(since offset: UInt64) -> String? {
         guard let text = appendedText(since: offset) else { return nil }
         for line in text.split(separator: "\n").reversed() {
+            if line.contains(Self.successMarker) { return nil }
             if let reason = Self.reason(inLine: String(line)) { return reason }
         }
         return nil
     }
 
+    /// What ShipIt logs when an install goes through.
+    private static let successMarker = "Installation completed successfully"
+
     // MARK: - Internals
 
     /// Bytes appended to the log since `offset`, decoded as UTF-8.
+    /// Never reads more than ``maxScanBytes`` from the end. Doctor scans from offset 0 on
+    /// every run, and the log is append-only and never rotated, so an unbounded read grows
+    /// with the age of the install for a scan that only ever needs the last few lines.
     private func appendedText(since offset: UInt64) -> String? {
         guard let handle = FileHandle(forReadingAtPath: stderrPath) else { return nil }
         defer { try? handle.close() }
         do {
-            try handle.seek(toOffset: offset)
+            let size = try handle.seekToEnd()
+            let tailStart = size > Self.maxScanBytes ? size - Self.maxScanBytes : 0
+            let start = max(offset, tailStart)
+            guard start < size else { return nil }
+            try handle.seek(toOffset: start)
             guard let data = try handle.readToEnd(), !data.isEmpty else { return nil }
-            return String(data: data, encoding: .utf8)
+            // Lossy on purpose: a byte-offset cut lands mid-character, and one replacement
+            // glyph beats discarding the whole read the strict initializer would refuse.
+            let text = String(decoding: data, as: UTF8.self)
+            // A cut also lands mid-line, and half a line can match a marker or hide one, so
+            // drop the partial first line — but only when we actually cut.
+            guard start > offset, let newline = text.firstIndex(of: "\n") else { return text }
+            return String(text[text.index(after: newline)...])
         } catch {
             return nil
         }
     }
+
+    /// How much of the tail one scan may read — thousands of lines, orders of magnitude more
+    /// than a single install attempt writes, while keeping the read bounded on any machine.
+    private static let maxScanBytes: UInt64 = 256 * 1024
 
     /// Map one ShipIt log line to a human-readable reason.
     ///

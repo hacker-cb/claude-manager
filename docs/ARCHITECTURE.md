@@ -216,6 +216,24 @@ Four details that keep that invariant honest:
   protected. The guard is `async` and probes off the main actor: `SystemCommandRunner` blocks
   on `Process.waitUntilExit()`, so asking inline would stall the UI on every launch.
 
+**Doctor reports the same machine state standing still.** The failure this whole section
+exists for ran for nine days with nothing saying anything was wrong — ShipIt waits for zero
+instances indefinitely and writes only to its own log, so the first hint the user got was
+the default profile restarting itself at 4 am. So Doctor surfaces two facts: an installer
+that has been alive past `CoreConstants.shipItStuckSeconds` (ten minutes — two orders of
+magnitude past a 3–5 s swap, so it can only be waiting on profiles), read via
+`ShipItProbe.runningFor()`; and the reason the last attempt failed, but **only while an
+update is still armed** — the log is append-only and never rotated, so without that
+condition it would keep reporting failures from days ago as though they mattered now.
+
+Two traps in reading those, both of which shipped broken first: the elapsed time comes from
+`ps -o etime=` and is parsed from `[[dd-]hh:]mm:ss`, because the seconds-only `etimes`
+keyword is a GNU extension that **Darwin rejects outright** (`keyword not found`, exit 1 —
+the diagnostic silently never fired, and a mocked test could not see it, so a live check
+against the real `ps` now guards it); and the log scan stops at
+`Installation completed successfully`, since a failure followed by a completed install is
+history — without that boundary Doctor reports a superseded failure as the current one.
+
 The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.
