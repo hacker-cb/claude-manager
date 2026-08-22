@@ -5,6 +5,42 @@ import UserNotifications
 /// Applying a staged Claude update across every profile, and the once-per-version
 /// notification that surfaces it. See `ProfileStore.applyStagedUpdateToAll`.
 extension AppModel {
+    // MARK: - Persisted staged-update state
+
+    /// Staged versions already surfaced as a notification, so it nags once per version —
+    /// **persisted**, since in memory the promise was renewed on every app launch and the
+    /// same version nagged again. Written through `defaults`, so tests stay hermetic.
+    var notifiedStagedUpdate: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedStagedUpdate) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedStagedUpdate) }
+    }
+
+    /// Staged versions whose approaching-forced-restart warning has been posted. Separate
+    /// from the above: it is a second notification about the same version, later in its wait.
+    var notifiedStagedDeadline: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedStagedDeadline) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedStagedDeadline) }
+    }
+
+    /// When the currently-staged version was first seen — the only clock we have on Claude's
+    /// own enforcement timer (see `StagedUpdateDeadline`). Stored as a one-entry map keyed by
+    /// version, so a newer staged build starts its own wait and the old row is dropped rather
+    /// than accumulating one per Claude release.
+    var stagedUpdateFirstSeen: [String: Date] {
+        get {
+            guard let raw = defaults.dictionary(forKey: PreferenceKeys.stagedUpdateFirstSeen)
+            else { return [:] }
+            return raw.compactMapValues { value in
+                guard let seconds = value as? Double else { return nil }
+                return Date(timeIntervalSince1970: seconds)
+            }
+        }
+        set {
+            let raw = newValue.mapValues(\.timeIntervalSince1970)
+            defaults.set(raw, forKey: PreferenceKeys.stagedUpdateFirstSeen)
+        }
+    }
+
     /// Quit every profile, let ShipIt swap `/Applications/Claude.app`, and relaunch the
     /// set that was open. Single-flight (guarded on `isApplyingStagedUpdate`); a non-success
     /// outcome is surfaced as a notice. Deliberately does *not* pre-guard on `stagedUpdate`:
@@ -82,6 +118,66 @@ extension AppModel {
         return await Task.detached {
             ProfileStore(realClaude: real, configuration: config).isClaudeInstallerRunning()
         }.value
+    }
+
+    /// Record when the current staged version was first seen, and forget everything else.
+    ///
+    /// This is the only clock available for Claude's enforcement timer, which lives in its
+    /// updater's memory: nothing on disk survives a re-arm, since `ShipItState.plist`'s mtime
+    /// is rewritten every time the bundle is re-downloaded (observed three times in one
+    /// afternoon while the same update kept failing). Never overwritten while a version stays
+    /// staged — otherwise the wait would restart on every refresh and the estimate would sit
+    /// at zero forever.
+    ///
+    /// Pruning to the current version is what keeps this a fact rather than a log: it also
+    /// clears the two notification ledgers, so a version staged again later — after a
+    /// rollback, say — is a fresh wait that may notify again.
+    func recordStagedUpdateSighting(now: Date = Date()) {
+        let updated = StagedUpdateDeadline.recordSighting(
+            of: stagedUpdate?.stagedVersion, into: stagedUpdateFirstSeen, now: now
+        )
+        guard updated != stagedUpdateFirstSeen else { return } // don't churn defaults per refresh
+        stagedUpdateFirstSeen = updated
+        // Prune both ledgers to what is still being waited on — that is what lets a version
+        // staged again later notify afresh.
+        let live = Set(updated.keys)
+        notifiedStagedUpdate = notifiedStagedUpdate.intersection(live)
+        notifiedStagedDeadline = notifiedStagedDeadline.intersection(live)
+    }
+
+    /// The wait and the estimated forced restart for the current staged update, if we have
+    /// a first sighting for it.
+    var stagedUpdateDeadline: StagedUpdateDeadline? {
+        guard let version = stagedUpdate?.stagedVersion,
+              let firstSeen = stagedUpdateFirstSeen[version]
+        else { return nil }
+        return StagedUpdateDeadline(firstSeen: firstSeen)
+    }
+
+    /// Warn once, shortly before Claude would restart the default profile by itself.
+    ///
+    /// The point is to convert a silent 4 am restart into something the user was told about
+    /// and could have pre-empted. Deliberately quiet until the window is close: most waits
+    /// end within minutes of the user seeing the banner, and a countdown from hour one would
+    /// be noise for all of them.
+    func notifyStagedDeadlineIfNeeded(now: Date = Date()) async {
+        guard let staged = stagedUpdate, let deadline = stagedUpdateDeadline else { return }
+        guard deadline.isApproaching(asOf: now, lead: StagedUpdateDeadline.warningLead) else { return }
+        guard !notifiedStagedDeadline.contains(staged.stagedVersion) else { return }
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        let remaining = deadline.remaining(asOf: now)
+        let when = remaining <= 0 ? "at any time now" : "in about \(max(1, Int(remaining / 3600))) hours"
+        let content = UNMutableNotificationContent()
+        content.title = "Claude will restart your default profile \(when)"
+        content.body = "Claude \(staged.stagedVersion) has been waiting to install, and Claude "
+            + "restarts the default profile on its own to finish. Use “Apply to all profiles” "
+            + "to do it at a moment you choose."
+        try? await center.add(UNNotificationRequest(
+            identifier: "claude-staged-deadline-\(staged.stagedVersion)", content: content, trigger: nil
+        ))
+        notifiedStagedDeadline.insert(staged.stagedVersion)
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked

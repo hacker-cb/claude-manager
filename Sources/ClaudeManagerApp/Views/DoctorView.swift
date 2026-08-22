@@ -19,7 +19,14 @@ struct DoctorView: View {
             brokerEnabled: model.deepLinkBrokerEnabled && launchAtLogin.isSupported,
             launchAtLoginEnabled: launchAtLogin.isRegistered
         )
-        return (residency.map { [$0] } ?? []) + model.diagnostics
+        // Same shape, same reason: the first-sighting date it needs is app state, so
+        // `Doctor.run()` cannot see it either.
+        let deadline = model.stagedUpdate.flatMap { staged in
+            model.stagedUpdateDeadline.flatMap {
+                Doctor.stagedUpdateDeadlineDiagnostic(stagedVersion: staged.stagedVersion, deadline: $0)
+            }
+        }
+        return (residency.map { [$0] } ?? []) + (deadline.map { [$0] } ?? []) + model.diagnostics
     }
 
     var body: some View {

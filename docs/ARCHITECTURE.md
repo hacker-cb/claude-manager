@@ -234,6 +234,33 @@ against the real `ps` now guards it); and the log scan stops at
 `Installation completed successfully`, since a failure followed by a completed install is
 history — without that boundary Doctor reports a superseded failure as the current one.
 
+### The 4 am restart, predicted instead of mysterious
+
+Claude force-restarts the default profile once an update has been pending for
+`autoUpdaterEnforcementHours` — 72 h by default, and the policy validates as
+`int().gt(0).lte(72)`, so a deployment can only **shorten** that window, never disable it.
+Only `disableAutoUpdates` stops the timer arming at all, and the default profile is
+deliberately the one clone-free profile that keeps its updater. The restart also defers
+while the machine has been used in the last 10 minutes and while any session is running —
+so by design it lands when nobody is watching, which is exactly why it reads as the app
+acting on its own.
+
+CM cannot stop it, so it predicts it. `StagedUpdateDeadline` measures the wait from the
+moment **we** first saw the staged version, because Claude's own counter lives in its
+updater's memory and nothing on disk survives a re-arm (`ShipItState.plist`'s mtime is
+rewritten on every retry — observed three times in one afternoon). That makes every number
+an estimate, and the type says so: it predicts *no earlier than*, and both surfaces word it
+with "about". Two ways it can be wrong — the wait may have started before CM was looking,
+and a deferred restart can land much later.
+
+The first sighting, and the two notification ledgers keyed beside it, live in the injected
+`UserDefaults`. Persisting them fixed a quieter bug: both ledgers were in-memory `Set`s, so
+"notify once per version" was renewed on every app launch and the same version nagged again.
+`StagedUpdateDeadline.recordSighting` owns the rules — a known version keeps its original
+date (re-stamping would hold the wait at zero and the warning would never fire), only the
+current version is kept (or the record grows a row per Claude release), and nothing staged
+clears everything (so a re-staged version is a genuinely fresh wait).
+
 The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.
