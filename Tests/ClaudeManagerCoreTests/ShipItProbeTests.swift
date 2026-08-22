@@ -123,9 +123,9 @@ struct ShipItProbeTests {
             if executable == CoreConstants.pgrepPath {
                 return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
             }
-            if executable == CoreConstants.psPath, args.contains("etimes=") {
+            if executable == CoreConstants.psPath, args.contains("etime=") {
                 #expect(args.contains("4242")) // asks about the pid pgrep just reported
-                return CommandOutput(exitCode: 0, standardOutput: " 1800\n", standardError: "")
+                return CommandOutput(exitCode: 0, standardOutput: "   30:00\n", standardError: "")
             }
             return idleStub(executable, args)
         }
@@ -150,6 +150,38 @@ struct ShipItProbeTests {
         #expect(probe.runningFor() == nil)
     }
 
+    @Test
+    func parsesEveryShapeBSDElapsedTimeTakes() {
+        // `[[dd-]hh:]mm:ss`. The seconds-only `etimes` keyword this originally used is a
+        // GNU extension Darwin rejects outright, so the format matters.
+        #expect(ShipItProbe.elapsedSeconds(fromETime: "00:04") == 4)
+        #expect(ShipItProbe.elapsedSeconds(fromETime: "30:00") == 1800)
+        #expect(ShipItProbe.elapsedSeconds(fromETime: "01:00:00") == 3600)
+        let twoDaysPlus: TimeInterval = 183_845 // 2d 03:04:05
+        #expect(ShipItProbe.elapsedSeconds(fromETime: "2-03:04:05") == twoDaysPlus)
+        #expect(ShipItProbe.elapsedSeconds(fromETime: "  10:30  ") == 630)
+    }
+
+    @Test
+    func rejectsAnElapsedTimeItCannotRead() {
+        // A format change must degrade to "no reading", never to a wrong number.
+        for text in ["", "   ", "abc", "1:2:3:4", "12", "x-01:00", "01:xx"] {
+            #expect(ShipItProbe.elapsedSeconds(fromETime: text) == nil, "\(text) should not parse")
+        }
+    }
+
+    @Test
+    func theRealPsAcceptsTheKeywordWeAskFor() throws {
+        // Regression guard for the bug this test file previously hid by mocking a keyword
+        // macOS does not have: run the actual `ps` against our own pid and require both a
+        // zero exit and a value the parser accepts. Reads nothing but this process.
+        let output = try SystemCommandRunner().run(
+            CoreConstants.psPath, ["-o", "etime=", "-p", String(ProcessInfo.processInfo.processIdentifier)]
+        )
+        #expect(output.succeeded, "ps rejected the keyword: \(output.standardError)")
+        #expect(ShipItProbe.elapsedSeconds(fromETime: output.trimmedOutput) != nil)
+    }
+
     // MARK: - Failure reason
 
     @Test
@@ -171,6 +203,27 @@ struct ShipItProbeTests {
             + "2 running instances of the target app\n")
             .write(to: log, atomically: true, encoding: .utf8)
         #expect(probe.failureReason(since: offset)?.contains("was running while ShipIt") == true)
+    }
+
+    @Test
+    func aFailureFollowedByASuccessIsHistory() throws {
+        // The log interleaves attempts. A failure that a later install superseded is not a
+        // current problem — reporting it would tell the user their last attempt didn't
+        // complete when it did.
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let log = root.appendingPathComponent("ShipIt_stderr.log")
+        try ("2026-08-19 13:48:55.843 ShipIt[3:4] Aborting update attempt because there are 2 "
+            + "running instances of the target app\n"
+            + "2026-08-19 13:56:01.542 ShipIt[5:6] Installation completed successfully\n")
+            .write(to: log, atomically: true, encoding: .utf8)
+        #expect(makeProbe(stderrPath: log.path).failureReason(since: 0) == nil)
+
+        // …and a failure *after* that success is current again.
+        try (String(contentsOf: log, encoding: .utf8)
+            + "2026-08-22 09:00:00.000 ShipIt[7:8] Too many attempts to install, aborting update\n")
+            .write(to: log, atomically: true, encoding: .utf8)
+        #expect(makeProbe(stderrPath: log.path).failureReason(since: 0) != nil)
     }
 
     @Test

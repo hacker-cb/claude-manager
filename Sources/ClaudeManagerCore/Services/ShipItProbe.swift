@@ -103,14 +103,42 @@ public struct ShipItProbe {
     /// The age is the whole question a health check has: a swap is 3–5 s and even the
     /// pathological ones stayed under a minute, so an installer measured in *minutes* is not
     /// installing — it is waiting for profiles to close, which it will do indefinitely and
-    /// silently. `ps -o etimes=` reports whole seconds since start.
+    /// silently.
+    ///
+    /// **`etime`, not `etimes`.** The seconds-only `etimes` keyword is a GNU/procps
+    /// extension; Darwin's `ps` rejects it outright (`ps: etimes: keyword not found`, exit 1),
+    /// which would have made this return `nil` forever and the diagnostic never fire. BSD
+    /// `etime` formats as `[[dd-]hh:]mm:ss`, so it is parsed here.
     public func runningFor() -> TimeInterval? {
         guard case let .running(pid) = liveness() else { return nil }
-        guard let output = try? runner.run(CoreConstants.psPath, ["-o", "etimes=", "-p", String(pid)]),
-              output.succeeded,
-              let seconds = TimeInterval(output.trimmedOutput)
+        guard let output = try? runner.run(CoreConstants.psPath, ["-o", "etime=", "-p", String(pid)]),
+              output.succeeded
         else { return nil }
-        return seconds
+        return Self.elapsedSeconds(fromETime: output.trimmedOutput)
+    }
+
+    /// Parse BSD `ps` elapsed time — `mm:ss`, `hh:mm:ss`, or `dd-hh:mm:ss`.
+    /// Returns `nil` for anything that doesn't fit, so a format change degrades to "no
+    /// reading" rather than to a wrong number.
+    static func elapsedSeconds(fromETime text: String) -> TimeInterval? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        let daySplit = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard daySplit.count <= 2 else { return nil }
+        var days = 0.0
+        if daySplit.count == 2 {
+            guard let parsed = Double(daySplit[0]) else { return nil }
+            days = parsed
+        }
+        let clock = daySplit.count == 2 ? daySplit[1] : daySplit[0]
+        let parts = clock.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2 ... 3).contains(parts.count) else { return nil }
+        var clockSeconds = 0.0
+        for part in parts {
+            guard let value = Double(part) else { return nil }
+            clockSeconds = clockSeconds * 60 + value
+        }
+        return days * 86400 + clockSeconds
     }
 
     /// Current size of ShipIt's `stderr` log, to be passed back to ``failureReason(since:)``.
@@ -126,13 +154,21 @@ public struct ShipItProbe {
     /// Scanning only past `offset` is what makes the answer belong to *this* attempt: the
     /// log is append-only and never rotated, so its tail otherwise holds failures from days
     /// ago that would be reported as though they had just happened.
+    /// Scanned backwards, and **a success ends the scan**. The log interleaves attempts, so a
+    /// failure followed by a completed install is history, not a current problem: reporting
+    /// the older failure would tell the user their last attempt didn't complete when it did.
+    /// Whichever terminal line comes last is the answer.
     public func failureReason(since offset: UInt64) -> String? {
         guard let text = appendedText(since: offset) else { return nil }
         for line in text.split(separator: "\n").reversed() {
+            if line.contains(Self.successMarker) { return nil }
             if let reason = Self.reason(inLine: String(line)) { return reason }
         }
         return nil
     }
+
+    /// What ShipIt logs when an install goes through.
+    private static let successMarker = "Installation completed successfully"
 
     // MARK: - Internals
 

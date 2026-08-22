@@ -226,6 +226,14 @@ magnitude past a 3–5 s swap, so it can only be waiting on profiles), read via
 update is still armed** — the log is append-only and never rotated, so without that
 condition it would keep reporting failures from days ago as though they mattered now.
 
+Two traps in reading those, both of which shipped broken first: the elapsed time comes from
+`ps -o etime=` and is parsed from `[[dd-]hh:]mm:ss`, because the seconds-only `etimes`
+keyword is a GNU extension that **Darwin rejects outright** (`keyword not found`, exit 1 —
+the diagnostic silently never fired, and a mocked test could not see it, so a live check
+against the real `ps` now guards it); and the log scan stops at
+`Installation completed successfully`, since a failure followed by a completed install is
+history — without that boundary Doctor reports a superseded failure as the current one.
+
 The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.

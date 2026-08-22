@@ -42,14 +42,16 @@ struct DoctorStagedUpdateTests {
         #expect(!diags.contains { $0.title.contains("staged but not applied") })
     }
 
-    /// A runner where ShipIt is alive with the given age in seconds.
-    private func installerRunning(forSeconds age: Int) -> RecordingCommandRunner {
+    /// A runner where ShipIt is alive, aged as BSD `ps` would report it (`[[dd-]hh:]mm:ss`
+    /// — Darwin has no seconds-only `etimes` keyword, which is exactly the bug this shape
+    /// guards against).
+    private func installerRunning(etime: String) -> RecordingCommandRunner {
         RecordingCommandRunner { executable, args in
             if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
                 return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
             }
-            if executable == CoreConstants.psPath, args.contains("etimes=") {
-                return CommandOutput(exitCode: 0, standardOutput: "\(age)\n", standardError: "")
+            if executable == CoreConstants.psPath, args.contains("etime=") {
+                return CommandOutput(exitCode: 0, standardOutput: "\(etime)\n", standardError: "")
             }
             return idleStub(executable, args)
         }
@@ -61,7 +63,7 @@ struct DoctorStagedUpdateTests {
         // so an installer measured in minutes is blocked, not working.
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        let diags = runDoctor(scene, runner: installerRunning(forSeconds: 1800))
+        let diags = runDoctor(scene, runner: installerRunning(etime: "30:00"))
         #expect(diags.contains {
             $0.severity == .warning && $0.title.contains("installer has been waiting 30 min")
         })
@@ -72,7 +74,7 @@ struct DoctorStagedUpdateTests {
         // A swap in progress is normal — only a stuck one is news.
         let scene = try makeDoctorScene()
         defer { try? fm.removeItem(at: scene.root) }
-        let diags = runDoctor(scene, runner: installerRunning(forSeconds: 4))
+        let diags = runDoctor(scene, runner: installerRunning(etime: "00:04"))
         #expect(!diags.contains { $0.title.contains("installer has been waiting") })
     }
 
