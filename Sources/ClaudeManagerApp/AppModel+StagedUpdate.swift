@@ -52,7 +52,11 @@ extension AppModel {
     /// about our state says so. That is exactly the window where a launch destroys the
     /// install — so the second condition asks the machine whether the installer is alive,
     /// rather than trusting a flag about what *we* are doing.
-    func launchBlockedByStagedApply() -> Bool {
+    /// `async` because the second condition shells out to `pgrep`, and `SystemCommandRunner`
+    /// blocks on `Process.waitUntilExit()`. Run inline it would stall the main actor on every
+    /// Open, Restart and deep-link forward; every caller here is already `async`, so the probe
+    /// goes off-actor and the UI keeps moving.
+    func launchBlockedByStagedApply() async -> Bool {
         if isApplyingStagedUpdate {
             currentError = AppError(
                 title: "Update in progress",
@@ -61,13 +65,23 @@ extension AppModel {
             )
             return true
         }
-        guard makeStore()?.isClaudeInstallerRunning() == true else { return false }
+        guard await isClaudeInstallerRunning() else { return false }
         currentError = AppError(
             title: "Claude is being updated",
             message: "The installer is still swapping Claude.app. Starting a profile now would "
                 + "make it abort and start over — wait for it to finish, then try again."
         )
         return true
+    }
+
+    /// Off-actor probe for a live installer. Deliberately not routed through `perform`: that
+    /// surfaces an alert when Claude can't be located, and a *guard* must stay silent about
+    /// anything but its own reason to refuse.
+    private func isClaudeInstallerRunning() async -> Bool {
+        guard let real = realClaude, let config = currentConfiguration() else { return false }
+        return await Task.detached {
+            ProfileStore(realClaude: real, configuration: config).isClaudeInstallerRunning()
+        }.value
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked

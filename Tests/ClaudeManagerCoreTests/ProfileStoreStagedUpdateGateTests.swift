@@ -193,6 +193,75 @@ struct ProfileStoreStagedUpdateGateTests {
     }
 
     @Test
+    func aSwapSeenOnTheLastPollStillDrains() async throws {
+        // The drain runs on its own budget. Folded into the main loop, a swap first seen on
+        // the final `maxPolls` iteration skipped it entirely and relaunched into a live
+        // installer — the original bug, reintroduced at the edge of the budget.
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        // The swap lands during the one and only pre-swap poll (`maxPolls: 0`), and the
+        // installer never leaves — so everything after that first probe is the drain.
+        let probes = CallCounter()
+        let infoURL = env.real.infoPlistURL
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
+                if probes.next() == 1 {
+                    var info = RealClaude.plist(at: infoURL) ?? [:]
+                    info["CFBundleShortVersionString"] = "9.9.10"
+                    try? PropertyListSerialization
+                        .data(fromPropertyList: info, format: .xml, options: 0)
+                        .write(to: infoURL)
+                }
+                return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 0, shipItGracePolls: 0, swapDrainPolls: 4
+        )
+        #expect(result.outcome == .applied(from: "9.9.9", to: "9.9.10"))
+        // maxPolls was 0, so every probe past the first belongs to the drain.
+        #expect(probes.next() > 4)
+    }
+
+    @Test
+    func aSwapThatLandsAsTheInstallerExitsIsNotReportedAsFailure() async throws {
+        // Each pass reads the version *before* running pgrep. An installer that swaps and
+        // exits between those two reads used to be recorded as a failed attempt for an
+        // update that had in fact succeeded.
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        let probes = CallCounter()
+        let infoURL = env.real.infoPlistURL
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
+                if probes.next() == 1 {
+                    return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+                }
+                // Exactly the race: the swap lands *while* this probe runs, so the version
+                // read a moment ago was stale and the installer is already gone.
+                var info = RealClaude.plist(at: infoURL) ?? [:]
+                info["CFBundleShortVersionString"] = "9.9.10"
+                try? PropertyListSerialization
+                    .data(fromPropertyList: info, format: .xml, options: 0)
+                    .write(to: infoURL)
+                return CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 20, shipItGracePolls: 1, swapDrainPolls: 2
+        )
+        #expect(result.outcome == .applied(from: "9.9.9", to: "9.9.10"))
+    }
+
+    @Test
     func carriesShipItsOwnReasonIntoTheOutcome() async throws {
         // The reason has to survive the whole path: ShipIt's log → probe → outcome. The
         // offset is taken before the apply, so a line written during it belongs to it.

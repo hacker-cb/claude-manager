@@ -60,6 +60,45 @@ struct ShipItProbeTests {
     }
 
     @Test
+    func exitZeroCountsAsRunningEvenWithNothingCaptured() {
+        // Exit 0 already means something matched. A lost capture must not downgrade that to
+        // "gone" — during an apply that answer relaunches profiles into a live install.
+        let probe = makeProbe(stderrPath: "/nonexistent") { executable, _ in
+            executable == CoreConstants.pgrepPath
+                ? CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+                : idleStub(executable, [])
+        }
+        #expect(probe.liveness() == .runningPIDUnknown)
+        #expect(probe.isRunning())
+        #expect(probe.isConfirmedRunning())
+    }
+
+    @Test
+    func aBrokenProbeBlocksAWaitButNotAGuard() {
+        // The two readings of "can't tell" are deliberately opposite: a wait is paranoid
+        // (it has a budget), a permanent guard fails open (it has none — refusing on an
+        // unhealthy probe would disable every launch in the app forever).
+        let probe = makeProbe(stderrPath: "/nonexistent") { executable, _ in
+            executable == CoreConstants.pgrepPath
+                ? CommandOutput(exitCode: 3, standardOutput: "", standardError: "pgrep: fatal")
+                : idleStub(executable, [])
+        }
+        #expect(probe.liveness() == .unknown)
+        #expect(probe.isRunning()) // wait: treat unknown as still installing
+        #expect(!probe.isConfirmedRunning()) // guard: do not block on a guess
+    }
+
+    @Test
+    func reportsThePIDWhenPgrepGivesOne() {
+        let probe = makeProbe(stderrPath: "/nonexistent") { executable, _ in
+            executable == CoreConstants.pgrepPath
+                ? CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+                : idleStub(executable, [])
+        }
+        #expect(probe.liveness() == .running(pid: 4242))
+    }
+
+    @Test
     func matchesOnBundleScopedJobLabel() {
         // Another app's updater runs the same Squirrel binary, so the pattern must carry
         // our bundle id — otherwise VS Code installing would read as Claude installing.

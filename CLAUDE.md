@@ -155,14 +155,17 @@ short form:
   swap has no knowable upper bound (3–5 s normally; 28 s and 57 s measured on the same bundle
   under disk contention), so `ShipItProbe.isRunning` is the gate and the poll budget is only a
   backstop; when it elapses with the installer still working, the profile set stays **closed**
-  and is reported that way. Three things that gate needs to stay true: only `pgrep` **exit 1**
-  means "gone" (2/3 and a failed spawn are *unknown*, which resolves to running — a wrong
-  "gone" destroys the swap, a wrong "running" only costs time); a **new version on disk is not
-  the end of the install**, so success drains until the process exits (bounded, since the
-  bundle is already in place); and the **launch guards ask
-  `ProfileStore.isClaudeInstallerRunning()`**, not `isApplyingStagedUpdate`, because a
-  `swapStillInstalling` hands control back while ShipIt is still copying and our own flag is
-  false from then on. Equally: **do not add a busy-detector.** A profile with a working
+  and is reported that way. Four things that gate needs to stay true: **"can't tell" is its own
+  answer** — `pgrep` exit 1 alone means gone, exit 0 means running even without a readable pid,
+  and 2/3/failed-spawn are unknown, which `isRunning()` (a *wait*) reads as running and
+  `isConfirmedRunning()` (a *guard*, with no budget to run out) reads as not; the **version is
+  re-read after the installer disappears**, or a swap landing between the version read and the
+  `pgrep` is reported as a failure; a **new version on disk is not the end of the install**, so
+  success drains until the process exits — on its **own** budget, since a swap first seen on the
+  final poll would otherwise skip the drain entirely; and the **launch guards ask
+  `ProfileStore.isClaudeInstallerRunning()`** (`async`, off the main actor — the runner blocks
+  on `waitUntilExit`), not `isApplyingStagedUpdate`, because a `swapStillInstalling` hands
+  control back while ShipIt is still copying and our own flag is false from then on. Equally: **do not add a busy-detector.** A profile with a working
   session refuses `SIGTERM` on its own (`vetoed by before-quit interceptor` → "Claude is still
   working"), while an idle-but-open session quits cleanly — Claude knows, and everything visible
   from outside was measured and does not: power assertions don't track agent work, tree CPU

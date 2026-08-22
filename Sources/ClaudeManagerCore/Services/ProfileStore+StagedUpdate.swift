@@ -123,15 +123,20 @@ public extension ProfileStore {
         return ApplyStagedUpdateResult(outcome: outcome, relaunched: relaunched)
     }
 
-    /// Whether Claude's own installer is working on `/Applications/Claude.app` right now.
+    /// Whether Claude's own installer is **known** to be working on
+    /// `/Applications/Claude.app` right now.
     ///
     /// Exposed because an install outlives *our* apply: `swapStillInstalling` hands control
     /// back with ShipIt still copying, and from that moment nothing in the app's own state
     /// says a swap is in flight. Launching any Claude then makes ShipIt abort — so the
     /// launch guards ask this, a fact about the machine, rather than a flag about us.
-    /// Answers `true` when the probe cannot tell (see `ShipItProbe.isRunning`).
+    ///
+    /// Deliberately the *confirmed* reading, not the one `awaitSwap` waits on: this answer
+    /// gates every launch in the app, with no budget to run out, so an unhealthy probe
+    /// answering "maybe" would disable Open, Restart and deep links indefinitely. A wait can
+    /// afford to be paranoid; a permanent guard cannot.
     func isClaudeInstallerRunning() -> Bool {
-        shipItProbe().isRunning()
+        shipItProbe().isConfirmedRunning()
     }
 
     // MARK: - Internals
@@ -162,34 +167,53 @@ public extension ProfileStore {
     /// the swap has already happened by then: an installer that lingers is no reason to keep
     /// the user's profiles closed indefinitely.
     private func awaitSwap(_ watch: SwapWatch) async -> SwapWait {
-        var sawInstaller = false
-        var swapped = false
-        var draining = 0
         let duration = Duration.seconds(max(0, watch.interval))
+        guard await waitForBundle(watch, step: duration) else {
+            // Nothing landed. Only a *confirmed* absence makes this a failure; anything else
+            // is an install we should not walk over.
+            return watch.probe.isRunning() ? .stillInstalling : .didNotComplete
+        }
+        // The bundle is in place. Drain ShipIt's tail on its **own** budget — folding it
+        // into the loop above meant a swap first seen on the final poll skipped the drain
+        // entirely and relaunched into a live installer, which is the original bug again.
+        for _ in 0 ..< max(0, watch.drainPolls) {
+            if !watch.probe.isRunning() { return .swapped }
+            guard await sleep(for: duration) else { break }
+        }
+        return .swapped
+    }
+
+    /// Poll until the on-disk version reaches the staged one, or the attempt is provably
+    /// dead. Returns whether the bundle landed.
+    ///
+    /// The version is re-read **after** an observed disappearance: each pass reads the
+    /// version before running `pgrep`, so an installer that swaps and exits between those
+    /// two reads would otherwise be recorded as a failure for an update that succeeded.
+    private func waitForBundle(_ watch: SwapWatch, step: Duration) async -> Bool {
+        var sawInstaller = false
         let maxPolls = max(0, watch.maxPolls)
         for poll in 0 ... maxPolls {
-            swapped = swapped || isVersionAtLeast(watch.stagedVersion)
+            if isVersionAtLeast(watch.stagedVersion) { return true }
             let installing = watch.probe.isRunning()
-            if installing { sawInstaller = true }
-
-            if swapped {
-                // The bundle is in place; wait out ShipIt's tail, but not forever.
-                if !installing { return .swapped }
-                draining += 1
-                if draining > max(0, watch.drainPolls) { return .swapped }
-            } else if !installing, sawInstaller || poll >= watch.gracePolls {
-                return .didNotComplete
+            if installing {
+                sawInstaller = true
+            } else if sawInstaller || poll >= max(0, watch.gracePolls) {
+                return isVersionAtLeast(watch.stagedVersion) // it may have finished just now
             }
-
             if poll == maxPolls { break }
-            do {
-                try await Task.sleep(for: duration)
-            } catch {
-                break // cancelled — stop waiting
-            }
+            guard await sleep(for: step) else { break } // cancelled — stop waiting
         }
-        if swapped || isVersionAtLeast(watch.stagedVersion) { return .swapped }
-        return watch.probe.isRunning() ? .stillInstalling : .didNotComplete
+        return isVersionAtLeast(watch.stagedVersion)
+    }
+
+    /// Suspend for one poll, reporting whether the wait completed (`false` when cancelled).
+    private func sleep(for duration: Duration) async -> Bool {
+        do {
+            try await Task.sleep(for: duration)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// What one Gate 2 wait is watching, and the three limits that bound it — grouped so the

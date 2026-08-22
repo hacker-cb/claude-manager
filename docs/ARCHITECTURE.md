@@ -188,22 +188,33 @@ days ago). While ShipIt lives, nothing is relaunched. The poll budget is a **bac
 (ten minutes), and if it elapses with the installer still working, profiles are
 deliberately left **closed** and reported as such — reopening them is the harm.
 
-Three details that keep that invariant honest:
+Four details that keep that invariant honest:
 
-- **Only `pgrep` exit 1 means "gone".** 2 is a usage error, 3 fatal, and a failed spawn has
-  no code at all; folding those into "not running" answers *gone* for what is really
-  *unknown*, and the caller relaunches on that answer. Unknown resolves to **running**,
-  because the costs are not symmetric — a wrong "gone" destroys the swap, a wrong "running"
-  only spends the budget and ends in a message.
+- **"Can't tell" is a third answer, and the two callers need opposite readings of it.**
+  `ShipItProbe.liveness()` keeps `running` / `gone` / `unknown` apart: only `pgrep` exit 1
+  means nothing matched, exit 0 means something did (so it counts as running even when the
+  captured pid is unreadable — the exit status is the answer), and 2, 3 or a failed spawn
+  say nothing at all. `isRunning()` folds unknown to **running** — the reading a *wait*
+  needs, since a wrong "gone" destroys the swap while a wrong "running" only spends a
+  budget. `isConfirmedRunning()` folds it to **not running** — the reading a *guard* needs,
+  since a guard has no budget to run out: refusing on a guess would disable every Open,
+  Restart and deep link for as long as the probe stays unhealthy.
+- **The version is re-read after the installer disappears.** Each pass reads the version
+  *before* running `pgrep`, so an installer that swaps and exits between those two reads
+  would otherwise be recorded as a failure for an update that had in fact succeeded.
 - **A new version on disk is not the end of the install.** ShipIt swaps, then cleans up and
   hands off (~280 ms measured from `Moving bundle` to `ShipIt quitting`). Success therefore
   *drains* until the installer is actually gone, bounded by `swapDrainPolls` — the bundle is
   already in place by then, so a lingering installer is no reason to keep profiles closed.
+  That drain runs on its **own** budget, after the wait loop: folded into it, a swap first
+  seen on the final poll skipped the drain entirely and relaunched into a live installer —
+  the original bug, back at the edge of the budget.
 - **The launch guards ask the machine, not our flag.** `swapStillInstalling` hands control
   back with ShipIt still copying, and `isApplyingStagedUpdate` is false from that moment —
   so every launch path additionally consults `ProfileStore.isClaudeInstallerRunning()`.
   Without it the app itself would offer the one action that aborts the install it just
-  protected.
+  protected. The guard is `async` and probes off the main actor: `SystemCommandRunner` blocks
+  on `Process.waitUntilExit()`, so asking inline would stall the UI on every launch.
 
 The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
 one that should say "click Restart to update to arm it", and saying that to someone whose
