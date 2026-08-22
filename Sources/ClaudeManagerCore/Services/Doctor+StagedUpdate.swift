@@ -27,7 +27,10 @@ extension Doctor {
             : "in about \(max(1, Int(remaining / 3600))) h"
         return Diagnostic(
             severity: .warning,
-            title: "Claude \(stagedVersion) has been waiting \(waitedHours) h — Claude may restart it \(when)",
+            // Name the subject: "restart it" reads as restarting the *update*, and the thing
+            // that actually restarts is the default profile.
+            title: "Claude \(stagedVersion) has been waiting \(waitedHours) h — "
+                + "the default profile may restart itself \(when)",
             detail: "Claude restarts the default profile by itself once an update has been pending "
                 + "for about \(Int(deadline.enforcementHours)) h, and it picks a moment you're away. "
                 + "Use “Apply to all profiles” to choose the moment instead."
@@ -37,6 +40,9 @@ extension Doctor {
     /// A warning when a Claude update is staged but not applied — ShipIt can't swap
     /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
     /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
+    /// Module-internal rather than `private` only because `run()` lives in `Doctor.swift`
+    /// and Swift's `private` is file-scoped — the encapsulation is the file split, not the
+    /// keyword. Nothing outside `Doctor` calls it.
     func stagedUpdateDiagnostics() -> [Diagnostic] {
         guard let realClaude else { return [] }
         let staged = StagedUpdateProbe(

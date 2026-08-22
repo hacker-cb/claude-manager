@@ -119,6 +119,7 @@ struct StagedUpdateDeadlineTests {
         #expect(row.severity == .warning)
         #expect(row.title.contains("waiting 70 h"))
         #expect(row.title.contains("about 2 h"))
+        #expect(row.title.contains("the default profile may restart itself"))
         #expect(row.detail?.contains("Apply to all profiles") == true)
     }
 

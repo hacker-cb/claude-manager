@@ -168,26 +168,33 @@ extension AppModel {
         let status = await center.notificationSettings().authorizationStatus
         guard status == .authorized || status == .provisional else { return }
         let remaining = deadline.remaining(asOf: now)
-        let when = remaining <= 0 ? "at any time now" : "in about \(max(1, Int(remaining / 3600))) hours"
+        let hours = max(1, Int(remaining / 3600))
+        let when = remaining <= 0
+            ? "at any time now"
+            : "in about \(hours) hour\(hours == 1 ? "" : "s")"
         let content = UNMutableNotificationContent()
         content.title = "Claude will restart your default profile \(when)"
         content.body = "Claude \(staged.stagedVersion) has been waiting to install, and Claude "
             + "restarts the default profile on its own to finish. Use “Apply to all profiles” "
             + "to do it at a moment you choose."
-        try? await center.add(UNNotificationRequest(
-            identifier: "claude-staged-deadline-\(staged.stagedVersion)", content: content, trigger: nil
-        ))
+        do {
+            try await center.add(UNNotificationRequest(
+                identifier: "claude-staged-deadline-\(staged.stagedVersion)", content: content, trigger: nil
+            ))
+        } catch {
+            // Mark it delivered only once it actually is. The ledger is persisted, so a
+            // swallowed failure here would retire the warning permanently — no retry on the
+            // next refresh, and none after a restart either.
+            return
+        }
         notifiedStagedDeadline.insert(staged.stagedVersion)
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked
-    /// update nags a single time. The record is keyed by version and intentionally never
-    /// cleared: a later staged version is a different key, so it notifies afresh, while a
-    /// transient nil probe can't re-arm a duplicate for the same version.
+    /// update nags a single time. Keyed by version, so a later staged version notifies
+    /// afresh; `recordStagedUpdateSighting` prunes the ledger when nothing is staged, which
+    /// is what lets a re-staged version notify again.
     func notifyStagedUpdateIfNeeded() async {
-        // Key on the version string, so each staged version nags once. Don't clear the
-        // record when the probe is nil: a transient nil (mid-swap, or a slow read) would
-        // otherwise re-arm a duplicate notification for the same version.
         guard let staged = stagedUpdate else { return }
         guard !notifiedStagedUpdate.contains(staged.stagedVersion) else { return }
         let center = UNUserNotificationCenter.current()
@@ -197,9 +204,15 @@ extension AppModel {
         content.title = "Claude \(staged.stagedVersion) is ready to install"
         content.body = "The update is downloaded but blocked by open profiles. "
             + "Use “Apply to all profiles.”"
-        try? await center.add(UNNotificationRequest(
-            identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
-        ))
+        do {
+            try await center.add(UNNotificationRequest(
+                identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
+            ))
+        } catch {
+            // Same reason as the deadline warning: now that the ledger is persisted, marking
+            // a failed post as delivered would silence this version for good.
+            return
+        }
         notifiedStagedUpdate.insert(staged.stagedVersion)
     }
 

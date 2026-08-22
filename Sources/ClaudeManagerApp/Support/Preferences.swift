@@ -22,7 +22,8 @@ enum PreferenceKeys {
     /// Whether limit-approaching reminders are posted. On by default.
     static let usageNotificationsEnabled = "usageNotificationsEnabled"
 
-    /// JSON `[stagedVersion: Date]` — when each staged Claude update was **first seen**.
+    /// `[stagedVersion: seconds-since-1970]` as a plist dictionary — when the staged Claude
+    /// update was **first seen**.
     /// Persisted because it is the only clock we have on Claude's own 72 h enforcement
     /// timer: that counter lives in the updater's memory, and nothing on disk survives a
     /// re-arm (`ShipItState.plist`'s mtime is rewritten on every retry). Kept to the
