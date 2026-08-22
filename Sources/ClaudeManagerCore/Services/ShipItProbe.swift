@@ -173,17 +173,34 @@ public struct ShipItProbe {
     // MARK: - Internals
 
     /// Bytes appended to the log since `offset`, decoded as UTF-8.
+    /// Never reads more than ``maxScanBytes`` from the end. Doctor scans from offset 0 on
+    /// every run, and the log is append-only and never rotated, so an unbounded read grows
+    /// with the age of the install for a scan that only ever needs the last few lines.
     private func appendedText(since offset: UInt64) -> String? {
         guard let handle = FileHandle(forReadingAtPath: stderrPath) else { return nil }
         defer { try? handle.close() }
         do {
-            try handle.seek(toOffset: offset)
+            let size = try handle.seekToEnd()
+            let tailStart = size > Self.maxScanBytes ? size - Self.maxScanBytes : 0
+            let start = max(offset, tailStart)
+            guard start < size else { return nil }
+            try handle.seek(toOffset: start)
             guard let data = try handle.readToEnd(), !data.isEmpty else { return nil }
-            return String(data: data, encoding: .utf8)
+            // Lossy on purpose: a byte-offset cut lands mid-character, and one replacement
+            // glyph beats discarding the whole read the strict initializer would refuse.
+            let text = String(decoding: data, as: UTF8.self)
+            // A cut also lands mid-line, and half a line can match a marker or hide one, so
+            // drop the partial first line — but only when we actually cut.
+            guard start > offset, let newline = text.firstIndex(of: "\n") else { return text }
+            return String(text[text.index(after: newline)...])
         } catch {
             return nil
         }
     }
+
+    /// How much of the tail one scan may read — thousands of lines, orders of magnitude more
+    /// than a single install attempt writes, while keeping the read bounded on any machine.
+    private static let maxScanBytes: UInt64 = 256 * 1024
 
     /// Map one ShipIt log line to a human-readable reason.
     ///

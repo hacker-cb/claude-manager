@@ -227,6 +227,39 @@ struct ShipItProbeTests {
     }
 
     @Test
+    func readsOnlyTheTailOfALongLog() throws {
+        // The log is append-only and never rotated, and Doctor scans it from 0 every run —
+        // so the read is capped. The recent failure must still be found past the cap.
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let log = root.appendingPathComponent("ShipIt_stderr.log")
+        let noise = String(
+            repeating: "2026-01-01 00:00:00.000 ShipIt[1:2] Detected this as an install request\n",
+            count: 8000 // ~560 KB, comfortably past the 256 KiB cap
+        )
+        try (noise + "2026-08-22 09:00:00.000 ShipIt[7:8] Too many attempts to install, aborting update\n")
+            .write(to: log, atomically: true, encoding: .utf8)
+        #expect(makeProbe(stderrPath: log.path).failureReason(since: 0) != nil)
+    }
+
+    @Test
+    func aTerminalLineBeyondTheCapIsOutOfReach() throws {
+        // The flip side, stated so the bound is honest: anything older than the cap is
+        // simply not read — including a success that would otherwise silence a failure.
+        let root = try Fixture.makeTempDir()
+        defer { try? fm.removeItem(at: root) }
+        let log = root.appendingPathComponent("ShipIt_stderr.log")
+        let noise = String(
+            repeating: "2026-01-01 00:00:00.000 ShipIt[1:2] Detected this as an install request\n",
+            count: 8000
+        )
+        try ("2026-08-19 13:56:01.542 ShipIt[5:6] Installation completed successfully\n" + noise)
+            .write(to: log, atomically: true, encoding: .utf8)
+        // Nothing terminal within the tail → nothing to report either way.
+        #expect(makeProbe(stderrPath: log.path).failureReason(since: 0) == nil)
+    }
+
+    @Test
     func failureReasonIsNilWithoutALog() {
         let probe = makeProbe(stderrPath: "/nonexistent/ShipIt_stderr.log")
         #expect(probe.stderrOffset() == 0)
