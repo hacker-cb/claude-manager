@@ -330,4 +330,33 @@ struct ManagedConfigWriterTests {
         #expect(!ManagedConfigWriter.isValidAppliedID("550e8400e29b41d4a716446655440000zz")) // 34 + non-hex
         #expect(ManagedConfigWriter.isValidAppliedID(UUID().uuidString.lowercased()))
     }
+
+    @Test
+    func readsANumericPolicyValue() throws {
+        // `autoUpdaterEnforcementHours` is read, never written: its value shortens the window
+        // after which Claude restarts the default profile by itself, and an estimate built on
+        // the 72 h default would stay silent long past a lowered deadline.
+        let root = try Fixture.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let userData = root.appendingPathComponent("Claude").path
+        seedRawOverlayValues(["autoUpdaterEnforcementHours": 8], userDataPath: userData)
+
+        let writer =
+            ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
+        #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == 8)
+        #expect(writer.integer("somethingElse", userDataPath: userData) == nil)
+    }
+
+    @Test
+    func readsANumericPolicyWrittenAsADouble() throws {
+        // A value another tool wrote arrives decoded as `Double` just as often as `Int`.
+        let root = try Fixture.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let userData = root.appendingPathComponent("Claude").path
+        seedRawOverlayValues(["autoUpdaterEnforcementHours": 12.0], userDataPath: userData)
+
+        let writer =
+            ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
+        #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == 12)
+    }
 }

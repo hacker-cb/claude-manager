@@ -82,7 +82,14 @@ public struct StagedUpdateDeadline: Equatable, Sendable {
         into existing: [String: Date],
         now: Date
     ) -> [String: Date] {
-        guard let version else { return [:] }
+        // **Nothing staged does not clear the record.** `StagedUpdateProbe.probe()` returns
+        // nil for a genuinely-cleared job *and* for a transient read — the state file is
+        // rewritten on every re-arm, and mid-rewrite it parses as nothing. Clearing on that
+        // would restart the wait each time the same update retried, so the estimate would
+        // never mature and the warning would never fire; it would also re-arm the
+        // "downloaded" notification for a version already announced. The record is one row,
+        // so keeping a stale one costs nothing, and the next *different* version replaces it.
+        guard let version else { return existing }
         guard let seen = existing[version] else { return [version: now] }
         return [version: seen]
     }

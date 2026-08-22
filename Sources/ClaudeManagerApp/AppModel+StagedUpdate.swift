@@ -131,7 +131,8 @@ extension AppModel {
     ///
     /// Pruning to the current version is what keeps this a fact rather than a log: it also
     /// clears the two notification ledgers, so a version staged again later — after a
-    /// rollback, say — is a fresh wait that may notify again.
+    /// rollback, say — is a fresh wait that may notify again. A *nil* probe changes nothing;
+    /// `StagedUpdateDeadline.recordSighting` says why.
     func recordStagedUpdateSighting(now: Date = Date()) {
         let updated = StagedUpdateDeadline.recordSighting(
             of: stagedUpdate?.stagedVersion, into: stagedUpdateFirstSeen, now: now
@@ -147,11 +148,26 @@ extension AppModel {
 
     /// The wait and the estimated forced restart for the current staged update, if we have
     /// a first sighting for it.
+    ///
+    /// The enforcement window is read from the **default profile's** managed-config overlay
+    /// rather than assumed: a deployment that lowered `autoUpdaterEnforcementHours` to 8 h
+    /// would otherwise get an estimate silent until hour 68, long past the restart it was
+    /// supposed to predict. Absent (or under MDM, where this tier isn't what Claude reads)
+    /// falls back to Claude's documented default.
     var stagedUpdateDeadline: StagedUpdateDeadline? {
         guard let version = stagedUpdate?.stagedVersion,
               let firstSeen = stagedUpdateFirstSeen[version]
         else { return nil }
-        return StagedUpdateDeadline(firstSeen: firstSeen)
+        let hours = currentConfiguration().flatMap { config in
+            ManagedConfigWriter(managedPreferencesURLs: config.managedPreferencesURLs).integer(
+                ProfileManagedConfig.autoUpdaterEnforcementHoursKey,
+                userDataPath: config.defaultProfileUserDataPath
+            )
+        }
+        return StagedUpdateDeadline(
+            firstSeen: firstSeen,
+            enforcementHours: hours.map(Double.init) ?? StagedUpdateDeadline.defaultEnforcementHours
+        )
     }
 
     /// Warn once, shortly before Claude would restart the default profile by itself.
@@ -160,18 +176,34 @@ extension AppModel {
     /// and could have pre-empted. Deliberately quiet until the window is close: most waits
     /// end within minutes of the user seeing the banner, and a countdown from hour one would
     /// be noise for all of them.
+    ///
+    /// **Scheduled, not polled.** Every other notification here fires from `refresh()`, which
+    /// the monitor drives once a minute *only while `NSApp.isActive`* — a deliberate choice so
+    /// a backgrounded menu-bar app doesn't spawn `ps` forever. But this warning's whole job is
+    /// to arrive during a 72-hour wait the user spends elsewhere, and a login launch or a
+    /// closed window means the app may never be frontmost in that entire window: checked
+    /// inline, it would simply never fire. So the notification is handed to
+    /// `UNTimeIntervalNotificationTrigger` at sighting time and the system delivers it whether
+    /// or not we are running — and `cancelStagedDeadlineWarning` withdraws it if the update
+    /// lands first.
     func notifyStagedDeadlineIfNeeded(now: Date = Date()) async {
-        guard let staged = stagedUpdate, let deadline = stagedUpdateDeadline else { return }
-        guard deadline.isApproaching(asOf: now, lead: StagedUpdateDeadline.warningLead) else { return }
+        guard let staged = stagedUpdate, let deadline = stagedUpdateDeadline else {
+            await cancelStagedDeadlineWarnings()
+            return
+        }
         guard !notifiedStagedDeadline.contains(staged.stagedVersion) else { return }
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
         guard status == .authorized || status == .provisional else { return }
-        let remaining = deadline.remaining(asOf: now)
-        let hours = max(1, Int(remaining / 3600))
-        let when = remaining <= 0
-            ? "at any time now"
-            : "in about \(hours) hour\(hours == 1 ? "" : "s")"
+
+        // Fire `warningLead` before the estimate — or as good as immediately when the window
+        // is already that close (a trigger interval must be > 0).
+        let untilWarning = deadline.remaining(asOf: now) - StagedUpdateDeadline.warningLead
+        let fireAfter = max(1, untilWarning)
+        let hoursAtFire = max(1, Int(StagedUpdateDeadline.warningLead / 3600))
+        let when = untilWarning <= 0
+            ? "soon"
+            : "in about \(hoursAtFire) hour\(hoursAtFire == 1 ? "" : "s")"
         let content = UNMutableNotificationContent()
         content.title = "Claude will restart your default profile \(when)"
         content.body = "Claude \(staged.stagedVersion) has been waiting to install, and Claude "
@@ -179,15 +211,40 @@ extension AppModel {
             + "to do it at a moment you choose."
         do {
             try await center.add(UNNotificationRequest(
-                identifier: "claude-staged-deadline-\(staged.stagedVersion)", content: content, trigger: nil
+                identifier: Self.deadlineNotificationID(for: staged.stagedVersion),
+                content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: fireAfter, repeats: false)
             ))
         } catch {
-            // Mark it delivered only once it actually is. The ledger is persisted, so a
+            // Record it only once it is actually scheduled. The ledger is persisted, so a
             // swallowed failure here would retire the warning permanently — no retry on the
             // next refresh, and none after a restart either.
             return
         }
         notifiedStagedDeadline.insert(staged.stagedVersion)
+    }
+
+    /// Identifier for a version's scheduled deadline warning — one place, so scheduling and
+    /// withdrawal can't drift apart and leave an undismissable pending notification.
+    static func deadlineNotificationID(for version: String) -> String {
+        "claude-staged-deadline-\(version)"
+    }
+
+    /// Withdraw any scheduled deadline warning that is no longer true.
+    ///
+    /// Necessary because the warning is scheduled *ahead of time*: once the update applies —
+    /// or the staged version changes — a pending trigger would still fire hours later,
+    /// announcing a restart for an update that already happened. Withdrawal is by identifier
+    /// over the pending set, so it also clears one left by a previous run of the app.
+    func cancelStagedDeadlineWarnings() async {
+        let center = UNUserNotificationCenter.current()
+        let pending = await center.pendingNotificationRequests()
+        let stale = pending
+            .map(\.identifier)
+            .filter { $0.hasPrefix("claude-staged-deadline-") }
+        guard !stale.isEmpty else { return }
+        center.removePendingNotificationRequests(withIdentifiers: stale)
+        notifiedStagedDeadline = []
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked

@@ -93,10 +93,23 @@ struct StagedUpdateDeadlineTests {
     }
 
     @Test
-    func nothingStagedClearsTheRecord() {
-        // So a version staged again later — a rollback, a re-download — is a fresh wait, and
-        // the caller's notification ledgers are pruned along with it.
-        #expect(StagedUpdateDeadline.recordSighting(of: nil, into: ["9.9.9": epoch], now: epoch).isEmpty)
+    func aNilProbeDoesNotResetTheWait() {
+        // `probe()` returns nil for a cleared job *and* for a transient read — the state file
+        // is rewritten on every re-arm and parses as nothing mid-write. Clearing on that would
+        // restart the wait each time the same update retried, so it would never mature and the
+        // warning would never fire; it would also re-announce a version already notified.
+        let existing = ["9.9.9": epoch]
+        #expect(StagedUpdateDeadline.recordSighting(of: nil, into: existing, now: epoch) == existing)
+    }
+
+    @Test
+    func aDifferentVersionStillReplacesTheRecord() {
+        // Keeping a stale row costs nothing — it is one row, and the next *different* staged
+        // version replaces it, which is what makes that one a fresh wait.
+        let updated = StagedUpdateDeadline.recordSighting(
+            of: "9.9.11", into: ["9.9.9": epoch], now: epoch.addingTimeInterval(3600)
+        )
+        #expect(updated == ["9.9.11": epoch.addingTimeInterval(3600)])
     }
 
     // MARK: - The diagnostic
