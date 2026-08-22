@@ -144,3 +144,25 @@ the zero-instance gate counts only processes at the real Claude binary path (CM'
 its own swap forever), and every relaunch is conditional on the profile being currently
 down (a second `open -n` on a live default duplicates it on one user-data-dir and
 corrupts LevelDB — and ShipIt often relaunches the default itself).
+
+**"Wait" means watching ShipIt, not a timer — rejected: a fixed swap timeout.** The
+obvious shape is "poll the version for N seconds, then give up", and it was wrong in a
+way that only showed up in the field. The swap normally takes 3–5 s, so 30 s looked like
+a generous margin; then a swap took 57 s under disk contention, the timer fired,
+CM relaunched the profiles, and ShipIt — which re-checks its instance count *after*
+copying — aborted with `App Still Running Error`. The timeout did not merely fail to
+help, it destroyed an install that was succeeding, and each destroyed attempt re-downloaded
+~800 MB. Since the duration has no upper bound we can know, CM asks the installer instead:
+while a ShipIt process for our bundle is alive, nothing is relaunched. The poll budget
+survives only as a backstop, and when it expires with ShipIt still working, CM leaves the
+profiles closed rather than trade a working install for an open window.
+
+**Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
+An auto-apply wants to know "is this profile actually working?", and nothing observable
+from outside answers it: power assertions don't track agent work, CPU across the process
+tree measures UI rendering, and the session process itself sits near 1% whether it is
+working or idle, because an agent spends its time waiting on the network. Claude already
+answers it correctly — a profile with a running session vetoes its own quit and offers
+"Quit anyway / Wait for Claude / Cancel", while an idle-but-open session quits cleanly.
+So CM asks by attempting a graceful stop and reads the refusal as the answer, which also
+means the protection holds even for cases CM never modelled.

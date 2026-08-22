@@ -13,7 +13,7 @@ extension AppModel {
     /// across a poll until the launched instance is ps-visible, closing the cold-start lag
     /// window a re-click or deep-link forward could otherwise slip a duplicate through (#38).
     func openReal() async {
-        guard !launchBlockedByStagedApply() else { return }
+        guard await !launchBlockedByStagedApply() else { return }
         guard realClaude != nil else {
             currentError = AppError(message: locateError ?? "Real Claude.app was not found.")
             return

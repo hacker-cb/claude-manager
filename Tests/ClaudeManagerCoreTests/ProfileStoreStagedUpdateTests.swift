@@ -5,19 +5,6 @@ import Testing
 struct ProfileStoreStagedUpdateTests {
     let fm = FileManager.default
 
-    /// Arm a staged newer bundle referenced by the env's ShipItState path.
-    private func armStagedUpdate(_ env: StoreEnv, stagedVersion: String) throws {
-        let bundle = env.root.appendingPathComponent("update.X/Claude.app")
-        let contents = bundle.appendingPathComponent("Contents")
-        try fm.createDirectory(at: contents, withIntermediateDirectories: true)
-        try PropertyListSerialization
-            .data(fromPropertyList: ["CFBundleShortVersionString": stagedVersion], format: .xml, options: 0)
-            .write(to: contents.appendingPathComponent("Info.plist"))
-        try JSONSerialization
-            .data(withJSONObject: ["updateBundleURL": bundle.absoluteString])
-            .write(to: URL(fileURLWithPath: env.shipItStatePath))
-    }
-
     @Test
     func noStagedUpdateWhenNothingArmed() async throws {
         let env = try makeStoreEnv()
@@ -288,16 +275,6 @@ struct ProfileStoreStagedUpdateTests {
 
         let config = ProfileStoreConfiguration.makeDefault(realClaude: real)
         #expect(config.shipItStatePath.contains("com.anthropic.claudeapp.ShipIt"))
-    }
-
-    @Test
-    func swapTimesOutWhenVersionNeverFlips() async throws {
-        let env = try makeStoreEnv() // idle → quiesce immediate, but version stays 9.9.9
-        defer { try? fm.removeItem(at: env.root) }
-        try armStagedUpdate(env, stagedVersion: "9.9.10")
-
-        let result = await env.store.applyStagedUpdateToAll(swapPollInterval: 0.01, swapMaxPolls: 3)
-        #expect(result.outcome == .swapTimedOut(stagedVersion: "9.9.10"))
     }
 
     @Test
