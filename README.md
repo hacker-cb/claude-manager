@@ -154,6 +154,13 @@ install because profiles are open, a banner (and a notification) offer **Apply t
 profiles** — it quits every profile, lets the update install, and reopens the ones
 that were running.
 
+A profile that is **still working** won't be closed: Claude refuses the quit and offers
+"Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
+answer — it stops the apply before anything is swapped and reopens whatever it had
+already closed. Installing a large update can take a while; while it is in progress your
+profiles stay closed on purpose, because reopening one mid-install makes the installer
+abort and start over.
+
 ## Troubleshooting
 
 Open the **Doctor** tab for a health report. Common findings:

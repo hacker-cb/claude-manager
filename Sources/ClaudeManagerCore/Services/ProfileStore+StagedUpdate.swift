@@ -2,9 +2,16 @@ import Foundation
 
 /// Coordinated apply of a staged Claude update across every profile. ShipIt can only swap
 /// `/Applications/Claude.app` when **zero** `com.anthropic.claudefordesktop` instances run
-/// (Gate 1 blocks until termination; Gate 2 aborts if any instance is live during the ~4 s
-/// swap), so any open clone stalls it. This quits the whole set, waits for the swap, and
-/// relaunches what was open.
+/// (Gate 1 blocks until termination; Gate 2 waits out the swap itself), so any open clone
+/// stalls it. This quits the whole set, waits for the swap, and relaunches what was open.
+///
+/// **Gate 2 watches ShipIt's process, never a clock.** The swap normally takes 3–5 s, but
+/// the same bundle has taken 28 s and 57 s under disk contention, so no timeout can tell
+/// "still copying" from "gave up". Getting that wrong is destructive rather than merely
+/// unhelpful: relaunching mid-install makes ShipIt's own instance re-check fail
+/// (`App Still Running Error`), killing an install that was going through. So profiles are
+/// relaunched only once ShipIt is **gone** — with a large budget as a backstop, and a
+/// deliberate refusal to relaunch while it is still installing.
 public extension ProfileStore {
     struct ApplyStagedUpdateResult: Sendable, Equatable {
         public enum Outcome: Sendable, Equatable {
@@ -13,12 +20,16 @@ public extension ProfileStore {
             /// No armed staged update at apply time (re-read of `ShipItState`).
             case noStagedUpdate
             /// Some instance would not exit gracefully — aborted before the swap window so
-            /// nothing is force-killed mid-conversation.
+            /// nothing is force-killed mid-conversation. A profile with a *working* session
+            /// lands here: Claude vetoes its own quit (`vetoed by before-quit interceptor`)
+            /// and shows "Claude is still working", which is exactly the protection we want.
             case instancesStillRunning([String])
-            /// All instances quit, but the version never reached the staged one in the
-            /// timeout — likely no armed ShipIt job (needs a "Restart to update" to arm),
-            /// not a hang.
-            case swapTimedOut(stagedVersion: String)
+            /// ShipIt finished (or never picked the job up) and the version never changed.
+            /// `reason` is what ShipIt logged for *this* attempt, when it logged anything.
+            case swapDidNotComplete(stagedVersion: String, reason: String?)
+            /// The safety budget elapsed while ShipIt was still installing. Profiles are
+            /// deliberately left closed — relaunching here is what destroys the install.
+            case swapStillInstalling(stagedVersion: String)
         }
 
         public let outcome: Outcome
@@ -30,18 +41,30 @@ public extension ProfileStore {
     /// bundle, then relaunch the previously-open set. Graceful stops only (never SIGKILL an
     /// active conversation); if an instance won't exit, aborts **before** the swap window
     /// and reports it rather than risking a Gate 2 failure or data loss. Relaunches the
-    /// profiles that did stop even on abort or swap-timeout, so the user is never left with
-    /// fewer profiles than they had.
+    /// profiles that did stop on abort and on a completed-but-failed swap, so the user is
+    /// never left with fewer profiles than they had — the one exception being an install
+    /// still in flight, where relaunching is the harm.
+    ///
+    /// `swapMaxPolls` is a **backstop, not an expectation**: at the default cadence it is
+    /// ten minutes, two orders of magnitude past a normal swap. `shipItGracePolls` bounds
+    /// only the wait for ShipIt to *appear*, so a machine with no armed installer fails in
+    /// seconds instead of parking on the full budget.
     func applyStagedUpdateToAll(
         stopPollInterval: TimeInterval = 0.5,
         stopMaxPolls: Int = 20,
         swapPollInterval: TimeInterval = 1.0,
-        swapMaxPolls: Int = 30
+        swapMaxPolls: Int = 600,
+        shipItGracePolls: Int = 5
     ) async -> ApplyStagedUpdateResult {
         // Re-read at apply time — the staged bundle may have been GC'd or already applied.
         guard let staged = stagedUpdate() else {
             return ApplyStagedUpdateResult(outcome: .noStagedUpdate, relaunched: [])
         }
+
+        let probe = shipItProbe()
+        // Anchor the log *before* anything can write to it, so a failure we report is this
+        // attempt's and not one from days ago sitting in the same never-rotated file.
+        let logOffset = probe.stderrOffset()
 
         // Snapshot what's open, so we can restore exactly that set afterward.
         let runningClones = list().filter(\.isRunning).map(\.profile)
@@ -68,21 +91,95 @@ public extension ProfileStore {
             )
         }
 
-        // ShipIt now swaps the app; wait for the on-disk version to reach the staged one.
-        let swapped = await pollUntilVersionAtLeast(
-            staged.stagedVersion, interval: swapPollInterval, maxPolls: swapMaxPolls
+        // ShipIt now swaps the app; wait it out by watching the installer, not the clock.
+        let wait = await awaitSwap(
+            stagedVersion: staged.stagedVersion,
+            probe: probe,
+            interval: swapPollInterval,
+            maxPolls: swapMaxPolls,
+            gracePolls: shipItGracePolls
         )
 
-        // Relaunch the snapshot regardless of the swap outcome — never leave nothing open.
+        // Relaunching while ShipIt is mid-install is precisely what aborts it, so that one
+        // outcome leaves the set closed and says so. Every other path restores it.
+        guard wait != .stillInstalling else {
+            return ApplyStagedUpdateResult(
+                outcome: .swapStillInstalling(stagedVersion: staged.stagedVersion), relaunched: []
+            )
+        }
         let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
 
-        let outcome: ApplyStagedUpdateResult.Outcome = swapped
-            ? .applied(from: staged.installedVersion, to: staged.stagedVersion)
-            : .swapTimedOut(stagedVersion: staged.stagedVersion)
+        let outcome: ApplyStagedUpdateResult.Outcome = switch wait {
+        case .swapped:
+            .applied(from: staged.installedVersion, to: staged.stagedVersion)
+        default:
+            .swapDidNotComplete(
+                stagedVersion: staged.stagedVersion,
+                reason: probe.failureReason(since: logOffset)
+            )
+        }
         return ApplyStagedUpdateResult(outcome: outcome, relaunched: relaunched)
     }
 
     // MARK: - Internals
+
+    /// How a Gate 2 wait ended. Distinct from the public outcome because "still installing"
+    /// governs *relaunch behaviour* before it ever becomes a message.
+    private enum SwapWait {
+        /// The on-disk version reached (or passed) the staged one.
+        case swapped
+        /// ShipIt is gone and the version never moved.
+        case didNotComplete
+        /// The budget elapsed with ShipIt still working.
+        case stillInstalling
+    }
+
+    /// Wait for the swap by watching ShipIt: while it lives the install is in flight and
+    /// nothing may be relaunched; once it exits, the on-disk version is the verdict.
+    ///
+    /// The grace window covers the gap where ShipIt has been asked to install but has not
+    /// been observed yet. After ShipIt has been seen once, its disappearance is conclusive —
+    /// either the version moved (checked first, so a swap that lands in the same tick still
+    /// counts) or the attempt failed.
+    private func awaitSwap(
+        stagedVersion: String,
+        probe: ShipItProbe,
+        interval: TimeInterval,
+        maxPolls: Int,
+        gracePolls: Int
+    ) async -> SwapWait {
+        var sawInstaller = false
+        let duration = Duration.seconds(max(0, interval))
+        for poll in 0 ... max(0, maxPolls) {
+            if isVersionAtLeast(stagedVersion) { return .swapped }
+            if probe.isRunning() {
+                sawInstaller = true
+            } else if sawInstaller || poll >= gracePolls {
+                return .didNotComplete
+            }
+            if poll == maxPolls { break }
+            do {
+                try await Task.sleep(for: duration)
+            } catch {
+                break // cancelled — stop waiting
+            }
+        }
+        if isVersionAtLeast(stagedVersion) { return .swapped }
+        return probe.isRunning() ? .stillInstalling : .didNotComplete
+    }
+
+    /// ShipIt for the app this store manages. The bundle id is resolved the same way
+    /// `ProfileStoreConfiguration.makeDefault` resolves the one behind `shipItStatePath`, so
+    /// a legacy-id install is watched under the same id whose state file we read.
+    private func shipItProbe() -> ShipItProbe {
+        ShipItProbe(
+            bundleID: realClaude.bundleIdentifier(fileManager: fileManager)
+                ?? CoreConstants.realClaudeBundleIDs[0],
+            stderrPath: CoreConstants.shipItStderrPath(forStatePath: configuration.shipItStatePath),
+            runner: runner,
+            fileManager: fileManager
+        )
+    }
 
     /// Live instances of the **real Claude binary** — the default and clones both `exec` it,
     /// so this is exactly the set ShipIt gates on. Excludes Claude Manager's own process,
@@ -143,14 +240,8 @@ public extension ProfileStore {
 
     /// True once the on-disk version is at least `version` — a `>=` order (not exact
     /// equality), so a swap that lands `version` or anything newer counts as applied.
-    private func pollUntilVersionAtLeast(
-        _ version: String,
-        interval: TimeInterval,
-        maxPolls: Int
-    ) async -> Bool {
-        await poll(interval: interval, maxPolls: maxPolls) {
-            guard let current = realClaude.version(fileManager: fileManager) else { return false }
-            return current == version || VersionOrder.isNewer(current, than: version)
-        }
+    private func isVersionAtLeast(_ version: String) -> Bool {
+        guard let current = realClaude.version(fileManager: fileManager) else { return false }
+        return current == version || VersionOrder.isNewer(current, than: version)
     }
 }

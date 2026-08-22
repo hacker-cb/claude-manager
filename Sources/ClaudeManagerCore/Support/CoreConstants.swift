@@ -125,6 +125,20 @@ public enum CoreConstants {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
 
+    /// ShipIt's own `stderr` log, which sits beside the state file in the same per-bundle
+    /// cache — the only place the *reason* an install failed is ever written (the state
+    /// file records the job, never its outcome).
+    ///
+    /// Derived from the state path rather than taking a second injectable path: Squirrel
+    /// writes both into one directory it names itself, so a test that redirects the state
+    /// file redirects this too, and the two can never drift onto different bundles.
+    public static func shipItStderrPath(forStatePath statePath: String) -> String {
+        URL(fileURLWithPath: statePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("ShipIt_stderr.log")
+            .path
+    }
+
     // MARK: - Plan-usage statistics
 
     /// On-disk schema version for the usage-history SQLite store. **Bump when the stored

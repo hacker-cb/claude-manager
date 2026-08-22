@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeManagerCore
 import UserNotifications
 
@@ -16,8 +17,12 @@ extension AppModel {
         let result = await perform { store in await store.applyStagedUpdateToAll() }
         if let result, let notice = Self.notice(for: result) {
             // `notice` is nil on success, so every message reaching here is a reason the
-            // update did not go through.
-            currentError = AppError(title: "Update wasn't applied", message: notice)
+            // update did not go through. Bring the app forward with it: the apply closes
+            // every profile and can run for minutes, so by the time it reports the user is
+            // long since in another app — an alert left behind a window nobody is looking at
+            // is a report that never arrives.
+            NSApp.activate()
+            currentError = AppError(title: Self.alertTitle(for: result.outcome), message: notice)
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
         // otherwise the default profile's version display lags a build until the next poll.
@@ -97,21 +102,38 @@ extension AppModel {
         "\(managed.id)@\(managed.availableClaudeVersion ?? "")"
     }
 
+    /// Heading for the alert. A swap still in flight is not a failure and must not be
+    /// titled like one — the user's profiles are closed on purpose and the install is
+    /// going through.
+    private static func alertTitle(for outcome: ProfileStore.ApplyStagedUpdateResult.Outcome) -> String {
+        if case .swapStillInstalling = outcome { return "Update is still installing" }
+        return "Update wasn't applied"
+    }
+
     /// A user-facing notice for a non-success apply, or `nil` when it applied cleanly.
+    ///
+    /// Each outcome gets the advice that actually fits it. "Click Restart to update to arm
+    /// it" belongs to `noStagedUpdate` **only**: telling it to someone whose armed install
+    /// merely failed sends them to re-download the whole bundle for nothing.
     private static func notice(for result: ProfileStore.ApplyStagedUpdateResult) -> String? {
         switch result.outcome {
         case .applied:
             return nil
         case .noStagedUpdate:
-            return "There is no staged Claude update to apply."
+            return "There is no armed Claude update to apply. If Claude offers a "
+                + "“Restart to update” prompt, click it once to arm the install, then apply again."
         case let .instancesStillRunning(names):
             let count = names.count
             return "Couldn't apply the update: \(count) profile\(count == 1 ? "" : "s") wouldn't quit "
-                + "gracefully. Quit \(count == 1 ? "it" : "them") manually, then try again."
-        case let .swapTimedOut(version):
-            return "Claude \(version) is downloaded but not armed to install. Click a "
-                + "“Restart to update” prompt once to arm it, then apply again. "
+                + "(\(names.joined(separator: ", "))). Claude holds a profile open while it is still "
+                + "working in a session — finish or stop that work, then try again."
+        case let .swapDidNotComplete(version, reason):
+            let detail = reason.map { " — \($0)." } ?? "."
+            return "Claude \(version) wasn't installed: ShipIt stopped without swapping the app\(detail) "
                 + "Your profiles were reopened."
+        case let .swapStillInstalling(version):
+            return "Claude \(version) is still being installed. Your profiles were left closed so the "
+                + "install isn't interrupted — reopen them once it has finished."
         }
     }
 }

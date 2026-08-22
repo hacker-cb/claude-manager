@@ -291,13 +291,93 @@ struct ProfileStoreStagedUpdateTests {
     }
 
     @Test
-    func swapTimesOutWhenVersionNeverFlips() async throws {
-        let env = try makeStoreEnv() // idle → quiesce immediate, but version stays 9.9.9
+    func reportsSwapDidNotCompleteWhenNoInstallerEverAppears() async throws {
+        let env = try makeStoreEnv() // idle → quiesce immediate, ShipIt absent, version stays 9.9.9
         defer { try? fm.removeItem(at: env.root) }
         try armStagedUpdate(env, stagedVersion: "9.9.10")
 
-        let result = await env.store.applyStagedUpdateToAll(swapPollInterval: 0.01, swapMaxPolls: 3)
-        #expect(result.outcome == .swapTimedOut(stagedVersion: "9.9.10"))
+        // The grace window bounds this: with no installer to wait for, the apply must fail
+        // in a few polls rather than parking on the full ten-minute backstop.
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 600, shipItGracePolls: 2
+        )
+        #expect(result.outcome == .swapDidNotComplete(stagedVersion: "9.9.10", reason: nil))
+    }
+
+    @Test
+    func surfacesWhatShipItLoggedForThisAttempt() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+        let log = URL(fileURLWithPath: CoreConstants.shipItStderrPath(forStatePath: env.shipItStatePath))
+        try "2026-08-19 13:48:55.843 ShipIt[3:4] Aborting update attempt because there are 2 "
+            .appending("running instances of the target app\n")
+            .write(to: log, atomically: true, encoding: .utf8)
+
+        // Written *before* the apply, so it sits behind the recorded offset: this attempt
+        // logged nothing, and a stale line must not be dressed up as its reason.
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 10, shipItGracePolls: 1
+        )
+        #expect(result.outcome == .swapDidNotComplete(stagedVersion: "9.9.10", reason: nil))
+    }
+
+    @Test
+    func waitsOutAnInstallerThatRunsFarPastAnyFixedTimeout() async throws {
+        // The regression this whole change exists for: the swap took 57 s on a bundle that
+        // normally takes 4, the old 30-poll timer gave up, relaunched, and ShipIt aborted
+        // the install it was in the middle of. While ShipIt lives, we wait.
+        let probes = CallCounter()
+        let env = try makeStoreEnv(stub: { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
+                // Alive for the first 20 probes — well past the old 30-second budget's
+                // equivalent here — then gone.
+                return probes.next() <= 20
+                    ? CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+                    : CommandOutput(exitCode: 1, standardOutput: "", standardError: "")
+            }
+            return idleStub(executable, args)
+        })
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        // The version only flips once the installer has been alive a while — a swap that
+        // lands late still counts as applied.
+        let infoURL = env.real.infoPlistURL
+        let flip = Task.detached {
+            try? await Task.sleep(for: .milliseconds(120))
+            var info = RealClaude.plist(at: infoURL) ?? [:]
+            info["CFBundleShortVersionString"] = "9.9.10"
+            try? PropertyListSerialization
+                .data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: infoURL)
+        }
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 600, shipItGracePolls: 2
+        )
+        _ = await flip.value
+        #expect(result.outcome == .applied(from: "9.9.9", to: "9.9.10"))
+    }
+
+    @Test
+    func leavesProfilesClosedWhileTheInstallerIsStillWorking() async throws {
+        // Relaunching mid-install is exactly what makes ShipIt abort, so when the backstop
+        // elapses with the installer still alive, the set stays closed and says so.
+        let env = try makeStoreEnv(stub: { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
+                return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        })
+        defer { try? fm.removeItem(at: env.root) }
+        try armStagedUpdate(env, stagedVersion: "9.9.10")
+
+        let result = await env.store.applyStagedUpdateToAll(
+            swapPollInterval: 0.01, swapMaxPolls: 3, shipItGracePolls: 1
+        )
+        #expect(result.outcome == .swapStillInstalling(stagedVersion: "9.9.10"))
+        #expect(result.relaunched.isEmpty)
+        #expect(env.runner.invocations(of: CoreConstants.openPath).isEmpty)
     }
 
     @Test
