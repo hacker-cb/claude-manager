@@ -54,7 +54,8 @@ public extension ProfileStore {
         stopMaxPolls: Int = 20,
         swapPollInterval: TimeInterval = 1.0,
         swapMaxPolls: Int = 600,
-        shipItGracePolls: Int = 5
+        shipItGracePolls: Int = 5,
+        swapDrainPolls: Int = 30
     ) async -> ApplyStagedUpdateResult {
         // Re-read at apply time — the staged bundle may have been GC'd or already applied.
         guard let staged = stagedUpdate() else {
@@ -92,13 +93,14 @@ public extension ProfileStore {
         }
 
         // ShipIt now swaps the app; wait it out by watching the installer, not the clock.
-        let wait = await awaitSwap(
+        let wait = await awaitSwap(SwapWatch(
             stagedVersion: staged.stagedVersion,
             probe: probe,
             interval: swapPollInterval,
             maxPolls: swapMaxPolls,
-            gracePolls: shipItGracePolls
-        )
+            gracePolls: shipItGracePolls,
+            drainPolls: swapDrainPolls
+        ))
 
         // Relaunching while ShipIt is mid-install is precisely what aborts it, so that one
         // outcome leaves the set closed and says so. Every other path restores it.
@@ -121,6 +123,17 @@ public extension ProfileStore {
         return ApplyStagedUpdateResult(outcome: outcome, relaunched: relaunched)
     }
 
+    /// Whether Claude's own installer is working on `/Applications/Claude.app` right now.
+    ///
+    /// Exposed because an install outlives *our* apply: `swapStillInstalling` hands control
+    /// back with ShipIt still copying, and from that moment nothing in the app's own state
+    /// says a swap is in flight. Launching any Claude then makes ShipIt abort — so the
+    /// launch guards ask this, a fact about the machine, rather than a flag about us.
+    /// Answers `true` when the probe cannot tell (see `ShipItProbe.isRunning`).
+    func isClaudeInstallerRunning() -> Bool {
+        shipItProbe().isRunning()
+    }
+
     // MARK: - Internals
 
     /// How a Gate 2 wait ended. Distinct from the public outcome because "still installing"
@@ -139,24 +152,35 @@ public extension ProfileStore {
     ///
     /// The grace window covers the gap where ShipIt has been asked to install but has not
     /// been observed yet. After ShipIt has been seen once, its disappearance is conclusive —
-    /// either the version moved (checked first, so a swap that lands in the same tick still
-    /// counts) or the attempt failed.
-    private func awaitSwap(
-        stagedVersion: String,
-        probe: ShipItProbe,
-        interval: TimeInterval,
-        maxPolls: Int,
-        gracePolls: Int
-    ) async -> SwapWait {
+    /// either the version moved or the attempt failed.
+    ///
+    /// **A new version on disk is not the end of ShipIt's work.** It swaps the bundle, then
+    /// cleans up and may hand off to a fresh ShipIt (measured: ~280 ms between `Moving
+    /// bundle` and `ShipIt quitting`). Returning at the version change alone would relaunch
+    /// inside that tail, breaking the very invariant this gate exists to hold — so success
+    /// drains until the installer is actually gone. `drainPolls` bounds that drain, because
+    /// the swap has already happened by then: an installer that lingers is no reason to keep
+    /// the user's profiles closed indefinitely.
+    private func awaitSwap(_ watch: SwapWatch) async -> SwapWait {
         var sawInstaller = false
-        let duration = Duration.seconds(max(0, interval))
-        for poll in 0 ... max(0, maxPolls) {
-            if isVersionAtLeast(stagedVersion) { return .swapped }
-            if probe.isRunning() {
-                sawInstaller = true
-            } else if sawInstaller || poll >= gracePolls {
+        var swapped = false
+        var draining = 0
+        let duration = Duration.seconds(max(0, watch.interval))
+        let maxPolls = max(0, watch.maxPolls)
+        for poll in 0 ... maxPolls {
+            swapped = swapped || isVersionAtLeast(watch.stagedVersion)
+            let installing = watch.probe.isRunning()
+            if installing { sawInstaller = true }
+
+            if swapped {
+                // The bundle is in place; wait out ShipIt's tail, but not forever.
+                if !installing { return .swapped }
+                draining += 1
+                if draining > max(0, watch.drainPolls) { return .swapped }
+            } else if !installing, sawInstaller || poll >= watch.gracePolls {
                 return .didNotComplete
             }
+
             if poll == maxPolls { break }
             do {
                 try await Task.sleep(for: duration)
@@ -164,8 +188,23 @@ public extension ProfileStore {
                 break // cancelled — stop waiting
             }
         }
-        if isVersionAtLeast(stagedVersion) { return .swapped }
-        return probe.isRunning() ? .stillInstalling : .didNotComplete
+        if swapped || isVersionAtLeast(watch.stagedVersion) { return .swapped }
+        return watch.probe.isRunning() ? .stillInstalling : .didNotComplete
+    }
+
+    /// What one Gate 2 wait is watching, and the three limits that bound it — grouped so the
+    /// cadence, the backstop and the drain travel together instead of as a parameter list
+    /// whose order is easy to transpose at the call site.
+    private struct SwapWatch {
+        let stagedVersion: String
+        let probe: ShipItProbe
+        let interval: TimeInterval
+        /// Backstop for the whole wait, not an expectation of how long a swap takes.
+        let maxPolls: Int
+        /// How long to wait for ShipIt to *appear* before calling the attempt dead.
+        let gracePolls: Int
+        /// How long to wait for ShipIt to *leave* after the version already changed.
+        let drainPolls: Int
     }
 
     /// ShipIt for the app this store manages. The bundle id is resolved the same way

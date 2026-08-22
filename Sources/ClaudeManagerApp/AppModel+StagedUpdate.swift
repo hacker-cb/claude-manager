@@ -17,11 +17,19 @@ extension AppModel {
         let result = await perform { store in await store.applyStagedUpdateToAll() }
         if let result, let notice = Self.notice(for: result) {
             // `notice` is nil on success, so every message reaching here is a reason the
-            // update did not go through. Bring the app forward with it: the apply closes
-            // every profile and can run for minutes, so by the time it reports the user is
-            // long since in another app — an alert left behind a window nobody is looking at
-            // is a report that never arrives.
-            NSApp.activate()
+            // update did not go through — and it has to actually reach the user. The apply
+            // closes every profile and can run for minutes, so by the time it reports, the
+            // user is in another app. Activating alone is not enough: `RootView` is what
+            // presents `currentError`, and Apply can be started from the menu-bar extra with
+            // no main window open at all — the alert would then have no host and stay
+            // invisible until the window happened to be reopened. So reopen it first (the
+            // delegate's closure raises the window *and* activates), falling back to a bare
+            // activate only if the binder hasn't run yet.
+            if let reopenWindow = AppDelegate.shared?.reopenMainWindow {
+                reopenWindow()
+            } else {
+                NSApp.activate()
+            }
             currentError = AppError(title: Self.alertTitle(for: result.outcome), message: notice)
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
@@ -33,17 +41,31 @@ extension AppModel {
         setApplyingStagedUpdate(false)
     }
 
-    /// True — and surfaces a notice — when a launch must be refused because a staged-update
-    /// apply is mid-swap. A new Claude process (default *or* clone; both run the on-disk
-    /// binary) launched now would trip ShipIt's zero-instance swap gate or race the
-    /// relaunch snapshot. Every launch entry point (`open`, `restart`, `openReal`, deep-link
+    /// True — and surfaces a notice — when a launch must be refused because a Claude update
+    /// is mid-swap. A new Claude process (default *or* clone; both run the on-disk binary)
+    /// launched now would trip ShipIt's zero-instance swap gate or race the relaunch
+    /// snapshot. Every launch entry point (`open`, `restart`, `openReal`, deep-link
     /// forwarding) checks this, since the views' launch buttons don't know about the swap.
+    ///
+    /// Two conditions, because our own flag is not the whole truth: an apply that ends in
+    /// `swapStillInstalling` returns with ShipIt **still copying**, and from then on nothing
+    /// about our state says so. That is exactly the window where a launch destroys the
+    /// install — so the second condition asks the machine whether the installer is alive,
+    /// rather than trusting a flag about what *we* are doing.
     func launchBlockedByStagedApply() -> Bool {
-        guard isApplyingStagedUpdate else { return false }
+        if isApplyingStagedUpdate {
+            currentError = AppError(
+                title: "Update in progress",
+                message: "A Claude update is being applied to all profiles. "
+                    + "Wait for it to finish, then try again."
+            )
+            return true
+        }
+        guard makeStore()?.isClaudeInstallerRunning() == true else { return false }
         currentError = AppError(
-            title: "Update in progress",
-            message: "A Claude update is being applied to all profiles. "
-                + "Wait for it to finish, then try again."
+            title: "Claude is being updated",
+            message: "The installer is still swapping Claude.app. Starting a profile now would "
+                + "make it abort and start over — wait for it to finish, then try again."
         )
         return true
     }

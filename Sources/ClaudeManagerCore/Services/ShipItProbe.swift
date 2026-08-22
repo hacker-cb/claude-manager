@@ -37,20 +37,31 @@ public struct ShipItProbe {
         self.fileManager = fileManager
     }
 
-    /// True while a ShipIt process for this bundle is alive.
+    /// True while a ShipIt process for this bundle is alive — **and true again whenever the
+    /// probe cannot tell**.
     ///
     /// Matched on the executable name plus the job label ShipIt carries as its first
     /// argument (`…/Resources/ShipIt com.anthropic.claudefordesktop.ShipIt …`), so another
     /// app's updater — VS Code and GitKraken ship the same Squirrel binary — never counts
-    /// as ours. A non-zero `pgrep` exit means "no match", which is a definitive *no*, not an
-    /// error: treating a failed probe as "running" would park the caller on its full safety
-    /// budget every time.
+    /// as ours.
+    ///
+    /// Only `pgrep`'s exit **1** means "nothing matched"; 2 is a usage error and 3 a fatal
+    /// one, and a failure to spawn it at all has no exit code. Folding those into `false`
+    /// would answer "the installer is gone" for what is really "I don't know", and the
+    /// caller relaunches profiles on that answer — mid-install, which is the one thing that
+    /// destroys the swap. The costs are not symmetric: an unknown read as *running* only
+    /// spends the caller's budget and ends in a `swapStillInstalling` the user is told
+    /// about, so uncertainty resolves that way.
     public func isRunning() -> Bool {
         let pattern = "/ShipIt " + PathUtils.regexEscaped(bundleID) + "\\.ShipIt"
-        guard let output = try? runner.run(CoreConstants.pgrepPath, ["-f", pattern]),
-              output.succeeded
-        else { return false }
-        return !output.trimmedOutput.isEmpty
+        guard let output = try? runner.run(CoreConstants.pgrepPath, ["-f", pattern]) else {
+            return true // couldn't even run the probe — don't call that "gone"
+        }
+        switch output.exitCode {
+        case 0: return !output.trimmedOutput.isEmpty
+        case 1: return false // pgrep reserves 1 for "no processes matched"
+        default: return true // usage/fatal error — unknown, so assume it is still working
+        }
     }
 
     /// Current size of ShipIt's `stderr` log, to be passed back to ``failureReason(since:)``.

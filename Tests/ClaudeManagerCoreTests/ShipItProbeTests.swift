@@ -35,6 +35,31 @@ struct ShipItProbeTests {
     }
 
     @Test
+    func anUnknownProbeResultCountsAsRunning() {
+        // Only exit 1 means "nothing matched". A usage error (2), a fatal error (3) or a
+        // failure to spawn at all say nothing about the installer — and answering "gone" to
+        // those is what relaunches profiles mid-install.
+        for exitCode in [Int32(2), 3, 127] {
+            let probe = makeProbe(stderrPath: "/nonexistent") { executable, _ in
+                executable == CoreConstants.pgrepPath
+                    ? CommandOutput(exitCode: exitCode, standardOutput: "", standardError: "pgrep: bad")
+                    : idleStub(executable, [])
+            }
+            #expect(probe.isRunning(), "exit \(exitCode) is unknown, not 'gone'")
+        }
+    }
+
+    @Test
+    func aProbeThatCannotRunCountsAsRunning() {
+        let probe = ShipItProbe(
+            bundleID: "com.anthropic.claudefordesktop",
+            stderrPath: "/nonexistent",
+            runner: UnrunnableToolRunner()
+        )
+        #expect(probe.isRunning())
+    }
+
+    @Test
     func matchesOnBundleScopedJobLabel() {
         // Another app's updater runs the same Squirrel binary, so the pattern must carry
         // our bundle id — otherwise VS Code installing would read as Claude installing.

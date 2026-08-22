@@ -188,6 +188,23 @@ days ago). While ShipIt lives, nothing is relaunched. The poll budget is a **bac
 (ten minutes), and if it elapses with the installer still working, profiles are
 deliberately left **closed** and reported as such — reopening them is the harm.
 
+Three details that keep that invariant honest:
+
+- **Only `pgrep` exit 1 means "gone".** 2 is a usage error, 3 fatal, and a failed spawn has
+  no code at all; folding those into "not running" answers *gone* for what is really
+  *unknown*, and the caller relaunches on that answer. Unknown resolves to **running**,
+  because the costs are not symmetric — a wrong "gone" destroys the swap, a wrong "running"
+  only spends the budget and ends in a message.
+- **A new version on disk is not the end of the install.** ShipIt swaps, then cleans up and
+  hands off (~280 ms measured from `Moving bundle` to `ShipIt quitting`). Success therefore
+  *drains* until the installer is actually gone, bounded by `swapDrainPolls` — the bundle is
+  already in place by then, so a lingering installer is no reason to keep profiles closed.
+- **The launch guards ask the machine, not our flag.** `swapStillInstalling` hands control
+  back with ShipIt still copying, and `isApplyingStagedUpdate` is false from that moment —
+  so every launch path additionally consults `ProfileStore.isClaudeInstallerRunning()`.
+  Without it the app itself would offer the one action that aborts the install it just
+  protected.
+
 The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.
