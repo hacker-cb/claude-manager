@@ -72,7 +72,8 @@ public enum AutoApplyDecision: Equatable, Sendable {
     case skip(Reason)
 
     public enum Reason: Equatable, Sendable {
-        /// The user hasn't turned it on. The default, deliberately.
+        /// Unattended applying is not enabled. Core sees only the `enabled` input and does
+        /// not know the app layer's default, so this says nothing about *why*.
         case disabled
         /// Outside the nominated window.
         case outsideWindow
@@ -144,6 +145,28 @@ public enum AutoApplyDecision: Equatable, Sendable {
         }
         return .apply
     }
+
+    /// Whether to offer turning unattended applying on, given how long the update has been
+    /// stuck behind open profiles.
+    ///
+    /// The offer exists because the feature is **off by default**, and that default has a real
+    /// cost: a Mac running clones never installs a Claude update by itself, while Claude's own
+    /// enforcement restarts the default profile every ~72 h to no effect. Flipping the default
+    /// instead was tried and rejected (see `DECISIONS.md`) — the short version is that consent
+    /// and the action it licenses have to be one event, not two independent ones.
+    ///
+    /// Timing is the whole design. Offering the moment an update is downloaded would be noise:
+    /// most waits end within minutes of the user seeing the banner and clicking Apply. Offering
+    /// once it has been stuck past ``stuckThreshold`` — long enough to have sat through a night
+    /// — means the suggestion arrives with the evidence for it already on screen.
+    public static func shouldOfferEnabling(alreadyEnabled: Bool, waited: TimeInterval) -> Bool {
+        !alreadyEnabled && waited >= stuckThreshold
+    }
+
+    /// How long an update must have been waiting before enabling is suggested. Twelve hours is
+    /// past any plausible "I'll click it in a moment", and guarantees a night has gone by —
+    /// which is precisely what the offer is about.
+    public static let stuckThreshold: TimeInterval = 12 * 3600
 
     /// How long to wait after a failed unattended attempt before trying that same staged
     /// version again.

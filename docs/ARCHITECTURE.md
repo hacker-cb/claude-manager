@@ -267,10 +267,16 @@ armed install merely failed sends them to re-download the bundle for nothing.
 
 ### Applying it unattended, inside a window you chose
 
-The deadline warning tells you the forced restart is coming; this stops it arriving. **Off
-unless switched on** (Settings → Claude updates): an apply closes every profile and reopens
-it, and doing that unasked would be the same surprise the rest of this section exists to
-prevent, only with our name on it.
+The deadline warning tells you the forced restart is coming; this stops it arriving. **Off by
+default, and offered rather than assumed**: once an update has been stuck past
+`AutoApplyDecision.stuckThreshold`, the staged-update banner grows a line suggesting it. That
+timing is the design — most updates are applied within minutes of the banner appearing, so
+offering at download time would prompt everyone about a problem almost nobody has yet, while
+offering after a night puts the suggestion next to its own evidence.
+
+Turning it on from that offer makes consent and the action it licenses **one event**. The
+alternative — on by default with a one-time announcement — was written and rejected; see
+`DECISIONS.md` for why four separate props were needed to make one flag safe.
 
 `AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
 while nobody is watching — "it silently did nothing" is the hardest failure to diagnose

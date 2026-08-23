@@ -171,4 +171,32 @@ struct AutoApplyWindowTests {
         let future = time(4, 30).addingTimeInterval(48 * 3600)
         #expect(decide(lastFailedAttempt: future) == .apply)
     }
+
+    // MARK: - Offering to enable it
+
+    @Test
+    func staysQuietUntilTheUpdateHasActuallyBeenStuck() {
+        // Most updates are applied within minutes of the banner appearing. Suggesting at
+        // download time would put a prompt in front of everyone, for a problem almost nobody
+        // has yet.
+        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 0))
+        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 3 * 3600))
+    }
+
+    @Test
+    func offersOnceANightHasGoneBy() {
+        // Past the threshold the evidence is on screen: the update is still sitting there,
+        // and the suggestion is next to it.
+        #expect(AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, waited: AutoApplyDecision.stuckThreshold
+        ))
+        #expect(AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 40 * 3600))
+    }
+
+    @Test
+    func neverOffersWhatIsAlreadyOn() {
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: true, waited: 40 * 3600
+        ))
+    }
 }

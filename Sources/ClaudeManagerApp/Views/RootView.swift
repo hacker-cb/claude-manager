@@ -155,15 +155,32 @@ struct RootView: View {
     }
 
     private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
-            Text("Claude \(staged.stagedVersion) is downloaded but not applied — open profiles block it.")
-                .font(.callout)
-            Spacer()
-            Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all profiles") {
-                confirmingStagedApply = true
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
+                Text("Claude \(staged.stagedVersion) is downloaded but not applied — open profiles block it.")
+                    .font(.callout)
+                Spacer()
+                Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all profiles") {
+                    confirmingStagedApply = true
+                }
+                .disabled(model.isApplyingStagedUpdate)
             }
-            .disabled(model.isApplyingStagedUpdate)
+            // Only once the update has demonstrably been stuck — see
+            // `AutoApplyDecision.shouldOfferEnabling`. Offering at download time would be
+            // noise for the majority of updates, which are applied within minutes of this
+            // banner appearing; offering now puts the suggestion next to its own evidence.
+            if model.shouldOfferAutoApply {
+                HStack(spacing: 8) {
+                    Image(systemName: "moon.zzz").foregroundStyle(.secondary)
+                    Text("It's been waiting \(model.stagedWaitDescription). Claude Manager can "
+                        + "apply updates overnight, while your Mac is idle.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Turn on") { model.enableAutoApplyFromOffer() }
+                }
+            }
         }
         .padding(8)
         .background(.blue.opacity(0.12))

@@ -88,6 +88,39 @@ extension AppModel {
         }
     }
 
+    /// Whether to suggest turning unattended applying on, right now.
+    ///
+    /// Deliberately derived, not stored: there is no "dismissed" state to keep. The offer is
+    /// one extra line inside a banner the user is already looking at, and it disappears by
+    /// itself the moment the update is applied — so there is nothing to dismiss, and nothing
+    /// that can get stuck showing.
+    var shouldOfferAutoApply: Bool {
+        guard let deadline = stagedUpdateDeadline else { return false }
+        return AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: autoApplyEnabled,
+            waited: deadline.waited(asOf: Date())
+        )
+    }
+
+    /// How long the staged update has been waiting, for the offer's wording.
+    var stagedWaitDescription: String {
+        guard let deadline = stagedUpdateDeadline else { return "a while" }
+        let hours = Int(deadline.waited(asOf: Date()) / 3600)
+        guard hours >= 24 else { return "\(hours) hours" }
+        let days = hours / 24
+        return days == 1 ? "over a day" : "\(days) days"
+    }
+
+    /// Accept the offer: switch unattended applying on, with the suggested window.
+    ///
+    /// This is the whole point of offering rather than defaulting — the user turning it on is
+    /// the same event as the app being allowed to close their profiles, instead of two
+    /// independent ones where the second can happen without the first having landed.
+    func enableAutoApplyFromOffer() {
+        Log.autoApply.info("enabled from the stuck-update offer")
+        autoApplyEnabled = true
+    }
+
     // MARK: - The pass
 
     /// Attempt the apply if every precondition holds; otherwise return the condition that

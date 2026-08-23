@@ -157,6 +157,27 @@ while a ShipIt process for our bundle is alive, nothing is relaunched. The poll 
 survives only as a backstop, and when it expires with ShipIt still working, CM leaves the
 profiles closed rather than trade a working install for an open window.
 
+**Offering when it's stuck — rejected: on by default with a one-time announcement.** Leaving
+unattended applying off has a real cost: a Mac running clones never installs a Claude update
+by itself, and Claude's own enforcement restarts the default profile every ~72 h to no effect.
+The obvious answer is to flip the default and announce the change once. It was written, and
+then rejected in review.
+
+The flaw is structural rather than a bug: the action (closing every profile overnight) and the
+safeguard (the notice) are **independent**. When the notice fails to arrive, nothing falls back
+to the safe state — the feature simply runs. And it fails in ordinary ways: notifications
+denied, which for a menu-bar app is common and permanent; authorization still `.notDetermined`
+on the first launch, where the request is issued moments earlier and never awaited; and a
+released version having already shipped the toggle *off*, which makes "no key written"
+indistinguishable from "saw it and chose not to". Making the default safe needed a fallback
+banner, a gate on delivery, a re-check inside the session and a migration — four props holding
+up one flag, each of them new code on a path that runs at night with nobody watching.
+
+So the default stays off, and the app **offers** instead — in the banner the user is already
+looking at, once the update has been stuck past `AutoApplyDecision.stuckThreshold`. Consent and
+the action it licenses become one event. There is no announcement to lose, no dismissal state
+to persist, and the offer disappears by itself when the update applies.
+
 **Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
 An auto-apply wants to know "is this profile actually working?", and nothing observable
 from outside answers it: power assertions don't track agent work, CPU across the process
