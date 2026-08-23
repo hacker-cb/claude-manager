@@ -296,6 +296,13 @@ What *is* branch-specific is the re-probe: while backgrounded the tick skips its
 so the staged update is re-read on its own (one file read) rather than through the full
 process-and-launcher scan a backgrounded menu-bar app has no business doing every minute.
 
+**One quiet failure still speaks.** `swapStillInstalling` leaves every profile closed on
+purpose — reopening would abort the install — and nothing reopens them afterwards. Unattended
+that means waking to an empty desk with no explanation, while the setting promised the
+profiles would come back, so this one outcome posts a notification: heavy enough not to
+vanish, light enough not to seize the screen at 04:30. The settings text says the same thing
+up front rather than promising a return it can't always make.
+
 **It fails quietly.** The apply is invoked with `surfacingFailures: false`. The interactive
 path deliberately fights for attention on failure — it reopens the window and activates the
 app, because a report nobody sees is no report — and that is exactly wrong at 04:30: a

@@ -76,6 +76,15 @@ extension AppModel {
                 currentError = AppError(title: Self.alertTitle(for: result.outcome), message: notice)
             } else {
                 Log.autoApply.info("unattended apply did not complete: \(notice, privacy: .public)")
+                // One outcome can't be left to the log alone. `swapStillInstalling` leaves
+                // every profile **closed** on purpose — reopening would abort the install —
+                // and nothing reopens them afterwards. Unattended, that means waking up to an
+                // empty desk with no explanation, while the setting promised the profiles
+                // would come back. A notification is the right weight for it: it waits to be
+                // read instead of seizing the screen at 04:30, but it does not vanish.
+                if case .swapStillInstalling = result.outcome {
+                    await notifyProfilesLeftClosed(notice: notice)
+                }
             }
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
@@ -242,6 +251,21 @@ extension AppModel {
             return
         }
         notifiedStagedDeadline.insert(staged.stagedVersion)
+    }
+
+    /// Tell the user their profiles were left closed, and why — the one unattended outcome
+    /// that changes what they see when they sit down, rather than merely failing to change
+    /// anything. Delivered immediately (no trigger): the fact is already true.
+    private func notifyProfilesLeftClosed(notice: String) async {
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Your profiles are closed — Claude is still installing"
+        content.body = notice
+        try? await center.add(UNNotificationRequest(
+            identifier: "claude-profiles-left-closed", content: content, trigger: nil
+        ))
     }
 
     /// Shared by the scheduler and the withdrawal below. One definition, because the two

@@ -106,7 +106,9 @@ struct SettingsView: View {
             Text("Inside the window below, and only when the Mac has been idle for 10 minutes, "
                 + "Claude Manager quits every profile, lets the update install, and reopens the "
                 + "ones that were running. A profile that is still working refuses to quit and "
-                + "the whole attempt is called off.")
+                + "the whole attempt is called off. If the install runs unusually long your "
+                + "profiles stay closed until it finishes — reopening would abort it — and you "
+                + "get a notification saying so.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if model.autoApplyEnabled {
