@@ -3,43 +3,6 @@ import ClaudeManagerCore
 import SwiftUI
 import UserNotifications
 
-/// A user-facing message, presented by `RootView` through `.alert(_:isPresented:presenting:)`.
-///
-/// Carries its own `title` because this is the app's only alert channel and not everything
-/// routed through it is a failure — a removal that kept shared profile data, or a batch
-/// rebuild reporting what it skipped, are outcomes the user has to act on, and "Something
-/// went wrong" over them is simply untrue. The heading is a plain argument to that modifier
-/// rather than something the `presenting:` closure supplies, which is why `RootView` holds it
-/// in view state instead of reading it back off this published value.
-struct AppError: Identifiable {
-    /// The heading for anything that genuinely is a failure — the common case, so it stays
-    /// the default rather than being spelled at every call site.
-    static let defaultTitle = "Something went wrong"
-
-    let id = UUID()
-    let title: String
-    let message: String
-
-    init(title: String = AppError.defaultTitle, message: String) {
-        self.title = title
-        self.message = message
-    }
-
-    /// Prefer a domain error's `errorDescription` over the opaque `localizedDescription`.
-    init(_ error: Error) {
-        self.init(message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-    }
-}
-
-/// A message-carrying error so a thrown failure can surface a specific reason (e.g.
-/// the concrete `locateError`) through the editor's alert instead of a generic one.
-struct MessageError: LocalizedError {
-    let message: String
-    var errorDescription: String? {
-        message
-    }
-}
-
 /// The single source of view state. All blocking core operations are dispatched
 /// off the main actor (`perform`) so the UI never stalls; results and errors are
 /// published back on the main actor.
@@ -130,21 +93,26 @@ final class AppModel: ObservableObject {
     /// Whether to show the "turn on nightly applying?" line in the staged-update banner, and
     /// the wait it quotes.
     ///
-    /// **Published, not computed in the view.** Deriving it needs `stagedUpdateDeadline`,
-    /// which reads Claude's `Info.plist` and the managed-config overlay — several file reads
-    /// and a JSON parse. `RootView.body` re-runs on every publish, on layout, and again
-    /// through the banner-height round trip, so computing it there would put synchronous disk
-    /// I/O on the main thread repeatedly for as long as a staged update exists.
+    /// **Published, not computed in the view.** Deriving it needs `stagedUpdateDeadline` —
+    /// several file reads and a JSON parse — and `RootView.body` re-runs on every publish, on
+    /// layout, and through the banner-height round trip: computing it there would put
+    /// synchronous disk I/O on the main thread for as long as a staged update exists.
     @Published private(set) var autoApplyOffer: AutoApplyOffer?
 
     /// Set the offer (`private(set)`, driven by `AppModel+AutoApply` during a refresh).
+    ///
+    /// Assigns only on a real change: `@Published` publishes on *every* assignment, while
+    /// `refreshAutoApplyOffer()` runs each refresh tick and each time-picker edit and mostly
+    /// recomputes the same nil — republishing the model and re-running `RootView.body`.
     func setAutoApplyOffer(_ value: AutoApplyOffer?) {
+        guard value != autoApplyOffer else { return }
         autoApplyOffer = value
     }
 
     /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
     /// refresh it from the background tick without a full `refresh()`).
     func setStagedUpdate(_ value: StagedUpdate?) {
+        guard value != stagedUpdate else { return } // same reason as `setAutoApplyOffer`
         stagedUpdate = value
     }
 
