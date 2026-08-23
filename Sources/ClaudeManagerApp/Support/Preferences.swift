@@ -21,4 +21,19 @@ enum PreferenceKeys {
     static let usageAdaptiveEnabled = "usageAdaptiveEnabled"
     /// Whether limit-approaching reminders are posted. On by default.
     static let usageNotificationsEnabled = "usageNotificationsEnabled"
+
+    /// `[stagedVersion: seconds-since-1970]` as a plist dictionary — when the staged Claude
+    /// update was **first seen**.
+    /// Persisted because it is the only clock we have on Claude's own 72 h enforcement
+    /// timer: that counter lives in the updater's memory, and nothing on disk survives a
+    /// re-arm (`ShipItState.plist`'s mtime is rewritten on every retry). Kept to the
+    /// currently-staged version, so it can't grow a row per Claude release forever.
+    static let stagedUpdateFirstSeen = "stagedUpdateFirstSeen"
+    /// Staged versions whose "downloaded, blocked by open profiles" notification has already
+    /// been posted. Persisted so the once-per-version promise survives an app restart —
+    /// in memory it was renewed on every launch, re-nagging about the same version.
+    static let notifiedStagedUpdate = "notifiedStagedUpdate"
+    /// Staged versions whose *deadline* warning has been posted — a separate key, because it
+    /// is a second, later notification about the same version.
+    static let notifiedStagedDeadline = "notifiedStagedDeadline"
 }

@@ -69,6 +69,17 @@ public struct ProfileManagedConfig: Equatable, Sendable {
     /// and strip one an earlier build left behind (it makes Claude drop forwarded links).
     public static let disableDeepLinkRegistrationKey = Key.disableDeepLinkRegistration
 
+    /// Claude's flat key for how many hours a pending update may sit before its updater
+    /// restarts the default profile by itself. **Read, never written** — Claude Manager does
+    /// not set enforcement policy; it reads the value only so its own estimate of that
+    /// restart matches a deployment that shortened the window. Absent means Claude's own
+    /// default (`StagedUpdateDeadline.defaultEnforcementHours`).
+    ///
+    /// Deliberately *not* in ``managedKeys``: that set is what a reconcile is allowed to
+    /// strip, and removing someone else's policy would change the behaviour we are only
+    /// trying to describe.
+    public static let autoUpdaterEnforcementHoursKey = "autoUpdaterEnforcementHours"
+
     /// Flat key names, pinned to the validated Claude schema. Kept private so the
     /// literal strings have a single definition shared by ``flatEntries`` and
     /// ``managedKeys``.

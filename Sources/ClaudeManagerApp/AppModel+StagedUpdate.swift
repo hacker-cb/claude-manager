@@ -5,6 +5,42 @@ import UserNotifications
 /// Applying a staged Claude update across every profile, and the once-per-version
 /// notification that surfaces it. See `ProfileStore.applyStagedUpdateToAll`.
 extension AppModel {
+    // MARK: - Persisted staged-update state
+
+    /// Staged versions already surfaced as a notification, so it nags once per version —
+    /// **persisted**, since in memory the promise was renewed on every app launch and the
+    /// same version nagged again. Written through `defaults`, so tests stay hermetic.
+    var notifiedStagedUpdate: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedStagedUpdate) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedStagedUpdate) }
+    }
+
+    /// Staged versions whose approaching-forced-restart warning has been posted. Separate
+    /// from the above: it is a second notification about the same version, later in its wait.
+    var notifiedStagedDeadline: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedStagedDeadline) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedStagedDeadline) }
+    }
+
+    /// When the currently-staged version was first seen — the only clock we have on Claude's
+    /// own enforcement timer (see `StagedUpdateDeadline`). Stored as a one-entry map keyed by
+    /// version, so a newer staged build starts its own wait and the old row is dropped rather
+    /// than accumulating one per Claude release.
+    var stagedUpdateFirstSeen: [String: Date] {
+        get {
+            guard let raw = defaults.dictionary(forKey: PreferenceKeys.stagedUpdateFirstSeen)
+            else { return [:] }
+            return raw.compactMapValues { value in
+                guard let seconds = value as? Double else { return nil }
+                return Date(timeIntervalSince1970: seconds)
+            }
+        }
+        set {
+            let raw = newValue.mapValues(\.timeIntervalSince1970)
+            defaults.set(raw, forKey: PreferenceKeys.stagedUpdateFirstSeen)
+        }
+    }
+
     /// Quit every profile, let ShipIt swap `/Applications/Claude.app`, and relaunch the
     /// set that was open. Single-flight (guarded on `isApplyingStagedUpdate`); a non-success
     /// outcome is surfaced as a notice. Deliberately does *not* pre-guard on `stagedUpdate`:
@@ -84,14 +120,158 @@ extension AppModel {
         }.value
     }
 
+    /// Record when the current staged version was first seen, and forget everything else.
+    ///
+    /// This is the only clock available for Claude's enforcement timer, which lives in its
+    /// updater's memory: nothing on disk survives a re-arm, since `ShipItState.plist`'s mtime
+    /// is rewritten every time the bundle is re-downloaded (observed three times in one
+    /// afternoon while the same update kept failing). Never overwritten while a version stays
+    /// staged — otherwise the wait would restart on every refresh and the estimate would sit
+    /// at zero forever.
+    ///
+    /// Pruning to the current version is what keeps this a fact rather than a log: it also
+    /// clears the two notification ledgers, so a version staged again later — after a
+    /// rollback, say — is a fresh wait that may notify again. A *nil* probe changes nothing;
+    /// `StagedUpdateDeadline.recordSighting` says why.
+    func recordStagedUpdateSighting(now: Date = Date()) {
+        let updated = StagedUpdateDeadline.recordSighting(
+            of: stagedUpdate?.stagedVersion, into: stagedUpdateFirstSeen, now: now
+        )
+        guard updated != stagedUpdateFirstSeen else { return } // don't churn defaults per refresh
+        stagedUpdateFirstSeen = updated
+        // Prune both ledgers to what is still being waited on — that is what lets a version
+        // staged again later notify afresh.
+        let live = Set(updated.keys)
+        notifiedStagedUpdate = notifiedStagedUpdate.intersection(live)
+        notifiedStagedDeadline = notifiedStagedDeadline.intersection(live)
+    }
+
+    /// The wait and the estimated forced restart for the current staged update, if we have
+    /// a first sighting for it.
+    ///
+    /// The enforcement window is read from the **default profile's** managed-config overlay
+    /// rather than assumed: a deployment that lowered `autoUpdaterEnforcementHours` to 8 h
+    /// would otherwise get an estimate silent until hour 68, long past the restart it was
+    /// supposed to predict. Absent (or under MDM, where this tier isn't what Claude reads)
+    /// falls back to Claude's documented default.
+    var stagedUpdateDeadline: StagedUpdateDeadline? {
+        guard let version = stagedUpdate?.stagedVersion,
+              let firstSeen = stagedUpdateFirstSeen[version]
+        else { return nil }
+        let hours = currentConfiguration().flatMap { config in
+            ManagedConfigWriter(managedPreferencesURLs: config.managedPreferencesURLs).integer(
+                ProfileManagedConfig.autoUpdaterEnforcementHoursKey,
+                userDataPath: config.defaultProfileUserDataPath
+            )
+        }
+        return StagedUpdateDeadline(
+            firstSeen: firstSeen,
+            enforcementHours: hours.map(Double.init) ?? StagedUpdateDeadline.defaultEnforcementHours
+        )
+    }
+
+    /// Warn once, shortly before Claude would restart the default profile by itself.
+    ///
+    /// The point is to convert a silent 4 am restart into something the user was told about
+    /// and could have pre-empted. Deliberately quiet until the window is close: most waits
+    /// end within minutes of the user seeing the banner, and a countdown from hour one would
+    /// be noise for all of them.
+    ///
+    /// **Scheduled, not polled.** Every other notification here fires from `refresh()`, which
+    /// the monitor drives once a minute *only while `NSApp.isActive`* — a deliberate choice so
+    /// a backgrounded menu-bar app doesn't spawn `ps` forever. But this warning's whole job is
+    /// to arrive during a 72-hour wait the user spends elsewhere, and a login launch or a
+    /// closed window means the app may never be frontmost in that entire window: checked
+    /// inline, it would simply never fire. So the notification is handed to
+    /// `UNTimeIntervalNotificationTrigger` at sighting time and the system delivers it whether
+    /// or not we are running — and `cancelStagedDeadlineWarning` withdraws it if the update
+    /// lands first.
+    func notifyStagedDeadlineIfNeeded(now: Date = Date()) async {
+        guard let staged = stagedUpdate, let deadline = stagedUpdateDeadline else {
+            await cancelStagedDeadlineWarnings()
+            return
+        }
+        // Withdraw any warning still pending for a *different* version. Pruning the ledger
+        // isn't enough: v1's request carries its own identifier, so replacing v1 with v2
+        // leaves v1's trigger armed and it fires later about a version long gone.
+        await cancelStagedDeadlineWarnings(except: staged.stagedVersion)
+        guard !notifiedStagedDeadline.contains(staged.stagedVersion) else { return }
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+
+        // Fire `warningLead` before the estimate — or as good as immediately when the window
+        // is already that close (a trigger interval must be > 0).
+        let untilWarning = deadline.remaining(asOf: now) - StagedUpdateDeadline.warningLead
+        let fireAfter = max(1, untilWarning)
+        let hoursAtFire = max(1, Int(StagedUpdateDeadline.warningLead / 3600))
+        let when = untilWarning <= 0
+            ? "soon"
+            : "in about \(hoursAtFire) hour\(hoursAtFire == 1 ? "" : "s")"
+        let content = UNMutableNotificationContent()
+        // Conditional on purpose. This is scheduled hours ahead and delivered by the system,
+        // so it can arrive when the premise no longer holds: if every profile happened to
+        // close while Claude Manager was shut down, ShipIt would have installed the update
+        // and there is nothing left running to withdraw the request. A notification that
+        // *asserts* an imminent restart would then simply be wrong, so it states the
+        // condition it was scheduled under instead.
+        content.title = "Claude may restart your default profile \(when)"
+        content.body = "If Claude \(staged.stagedVersion) is still waiting to install, Claude "
+            + "restarts the default profile on its own to finish. Use “Apply to all profiles” "
+            + "to do it at a moment you choose."
+        do {
+            try await center.add(UNNotificationRequest(
+                identifier: Self.deadlineNotificationID(for: staged.stagedVersion),
+                content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: fireAfter, repeats: false)
+            ))
+        } catch {
+            // Record it only once it is actually scheduled. The ledger is persisted, so a
+            // swallowed failure here would retire the warning permanently — no retry on the
+            // next refresh, and none after a restart either.
+            return
+        }
+        notifiedStagedDeadline.insert(staged.stagedVersion)
+    }
+
+    /// Shared by the scheduler and the withdrawal below. One definition, because the two
+    /// have to agree: a prefix that drifts leaves a pending notification nothing can cancel,
+    /// which then fires hours later about an update that already landed.
+    static let deadlineNotificationPrefix = "claude-staged-deadline-"
+
+    /// Identifier for a version's scheduled deadline warning.
+    static func deadlineNotificationID(for version: String) -> String {
+        deadlineNotificationPrefix + version
+    }
+
+    /// Withdraw any scheduled deadline warning that is no longer true.
+    ///
+    /// Necessary because the warning is scheduled *ahead of time*: once the update applies —
+    /// or the staged version changes — a pending trigger would still fire hours later,
+    /// announcing a restart for an update that already happened. Withdrawal is by identifier
+    /// over the pending set, so it also clears one left by a previous run of the app.
+    /// `keeping` names the version whose warning is still true — everything else pending is
+    /// withdrawn. Passing `nil` (nothing staged) withdraws all of them.
+    func cancelStagedDeadlineWarnings(except keeping: String? = nil) async {
+        let center = UNUserNotificationCenter.current()
+        let pending = await center.pendingNotificationRequests()
+        let keepID = keeping.map(Self.deadlineNotificationID(for:))
+        let stale = pending
+            .map(\.identifier)
+            .filter { $0.hasPrefix(Self.deadlineNotificationPrefix) && $0 != keepID }
+        guard !stale.isEmpty else { return }
+        center.removePendingNotificationRequests(withIdentifiers: stale)
+        // Drop the ledger entries the withdrawal invalidated, so those versions could warn
+        // again if they were ever staged anew — but keep the one still armed.
+        notifiedStagedDeadline = notifiedStagedDeadline.intersection(Set(keeping.map { [$0] } ?? []))
+    }
+
     /// Post a local notification once per staged version, so a downloaded-but-blocked
-    /// update nags a single time. The record is keyed by version and intentionally never
-    /// cleared: a later staged version is a different key, so it notifies afresh, while a
-    /// transient nil probe can't re-arm a duplicate for the same version.
+    /// update nags a single time. Keyed by version, so a later staged version notifies
+    /// afresh — `recordStagedUpdateSighting` replaces the record (and prunes this ledger)
+    /// when a *different* version is staged. A nil probe deliberately changes nothing; see
+    /// `StagedUpdateDeadline.recordSighting`.
     func notifyStagedUpdateIfNeeded() async {
-        // Key on the version string, so each staged version nags once. Don't clear the
-        // record when the probe is nil: a transient nil (mid-swap, or a slow read) would
-        // otherwise re-arm a duplicate notification for the same version.
         guard let staged = stagedUpdate else { return }
         guard !notifiedStagedUpdate.contains(staged.stagedVersion) else { return }
         let center = UNUserNotificationCenter.current()
@@ -101,9 +281,15 @@ extension AppModel {
         content.title = "Claude \(staged.stagedVersion) is ready to install"
         content.body = "The update is downloaded but blocked by open profiles. "
             + "Use “Apply to all profiles.”"
-        try? await center.add(UNNotificationRequest(
-            identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
-        ))
+        do {
+            try await center.add(UNNotificationRequest(
+                identifier: "claude-staged-\(staged.stagedVersion)", content: content, trigger: nil
+            ))
+        } catch {
+            // Same reason as the deadline warning: now that the ledger is persisted, marking
+            // a failed post as delivered would silence this version for good.
+            return
+        }
         notifiedStagedUpdate.insert(staged.stagedVersion)
     }
 
