@@ -318,9 +318,9 @@ final class AppModel: ObservableObject {
             primaryProfile = nil
             // A vanished Claude has no staged update to apply; clear it so the banner doesn't
             // outlive the app it refers to (refresh, its only other writer, bails while nil).
-            stagedUpdate = nil
+            setStagedUpdate(nil)
             // The offer describes that update; it must not outlive it either.
-            autoApplyOffer = nil
+            setAutoApplyOffer(nil)
             locateError = Self.describe(error)
         }
     }
@@ -361,7 +361,7 @@ final class AppModel: ObservableObject {
         prunePendingRestarts()
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
         // there are none — the default profile can still have one staged).
-        stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
+        await setStagedUpdate(perform { store in store.stagedUpdate() }.flatMap(\.self))
         recordStagedUpdateSighting()
         refreshAutoApplyOffer()
         await notifyClaudeUpdatesIfNeeded()
@@ -459,9 +459,9 @@ final class AppModel: ObservableObject {
         // primary row and staged-update banner here.
         if located.real == nil {
             primaryProfile = nil
-            stagedUpdate = nil
+            setStagedUpdate(nil)
             // The offer describes that update; it must not outlive it either.
-            autoApplyOffer = nil
+            setAutoApplyOffer(nil)
         }
         locateError = located.error
     }
