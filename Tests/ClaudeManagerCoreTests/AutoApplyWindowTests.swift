@@ -188,9 +188,9 @@ struct AutoApplyWindowTests {
         // Most updates are applied within minutes of the banner appearing. Suggesting at
         // download time would put a prompt in front of everyone, for a problem almost nobody
         // has yet.
-        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, dismissed: false, waited: 0))
+        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, answered: false, waited: 0))
         #expect(!AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: false, dismissed: false, waited: 12 * 3600
+            alreadyEnabled: false, answered: false, waited: 12 * 3600
         ))
     }
 
@@ -201,17 +201,17 @@ struct AutoApplyWindowTests {
         // arrived — twelve hours from a 07:00 sighting is 19:00, with no night-time window
         // having come round at all.
         #expect(AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: false, dismissed: false, waited: AutoApplyDecision.stuckThreshold
+            alreadyEnabled: false, answered: false, waited: AutoApplyDecision.stuckThreshold
         ))
         #expect(AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: false, dismissed: false, waited: 70 * 3600
+            alreadyEnabled: false, answered: false, waited: 70 * 3600
         ))
     }
 
     @Test
     func neverOffersWhatIsAlreadyOn() {
         #expect(!AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: true, dismissed: false, waited: 70 * 3600
+            alreadyEnabled: true, answered: false, waited: 70 * 3600
         ))
     }
 
@@ -221,7 +221,7 @@ struct AutoApplyWindowTests {
         // when the update installs" is no answer for them — without a remembered no, the offer
         // would reappear at every launch for days.
         #expect(!AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: false, dismissed: true, waited: 70 * 3600
+            alreadyEnabled: false, answered: true, waited: 70 * 3600
         ))
     }
 }

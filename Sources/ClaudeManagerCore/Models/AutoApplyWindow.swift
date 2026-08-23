@@ -167,16 +167,17 @@ public enum AutoApplyDecision: Equatable, Sendable {
     /// most waits end within minutes of the user seeing the banner and clicking Apply. Offering
     /// once it has been stuck past ``stuckThreshold`` means the suggestion arrives with the
     /// evidence for it already on screen.
-    /// `dismissed` is the user having said no. Without it the offer would reappear on every
-    /// launch for the rest of the update's life — and the population this targets is exactly
-    /// the one whose update *never* applies, so "it goes away when the update installs" is no
-    /// answer for them.
+    /// `answered` is the user having settled the question for this version — by declining, or
+    /// by reaching for the Settings toggle, which answers it either way. Without it the offer
+    /// would reappear on every launch for the rest of the update's life — and the population
+    /// this targets is exactly the one whose update *never* applies, so "it goes away when the
+    /// update installs" is no answer for them.
     public static func shouldOfferEnabling(
         alreadyEnabled: Bool,
-        dismissed: Bool,
+        answered: Bool,
         waited: TimeInterval
     ) -> Bool {
-        !alreadyEnabled && !dismissed && waited >= stuckThreshold
+        !alreadyEnabled && !answered && waited >= stuckThreshold
     }
 
     /// How long an update must have been waiting before enabling is suggested.

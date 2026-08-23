@@ -163,13 +163,13 @@ extension AppModel {
         let live = Set(updated.keys)
         notifiedStagedUpdate = notifiedStagedUpdate.intersection(live)
         notifiedStagedDeadline = notifiedStagedDeadline.intersection(live)
-        // Same rule for the offer's declines, with the same limit the ledgers above have: the
+        // Same rule for the offer's answers, with the same limit the ledgers above have: the
         // prune only runs when a *different* version is staged, because a nil probe
         // deliberately preserves the record (`StagedUpdateDeadline.recordSighting`) and the
-        // guard above returns early when nothing changed. So a version declined, installed,
-        // and later re-staged unchanged stays declined. That is the price of not resetting on
-        // a transient nil, and it errs toward asking too little rather than too often.
-        dismissedAutoApplyOffer = dismissedAutoApplyOffer.intersection(live)
+        // guard above returns early when nothing changed. So a version answered, installed,
+        // and later re-staged unchanged keeps that answer. That is the price of not resetting
+        // on a transient nil, and it errs toward asking too little rather than too often.
+        answeredAutoApplyOffer = answeredAutoApplyOffer.intersection(live)
     }
 
     /// The wait and the estimated forced restart for the current staged update, if we have
