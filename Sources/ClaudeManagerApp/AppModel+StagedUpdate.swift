@@ -163,6 +163,9 @@ extension AppModel {
         let live = Set(updated.keys)
         notifiedStagedUpdate = notifiedStagedUpdate.intersection(live)
         notifiedStagedDeadline = notifiedStagedDeadline.intersection(live)
+        // Same rule for the offer's declines: unbounded growth otherwise, and a version
+        // staged again after a rollback is a fresh wait that may ask again.
+        dismissedAutoApplyOffer = dismissedAutoApplyOffer.intersection(live)
     }
 
     /// The wait and the estimated forced restart for the current staged update, if we have

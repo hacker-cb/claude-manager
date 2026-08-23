@@ -137,12 +137,6 @@ final class AppModel: ObservableObject {
     /// I/O on the main thread repeatedly for as long as a staged update exists.
     @Published private(set) var autoApplyOffer: AutoApplyOffer?
 
-    /// The banner's enabling offer: whether to show it, and the wait to quote.
-    struct AutoApplyOffer: Equatable {
-        let waitDescription: String
-        let windowText: String
-    }
-
     /// Set the offer (`private(set)`, driven by `AppModel+AutoApply` during a refresh).
     func setAutoApplyOffer(_ value: AutoApplyOffer?) {
         autoApplyOffer = value

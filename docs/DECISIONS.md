@@ -175,8 +175,14 @@ up one flag, each of them new code on a path that runs at night with nobody watc
 
 So the default stays off, and the app **offers** instead — in the banner the user is already
 looking at, once the update has been stuck past `AutoApplyDecision.stuckThreshold`. Consent and
-the action it licenses become one event. There is no announcement to lose, no dismissal state
-to persist, and the offer disappears by itself when the update applies.
+the action it licenses become one event: there is no announcement that can fail to arrive, and
+if the offer is never shown then nothing was ever enabled — the failure mode is the safe one.
+
+It does persist a declined-offer set, which the first sketch of this section claimed it would
+not need. The offer targets updates that may never apply, so "it disappears when the update
+installs" is no answer for the very people it is aimed at; without a remembered no it would
+reappear at every launch for days. That set is pruned alongside the notification ledgers, so a
+version staged again after a rollback may ask once more.
 
 **Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
 An auto-apply wants to know "is this profile actually working?", and nothing observable
