@@ -31,12 +31,23 @@ struct TimeOfDayPicker: View {
     /// set — and persist the shifted value the moment they touched it.
     private static func date(fromMinutes minutes: Int) -> Date {
         let calendar = Calendar.current
-        var components = calendar.dateComponents([.year, .month, .day], from: Date())
-        components.hour = minutes / 60
-        components.minute = minutes % 60
-        // A time that doesn't exist on this date (the skipped hour) has no representation;
-        // midnight is the honest fallback rather than a silently shifted one.
-        return calendar.date(from: components) ?? calendar.startOfDay(for: Date())
+        let hour = minutes / 60
+        let minute = minutes % 60
+        // Find a day on which this time actually exists. On a spring-forward day the skipped
+        // hour has no representation, and `Calendar.date(from:)` does not return nil for it —
+        // it *normalises* 02:30 to 03:30, so a naive fallback never runs and the picker shows
+        // (then persists) an hour the user never chose. Checking that the components round-trip
+        // is what catches that; a DST shift happens twice a year, so the next day always works.
+        for dayOffset in 0 ... 2 {
+            guard let day = calendar.date(byAdding: .day, value: dayOffset, to: Date()) else { continue }
+            var components = calendar.dateComponents([.year, .month, .day], from: day)
+            components.hour = hour
+            components.minute = minute
+            guard let candidate = calendar.date(from: components) else { continue }
+            let readBack = calendar.dateComponents([.hour, .minute], from: candidate)
+            if readBack.hour == hour, readBack.minute == minute { return candidate }
+        }
+        return calendar.startOfDay(for: Date())
     }
 
     private static func minutes(from date: Date) -> Int {

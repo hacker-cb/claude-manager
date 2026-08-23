@@ -81,7 +81,8 @@ struct AutoApplyWindowTests {
         hasStagedUpdate: Bool = true,
         window: AutoApplyWindow = .suggested,
         at hour: Int = 4,
-        idleSeconds: TimeInterval = 900
+        idleSeconds: TimeInterval = 900,
+        lastFailedAttempt: Date? = nil
     ) -> AutoApplyDecision {
         AutoApplyDecision.decide(
             AutoApplyDecision.Inputs(
@@ -91,7 +92,8 @@ struct AutoApplyWindowTests {
                 window: window,
                 now: time(hour, 30),
                 idleSeconds: idleSeconds,
-                minimumIdleSeconds: 600
+                minimumIdleSeconds: 600,
+                lastFailedAttempt: lastFailedAttempt
             ),
             calendar: calendar
         )
@@ -136,5 +138,28 @@ struct AutoApplyWindowTests {
         // With the feature off *and* the wrong time of day, "you haven't enabled this" is the
         // answer worth logging — not "the Mac isn't idle".
         #expect(decide(enabled: false, hasStagedUpdate: false, at: 13, idleSeconds: 0) == .skip(.disabled))
+    }
+
+    @Test
+    func backsOffAfterAFailedAttemptOnTheSameVersion() {
+        // The failure this guards is a profile vetoing its quit because it is working — with
+        // nobody there to resolve it. Without the back-off the tick retries every minute for
+        // the rest of the window, closing and reopening every *other* profile each time and
+        // re-prompting the busy one.
+        let justFailed = time(4, 25)
+        #expect(decide(lastFailedAttempt: justFailed) == .skip(.backingOffAfterFailure))
+    }
+
+    @Test
+    func triesAgainOnceTheBackOffHasElapsed() {
+        let longAgo = time(4, 30).addingTimeInterval(-AutoApplyDecision.retryBackoff - 60)
+        #expect(decide(lastFailedAttempt: longAgo) == .apply)
+    }
+
+    @Test
+    func presenceIsCheckedBeforeTheBackOff() {
+        // Someone at the keyboard is the more actionable reason to report, and the back-off
+        // record is version-scoped state that means nothing if we weren't going to try anyway.
+        #expect(decide(idleSeconds: 5, lastFailedAttempt: time(4, 25)) == .skip(.userIsPresent))
     }
 }

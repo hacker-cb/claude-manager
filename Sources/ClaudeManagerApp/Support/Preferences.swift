@@ -47,4 +47,9 @@ enum PreferenceKeys {
     /// directly and a stored value stays legible in `defaults read`.
     static let autoApplyWindowStart = "autoApplyWindowStartMinutes"
     static let autoApplyWindowEnd = "autoApplyWindowEndMinutes"
+    /// `[stagedVersion: seconds-since-1970]` — when an unattended attempt on that version
+    /// last failed. Drives the back-off: without it a veto (a profile busy working) would be
+    /// retried every minute for the rest of the window, closing and reopening every other
+    /// profile each time.
+    static let autoApplyLastFailure = "autoApplyLastFailure"
 }

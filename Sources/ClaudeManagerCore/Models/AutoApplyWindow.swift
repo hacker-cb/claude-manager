@@ -83,6 +83,11 @@ public enum AutoApplyDecision: Equatable, Sendable {
         /// Someone is at the keyboard. A courtesy check, not a safety one: it says nothing
         /// about an autonomous session, which is Claude's veto's job to catch.
         case userIsPresent
+        /// A recent attempt on this same version did not go through — most often because a
+        /// profile was working and vetoed its own quit. Backing off is the whole point:
+        /// without it the tick retries every minute for the rest of the window, and each
+        /// retry closes and reopens every *other* profile and re-prompts the busy one.
+        case backingOffAfterFailure
     }
 
     /// Everything the decision reads, gathered so the app layer can't transpose two
@@ -96,6 +101,8 @@ public enum AutoApplyDecision: Equatable, Sendable {
         public var now: Date
         public var idleSeconds: TimeInterval
         public var minimumIdleSeconds: TimeInterval
+        /// When an attempt on the *currently staged* version last failed, if one did.
+        public var lastFailedAttempt: Date?
 
         public init(
             enabled: Bool,
@@ -104,7 +111,8 @@ public enum AutoApplyDecision: Equatable, Sendable {
             window: AutoApplyWindow,
             now: Date,
             idleSeconds: TimeInterval,
-            minimumIdleSeconds: TimeInterval
+            minimumIdleSeconds: TimeInterval,
+            lastFailedAttempt: Date? = nil
         ) {
             self.enabled = enabled
             self.applyInFlight = applyInFlight
@@ -113,6 +121,7 @@ public enum AutoApplyDecision: Equatable, Sendable {
             self.now = now
             self.idleSeconds = idleSeconds
             self.minimumIdleSeconds = minimumIdleSeconds
+            self.lastFailedAttempt = lastFailedAttempt
         }
     }
 
@@ -125,6 +134,21 @@ public enum AutoApplyDecision: Equatable, Sendable {
         guard inputs.hasStagedUpdate else { return .skip(.nothingStaged) }
         guard inputs.window.contains(inputs.now, calendar: calendar) else { return .skip(.outsideWindow) }
         guard inputs.idleSeconds >= inputs.minimumIdleSeconds else { return .skip(.userIsPresent) }
+        let sinceFailure = inputs.lastFailedAttempt.map { inputs.now.timeIntervalSince($0) }
+        guard sinceFailure.map({ $0 >= Self.retryBackoff }) ?? true else {
+            return .skip(.backingOffAfterFailure)
+        }
         return .apply
     }
+
+    /// How long to wait after a failed unattended attempt before trying that same staged
+    /// version again.
+    ///
+    /// The failure this is sized for is a profile refusing to quit because it is working —
+    /// which the user is not necessarily around to resolve. Retrying on the next tick would
+    /// close and reopen every *other* profile once a minute for the rest of the window, and
+    /// re-prompt the busy one each time; six hours puts the next attempt in the following
+    /// night's window instead. A newly staged version clears the record and starts fresh, so
+    /// this never delays a genuinely different update.
+    public static let retryBackoff: TimeInterval = 6 * 3600
 }

@@ -64,6 +64,24 @@ extension AppModel {
         ) }
     }
 
+    /// When an unattended attempt last failed, per staged version. One entry at a time: a
+    /// newly staged version deserves its own attempt rather than inheriting a back-off.
+    var autoApplyLastFailure: [String: Date] {
+        get {
+            guard let raw = defaults.dictionary(forKey: PreferenceKeys.autoApplyLastFailure)
+            else { return [:] }
+            return raw.compactMapValues { value in
+                guard let seconds = value as? Double else { return nil }
+                return Date(timeIntervalSince1970: seconds)
+            }
+        }
+        set {
+            defaults.set(
+                newValue.mapValues(\.timeIntervalSince1970), forKey: PreferenceKeys.autoApplyLastFailure
+            )
+        }
+    }
+
     // MARK: - The pass
 
     /// Attempt the apply if every precondition holds; otherwise return the condition that
@@ -78,12 +96,23 @@ extension AppModel {
             window: autoApplyWindow,
             now: now,
             idleSeconds: idleSeconds ?? Self.systemIdleSeconds(),
-            minimumIdleSeconds: Self.minimumIdleSeconds
+            minimumIdleSeconds: Self.minimumIdleSeconds,
+            lastFailedAttempt: stagedUpdate.flatMap { autoApplyLastFailure[$0.stagedVersion] }
         ))
-        guard decision == .apply else { return decision }
+        guard decision == .apply, let version = stagedUpdate?.stagedVersion else { return decision }
         let windowText = autoApplyWindow.displayText
         Log.autoApply.info("applying inside window \(windowText, privacy: .public)")
         await applyStagedUpdate()
+        // Still staged afterwards means the attempt did not go through — most often a profile
+        // vetoed its quit because it was working. Record it so the back-off holds: retrying on
+        // the next tick would close and reopen every *other* profile once a minute, and
+        // re-prompt the busy one, for the rest of the window.
+        if stagedUpdate?.stagedVersion == version {
+            autoApplyLastFailure = [version: now]
+            Log.autoApply.info("attempt did not complete — backing off")
+        } else {
+            autoApplyLastFailure = [:]
+        }
         return decision
     }
 
@@ -112,21 +141,26 @@ extension AppModel {
     }
 
     /// Seconds since the last human input, across the whole session.
-    ///
-    /// The idiomatic form of this is `CGEventType(rawValue: ~0)!` — an undocumented
-    /// "any input" sentinel through a *failable* initializer. It happens to be valid today
-    /// (measured), but a forced unwrap inside an unattended background pass is a poor bet on
-    /// something no header promises. Taking the minimum over the declared cases needs no
-    /// sentinel and measured identical on macOS 26: 232.808 s both ways.
     static func systemIdleSeconds() -> TimeInterval {
+        // Prefer CoreGraphics' all-input sentinel: it covers tablet input and long drags an
+        // enumerated subset misses, and missing one is not harmless — if the user's only
+        // recent input is an unlisted event, every sampled timestamp exceeds the threshold
+        // and the pass fires while the Mac is being used. Guarded, not force-unwrapped: it is
+        // undocumented, reached through a failable initializer, and this runs unattended.
+        if let anyInput = CGEventType(rawValue: ~0) {
+            return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
+        }
+        // Fallback for a build where that sentinel stops being valid. Narrower by
+        // construction, so it can only ever over-report idleness.
         let inputTypes: [CGEventType] = [
             .keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown,
-            .mouseMoved, .scrollWheel
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .mouseMoved, .scrollWheel, .tabletPointer, .tabletProximity
         ]
         return inputTypes
             .map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }
-            // Zero — "input just happened" — is the conservative fallback: it skips the pass
-            // rather than acting on an unknown.
+            // Zero — "input just happened" — is the conservative answer to an empty result:
+            // it skips the pass rather than acting on an unknown.
             .min() ?? 0
     }
 }
