@@ -112,9 +112,13 @@ struct SettingsView: View {
             if model.autoApplyEnabled {
                 LabeledContent("Window") {
                     HStack(spacing: 6) {
+                        // Both pickers hide their labels for layout, which leaves VoiceOver
+                        // announcing two identical time fields — these say which is which.
                         TimeOfDayPicker(minutes: $model.autoApplyWindowStart)
+                            .accessibilityLabel("Window start time")
                         Text("to").foregroundStyle(.secondary)
                         TimeOfDayPicker(minutes: $model.autoApplyWindowEnd)
+                            .accessibilityLabel("Window end time")
                     }
                 }
                 Text("Claude restarts the default profile by itself once an update has waited "

@@ -39,17 +39,21 @@ extension AppModel {
                 // @MainActor so NSApp.isActive is read on the main thread. Skip while a
                 // staged-update apply is in flight: re-probing is fine, but a relaunch it
                 // could trigger during the swap window would trip ShipIt's Gate 2.
-                if NSApp.isActive, !isApplyingStagedUpdate {
+                guard !isApplyingStagedUpdate else { continue }
+                if NSApp.isActive {
                     await reconcile()
-                } else if autoApplyEnabled, !isApplyingStagedUpdate {
-                    // The unattended apply runs from *this* branch on purpose. Its whole
-                    // point is to land in a window the user spends away from the machine —
-                    // where `NSApp.isActive` is false and the reconcile above never runs. It
-                    // re-probes only the staged update (cheap: one file read), not the full
-                    // sweep this tick otherwise skips.
+                } else if autoApplyEnabled {
+                    // Backgrounded: the sweep above is deliberately skipped, so re-probe just
+                    // the staged update — one file read — to have something to act on.
                     await refreshStagedUpdateInBackground()
-                    await runAutoApplyPass()
                 }
+                // Then attempt the apply *whichever branch ran*. Gating it on being
+                // backgrounded looked right — the window is a time the user is away — but
+                // "away" and "our window isn't frontmost" are different things: leaving the
+                // manager (or Settings) in front and walking off keeps `isActive` true, and
+                // the whole nominated window would pass with nothing attempted. Presence is
+                // the idle check's job, and it is inside the pass.
+                if autoApplyEnabled { await runAutoApplyPass() }
             }
         }
     }

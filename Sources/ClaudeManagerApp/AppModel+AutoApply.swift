@@ -19,9 +19,15 @@ import Foundation
 extension AppModel {
     // MARK: - Settings
 
+    /// Backed by `defaults` rather than `@Published` (an extension can't declare one), so
+    /// the change notification is sent by hand — without it SwiftUI never re-evaluates the
+    /// settings section and the window pickers stay hidden after the toggle is switched on.
     var autoApplyEnabled: Bool {
         get { defaults.bool(forKey: PreferenceKeys.autoApplyStagedUpdate) }
-        set { defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate) }
+        set {
+            objectWillChange.send()
+            defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate)
+        }
     }
 
     /// The nominated window. Unset reads as the suggested night-time one, so switching the
@@ -34,6 +40,7 @@ extension AppModel {
             return AutoApplyWindow(startMinutes: start, endMinutes: end)
         }
         set {
+            objectWillChange.send() // same reason as the toggle above
             defaults.set(newValue.startMinutes, forKey: PreferenceKeys.autoApplyWindowStart)
             defaults.set(newValue.endMinutes, forKey: PreferenceKeys.autoApplyWindowEnd)
         }
@@ -104,8 +111,22 @@ extension AppModel {
         recordStagedUpdateSighting()
     }
 
-    /// Seconds since the last human input event, across the whole session.
+    /// Seconds since the last human input, across the whole session.
+    ///
+    /// The idiomatic form of this is `CGEventType(rawValue: ~0)!` — an undocumented
+    /// "any input" sentinel through a *failable* initializer. It happens to be valid today
+    /// (measured), but a forced unwrap inside an unattended background pass is a poor bet on
+    /// something no header promises. Taking the minimum over the declared cases needs no
+    /// sentinel and measured identical on macOS 26: 232.808 s both ways.
     static func systemIdleSeconds() -> TimeInterval {
-        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .init(rawValue: ~0)!)
+        let inputTypes: [CGEventType] = [
+            .keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+            .mouseMoved, .scrollWheel
+        ]
+        return inputTypes
+            .map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }
+            // Zero — "input just happened" — is the conservative fallback: it skips the pass
+            // rather than acting on an unknown.
+            .min() ?? 0
     }
 }

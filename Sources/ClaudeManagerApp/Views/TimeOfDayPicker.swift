@@ -24,10 +24,19 @@ struct TimeOfDayPicker: View {
     }
 
     /// A reference day carries the time — any day will do, since only the time is read back.
+    ///
+    /// Built from **hour/minute components**, not by adding elapsed minutes to midnight: on a
+    /// DST transition day those differ. Adding 240 minutes to midnight lands on 05:00 rather
+    /// than 04:00 across a spring-forward, so the picker would show a window the user never
+    /// set — and persist the shifted value the moment they touched it.
     private static func date(fromMinutes minutes: Int) -> Date {
         let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        return calendar.date(byAdding: .minute, value: minutes, to: start) ?? start
+        var components = calendar.dateComponents([.year, .month, .day], from: Date())
+        components.hour = minutes / 60
+        components.minute = minutes % 60
+        // A time that doesn't exist on this date (the skipped hour) has no representation;
+        // midnight is the honest fallback rather than a silently shifted one.
+        return calendar.date(from: components) ?? calendar.startOfDay(for: Date())
     }
 
     private static func minutes(from date: Date) -> Int {
