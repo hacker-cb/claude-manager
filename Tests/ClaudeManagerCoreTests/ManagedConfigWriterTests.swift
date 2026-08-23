@@ -374,4 +374,19 @@ struct ManagedConfigWriterTests {
             ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
         #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == nil)
     }
+
+    @Test
+    func refusesAFractionalPolicyValue() throws {
+        // Claude's schema for these keys is `int()`, so a fractional value is a malformed
+        // policy. Rounding it would invent a window nobody configured; the default is the
+        // honest answer.
+        let root = try Fixture.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let userData = root.appendingPathComponent("Claude").path
+        try seedRawOverlayValues(["autoUpdaterEnforcementHours": 12.5], userDataPath: userData)
+
+        let writer =
+            ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
+        #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == nil)
+    }
 }

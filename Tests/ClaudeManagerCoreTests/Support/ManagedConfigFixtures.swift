@@ -19,7 +19,6 @@ func seedRawOverlay(
         .write(to: library.appendingPathComponent("\(appliedID).json"))
 }
 
-/// Seed a raw overlay carrying **non-boolean** values. Throws rather than swallowing a
 /// Seed a raw overlay carrying **non-boolean** values — the shape `ManagedConfigWriter.integer`
 /// reads, and the one a policy like `autoUpdaterEnforcementHours` actually arrives in.
 ///
