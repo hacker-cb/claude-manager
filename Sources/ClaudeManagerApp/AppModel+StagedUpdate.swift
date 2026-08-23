@@ -352,6 +352,10 @@ extension AppModel {
         // Not (yet) authorized — leave keys unmarked so a later refresh retries once
         // the user has answered the permission prompt.
         guard status == .authorized || status == .provisional else { return }
+        // Collected, then written once: `notifiedClaudeUpdates` is `UserDefaults`-backed, so
+        // inserting per profile inside the loop is a read-modify-write of the whole set for
+        // each notification posted.
+        var delivered: Set<String> = []
         for managed in fresh {
             let content = UNMutableNotificationContent()
             content.title = "\(managed.profile.displayName): restart to update"
@@ -367,8 +371,9 @@ extension AppModel {
                 // two ledgers above record only after a successful `add`.
                 continue
             }
-            notifiedClaudeUpdates.insert(Self.claudeUpdateKey(managed))
+            delivered.insert(Self.claudeUpdateKey(managed))
         }
+        if !delivered.isEmpty { notifiedClaudeUpdates.formUnion(delivered) }
     }
 
     private static func claudeUpdateKey(_ managed: ManagedProfile) -> String {
