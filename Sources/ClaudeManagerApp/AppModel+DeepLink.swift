@@ -118,6 +118,10 @@ extension AppModel {
         await applyDeepLinkBroker()
         // After the first refresh, so the poll's binding list sees the profiles.
         startUsagePolling()
+        // Once, and only for installs that inherited the new default rather than choosing
+        // it: unattended applying arrives through a Sparkle update, and profiles closing
+        // overnight unannounced is the surprise this whole feature exists to remove.
+        await announceAutoApplyDefaultIfNeeded()
     }
 
     /// Serialize broker applies so a rapid toggle can't race two read-modify-write passes

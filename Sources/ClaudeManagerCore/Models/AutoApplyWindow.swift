@@ -145,6 +145,25 @@ public enum AutoApplyDecision: Equatable, Sendable {
         return .apply
     }
 
+    /// Whether to tell the user, once, that unattended applying is now on by default.
+    ///
+    /// The feature ships **enabled**, because the alternative default is worse: with it off,
+    /// a machine running clones never installs a Claude update at all, and Claude's own
+    /// enforcement restarts the default profile every ~72 h to no effect, re-downloading the
+    /// bundle each round. But it arrives through a Sparkle auto-update, so people get the new
+    /// behaviour without asking for it — and profiles closing overnight, unannounced, is the
+    /// exact surprise this feature exists to remove.
+    ///
+    /// Announced only when the default is what decided it. Someone who already set the toggle
+    /// either way has made the choice knowingly and needs no notice — their preference is
+    /// untouched, and telling them about "a new default" would be false.
+    public static func shouldAnnounceDefault(
+        alreadyAnnounced: Bool,
+        userSetTheToggle: Bool
+    ) -> Bool {
+        !alreadyAnnounced && !userSetTheToggle
+    }
+
     /// How long to wait after a failed unattended attempt before trying that same staged
     /// version again.
     ///

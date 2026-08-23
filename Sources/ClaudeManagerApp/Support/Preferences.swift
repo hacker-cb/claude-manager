@@ -52,4 +52,8 @@ enum PreferenceKeys {
     /// retried every minute for the rest of the window, closing and reopening every other
     /// profile each time.
     static let autoApplyLastFailure = "autoApplyLastFailure"
+    /// Whether the one-time "this is now on by default" notice has been posted. Set even when
+    /// the notification itself fails to post: the settings pane carries the same information
+    /// permanently, and a notice worth showing once is not worth retrying at every launch.
+    static let autoApplyDefaultAnnounced = "autoApplyDefaultAnnounced"
 }

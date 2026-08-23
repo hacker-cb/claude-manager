@@ -1,6 +1,7 @@
 import AppKit
 import ClaudeManagerCore
 import Foundation
+import UserNotifications
 
 /// Applying a staged Claude update unattended, inside a window the user nominated.
 ///
@@ -25,11 +26,22 @@ import Foundation
 extension AppModel {
     // MARK: - Settings
 
+    /// **On by default.** With it off, a machine running clones never installs a Claude
+    /// update at all: the swap stays blocked, and Claude's own enforcement restarts the
+    /// default profile every ~72 h to no effect, re-downloading the bundle each round. A
+    /// default that leaves the product's core scenario permanently broken is the wrong
+    /// default, even though this one closes windows — `announceAutoApplyDefaultIfNeeded` is
+    /// what keeps that from arriving as a surprise.
+    ///
+    /// `object(forKey:)` rather than `bool(forKey:)`: the latter reads an unset key as
+    /// `false`, which would make "never configured" indistinguishable from "explicitly
+    /// turned off" and silently override the choice of anyone who had turned it off.
+    ///
     /// Backed by `defaults` rather than `@Published` (an extension can't declare one), so
     /// the change notification is sent by hand — without it SwiftUI never re-evaluates the
     /// settings section and the window pickers stay hidden after the toggle is switched on.
     var autoApplyEnabled: Bool {
-        get { defaults.bool(forKey: PreferenceKeys.autoApplyStagedUpdate) }
+        get { defaults.object(forKey: PreferenceKeys.autoApplyStagedUpdate) as? Bool ?? true }
         set {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate)
@@ -86,6 +98,41 @@ extension AppModel {
                 newValue.mapValues(\.timeIntervalSince1970), forKey: PreferenceKeys.autoApplyLastFailure
             )
         }
+    }
+
+    /// Whether the user has set the toggle themselves, either way. Distinct from its
+    /// *value*: what matters for the announcement is whether a choice was ever made.
+    var autoApplyWasConfigured: Bool {
+        defaults.object(forKey: PreferenceKeys.autoApplyStagedUpdate) != nil
+    }
+
+    /// Tell the user once that unattended applying is now on, and where to change it.
+    ///
+    /// Called at launch. The feature reaches existing installs through a Sparkle
+    /// auto-update, so without this their profiles would start closing overnight with no
+    /// explanation — precisely the experience this whole area of the app exists to prevent,
+    /// only caused by us instead of Claude. Skipped for anyone who already set the toggle:
+    /// their preference stands, and calling it "a new default" would be untrue.
+    func announceAutoApplyDefaultIfNeeded() async {
+        guard AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: defaults.bool(forKey: PreferenceKeys.autoApplyDefaultAnnounced),
+            userSetTheToggle: autoApplyWasConfigured
+        ) else { return }
+        // Mark it first. A notification that fails to post is not worth repeating at every
+        // launch forever; the settings pane says the same thing, permanently.
+        defaults.set(true, forKey: PreferenceKeys.autoApplyDefaultAnnounced)
+
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Claude updates now install overnight"
+        content.body = "Claude Manager applies a downloaded Claude update between "
+            + "\(autoApplyWindow.displayText), when your Mac is idle — quitting your profiles "
+            + "and reopening them. Change the window or turn it off in Settings → Claude updates."
+        try? await center.add(UNNotificationRequest(
+            identifier: "claude-auto-apply-default", content: content, trigger: nil
+        ))
     }
 
     // MARK: - The pass

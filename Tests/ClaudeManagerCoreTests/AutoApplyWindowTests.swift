@@ -171,4 +171,22 @@ struct AutoApplyWindowTests {
         let future = time(4, 30).addingTimeInterval(48 * 3600)
         #expect(decide(lastFailedAttempt: future) == .apply)
     }
+
+    // MARK: - Announcing the new default
+
+    @Test
+    func announcesOnceToAnInstallThatInheritedTheDefault() {
+        // The feature arrives through a Sparkle auto-update, so profiles would otherwise
+        // start closing overnight with no explanation — the surprise it exists to remove.
+        #expect(AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: false, userSetTheToggle: false))
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: true, userSetTheToggle: false))
+    }
+
+    @Test
+    func saysNothingToSomeoneWhoAlreadyChose() {
+        // Their preference stands untouched either way, and calling it "a new default" when
+        // they set it themselves would simply be false.
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: false, userSetTheToggle: true))
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: true, userSetTheToggle: true))
+    }
 }

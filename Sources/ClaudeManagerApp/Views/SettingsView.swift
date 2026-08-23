@@ -123,9 +123,10 @@ struct SettingsView: View {
                             .accessibilityLabel("Window end time")
                     }
                 }
-                Text("Claude restarts the default profile by itself once an update has waited "
-                    + "about 72 hours, at a moment you're away. Applying inside a window you "
-                    + "chose is what keeps that from being a surprise.")
+                Text("On by default, because the alternative is worse: with this off, a Mac "
+                    + "running several profiles never installs a Claude update at all — the "
+                    + "swap stays blocked, and Claude restarts your default profile every few "
+                    + "days trying to force it through, re-downloading the update each time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

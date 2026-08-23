@@ -267,10 +267,19 @@ armed install merely failed sends them to re-download the bundle for nothing.
 
 ### Applying it unattended, inside a window you chose
 
-The deadline warning tells you the forced restart is coming; this stops it arriving. **Off
-unless switched on** (Settings → Claude updates): an apply closes every profile and reopens
-it, and doing that unasked would be the same surprise the rest of this section exists to
-prevent, only with our name on it.
+The deadline warning tells you the forced restart is coming; this stops it arriving. **On by
+default** (Settings → Claude updates), which is a deliberate reversal: with it off, a machine
+running clones never installs a Claude update at all — the swap stays blocked, and Claude's
+own enforcement restarts the default profile every ~72 h to no effect, re-downloading the
+bundle each round. A default that leaves the product's core scenario permanently broken is
+the wrong default, even though this one closes windows.
+
+Because it reaches existing installs through a Sparkle auto-update, the change is announced
+once (`announceAutoApplyDefaultIfNeeded`) — profiles beginning to close overnight with no
+explanation would be the same surprise this section exists to remove, only ours. The notice is
+skipped for anyone who already set the toggle either way: their preference stands untouched,
+and calling it a new default would be false. The read is `object(forKey:)`, not
+`bool(forKey:)`, so "never configured" stays distinguishable from "explicitly turned off".
 
 `AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
 while nobody is watching — "it silently did nothing" is the hardest failure to diagnose
