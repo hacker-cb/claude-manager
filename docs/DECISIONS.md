@@ -182,7 +182,9 @@ It does persist a declined-offer set, which the first sketch of this section cla
 not need. The offer targets updates that may never apply, so "it disappears when the update
 installs" is no answer for the very people it is aimed at; without a remembered no it would
 reappear at every launch for days. That set is pruned alongside the notification ledgers, so a
-version staged again after a rollback may ask once more.
+**different** version staged later asks again. The same version re-staged after a rollback does
+not: the prune only runs when the recorded sighting changes, and a nil probe deliberately
+preserves it (`StagedUpdateDeadline.recordSighting`). It errs toward asking too little.
 
 **Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
 An auto-apply wants to know "is this profile actually working?", and nothing observable

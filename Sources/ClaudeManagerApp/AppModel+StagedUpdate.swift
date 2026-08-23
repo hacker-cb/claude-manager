@@ -149,9 +149,9 @@ extension AppModel {
     /// at zero forever.
     ///
     /// Pruning to the current version is what keeps this a fact rather than a log: it also
-    /// clears the two notification ledgers, so a version staged again later — after a
-    /// rollback, say — is a fresh wait that may notify again. A *nil* probe changes nothing;
-    /// `StagedUpdateDeadline.recordSighting` says why.
+    /// clears the two notification ledgers, so a *different* version staged later is a fresh
+    /// wait that may notify again. A *nil* probe changes nothing, and neither does the same
+    /// version re-staged — see the prune below and `StagedUpdateDeadline.recordSighting`.
     func recordStagedUpdateSighting(now: Date = Date()) {
         let updated = StagedUpdateDeadline.recordSighting(
             of: stagedUpdate?.stagedVersion, into: stagedUpdateFirstSeen, now: now
