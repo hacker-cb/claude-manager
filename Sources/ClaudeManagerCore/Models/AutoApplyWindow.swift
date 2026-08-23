@@ -157,16 +157,28 @@ public enum AutoApplyDecision: Equatable, Sendable {
     ///
     /// Timing is the whole design. Offering the moment an update is downloaded would be noise:
     /// most waits end within minutes of the user seeing the banner and clicking Apply. Offering
-    /// once it has been stuck past ``stuckThreshold`` — long enough to have sat through a night
-    /// — means the suggestion arrives with the evidence for it already on screen.
-    public static func shouldOfferEnabling(alreadyEnabled: Bool, waited: TimeInterval) -> Bool {
-        !alreadyEnabled && waited >= stuckThreshold
+    /// once it has been stuck past ``stuckThreshold`` means the suggestion arrives with the
+    /// evidence for it already on screen.
+    /// `dismissed` is the user having said no. Without it the offer would reappear on every
+    /// launch for the rest of the update's life — and the population this targets is exactly
+    /// the one whose update *never* applies, so "it goes away when the update installs" is no
+    /// answer for them.
+    public static func shouldOfferEnabling(
+        alreadyEnabled: Bool,
+        dismissed: Bool,
+        waited: TimeInterval
+    ) -> Bool {
+        !alreadyEnabled && !dismissed && waited >= stuckThreshold
     }
 
-    /// How long an update must have been waiting before enabling is suggested. Twelve hours is
-    /// past any plausible "I'll click it in a moment", and guarantees a night has gone by —
-    /// which is precisely what the offer is about.
-    public static let stuckThreshold: TimeInterval = 12 * 3600
+    /// How long an update must have been waiting before enabling is suggested.
+    ///
+    /// **A full day**, not twelve hours. The offer's premise is "this could already have been
+    /// installed for you", and only a whole day makes that true whatever time the update
+    /// arrived: twelve hours from a 07:00 sighting is 19:00 — no night has passed, and a
+    /// night-time window has not come round even once. Twenty-four guarantees the user's
+    /// window elapsed regardless of where in the day the clock started.
+    public static let stuckThreshold: TimeInterval = 24 * 3600
 
     /// How long to wait after a failed unattended attempt before trying that same staged
     /// version again.

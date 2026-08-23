@@ -179,24 +179,40 @@ struct AutoApplyWindowTests {
         // Most updates are applied within minutes of the banner appearing. Suggesting at
         // download time would put a prompt in front of everyone, for a problem almost nobody
         // has yet.
-        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 0))
-        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 3 * 3600))
+        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, dismissed: false, waited: 0))
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: false, waited: 12 * 3600
+        ))
     }
 
     @Test
-    func offersOnceANightHasGoneBy() {
-        // Past the threshold the evidence is on screen: the update is still sitting there,
-        // and the suggestion is next to it.
+    func offersOnceAFullDayHasPassed() {
+        // A full day, not twelve hours: the offer's premise is "this could already have been
+        // installed for you", and only a whole day makes that true whatever time the update
+        // arrived — twelve hours from a 07:00 sighting is 19:00, with no night-time window
+        // having come round at all.
         #expect(AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: false, waited: AutoApplyDecision.stuckThreshold
+            alreadyEnabled: false, dismissed: false, waited: AutoApplyDecision.stuckThreshold
         ))
-        #expect(AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, waited: 40 * 3600))
+        #expect(AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: false, waited: 70 * 3600
+        ))
     }
 
     @Test
     func neverOffersWhatIsAlreadyOn() {
         #expect(!AutoApplyDecision.shouldOfferEnabling(
-            alreadyEnabled: true, waited: 40 * 3600
+            alreadyEnabled: true, dismissed: false, waited: 70 * 3600
+        ))
+    }
+
+    @Test
+    func takesNoForAnAnswer() {
+        // The population this targets is the one whose update never applies, so "it goes away
+        // when the update installs" is no answer for them — without a remembered no, the offer
+        // would reappear at every launch for days.
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: true, waited: 70 * 3600
         ))
     }
 }

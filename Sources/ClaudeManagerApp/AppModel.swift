@@ -127,6 +127,27 @@ final class AppModel: ObservableObject {
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
     @Published private(set) var isApplyingStagedUpdate = false
+    /// Whether to show the "turn on nightly applying?" line in the staged-update banner, and
+    /// the wait it quotes.
+    ///
+    /// **Published, not computed in the view.** Deriving it needs `stagedUpdateDeadline`,
+    /// which reads Claude's `Info.plist` and the managed-config overlay — several file reads
+    /// and a JSON parse. `RootView.body` re-runs on every publish, on layout, and again
+    /// through the banner-height round trip, so computing it there would put synchronous disk
+    /// I/O on the main thread repeatedly for as long as a staged update exists.
+    @Published private(set) var autoApplyOffer: AutoApplyOffer?
+
+    /// The banner's enabling offer: whether to show it, and the wait to quote.
+    struct AutoApplyOffer: Equatable {
+        let waitDescription: String
+        let windowText: String
+    }
+
+    /// Set the offer (`private(set)`, driven by `AppModel+AutoApply` during a refresh).
+    func setAutoApplyOffer(_ value: AutoApplyOffer?) {
+        autoApplyOffer = value
+    }
+
     /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
     /// refresh it from the background tick without a full `refresh()`).
     func setStagedUpdate(_ value: StagedUpdate?) {
@@ -374,6 +395,7 @@ final class AppModel: ObservableObject {
         // there are none — the default profile can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
         recordStagedUpdateSighting()
+        refreshAutoApplyOffer()
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
         await notifyStagedDeadlineIfNeeded()

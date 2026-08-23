@@ -88,35 +88,69 @@ extension AppModel {
         }
     }
 
-    /// Whether to suggest turning unattended applying on, right now.
-    ///
-    /// Deliberately derived, not stored: there is no "dismissed" state to keep. The offer is
-    /// one extra line inside a banner the user is already looking at, and it disappears by
-    /// itself the moment the update is applied — so there is nothing to dismiss, and nothing
-    /// that can get stuck showing.
-    var shouldOfferAutoApply: Bool {
-        guard let deadline = stagedUpdateDeadline else { return false }
-        return AutoApplyDecision.shouldOfferEnabling(
+    /// Recompute the banner offer. Called from `refresh()` — never from a view body, where
+    /// the file reads behind `stagedUpdateDeadline` would land on the main thread on every
+    /// layout pass.
+    func refreshAutoApplyOffer(now: Date = Date()) {
+        guard let version = stagedUpdate?.stagedVersion, let deadline = stagedUpdateDeadline else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        let waited = deadline.waited(asOf: now)
+        guard AutoApplyDecision.shouldOfferEnabling(
             alreadyEnabled: autoApplyEnabled,
-            waited: deadline.waited(asOf: Date())
-        )
+            dismissed: dismissedAutoApplyOffer.contains(version),
+            waited: waited
+        ) else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        setAutoApplyOffer(AppModel.AutoApplyOffer(
+            waitDescription: Self.waitDescription(waited),
+            windowText: autoApplyWindow.displayText
+        ))
     }
 
-    /// How long the staged update has been waiting, for the offer's wording.
-    var stagedWaitDescription: String {
-        guard let deadline = stagedUpdateDeadline else { return "a while" }
-        let hours = Int(deadline.waited(asOf: Date()) / 3600)
+    /// "36 hours" / "over a day" / "3 days", for the offer's first sentence.
+    ///
+    /// `Int(exactly:)` rather than a plain conversion: `waited` comes from a date decoded out
+    /// of `UserDefaults` with no range check, and a corrupt or hand-edited entry (`1e300`)
+    /// would trap on the conversion — crashing the app from a banner render. Same hazard
+    /// `ManagedConfigWriter.integer` already guards.
+    static func waitDescription(_ waited: TimeInterval) -> String {
+        guard let hours = Int(exactly: (waited / 3600).rounded(.down)) else { return "a while" }
         guard hours >= 24 else { return "\(hours) hours" }
         let days = hours / 24
         return days == 1 ? "over a day" : "\(days) days"
     }
 
-    /// Accept the offer: switch unattended applying on, with the suggested window.
+    /// Staged versions whose enabling offer the user has declined.
+    var dismissedAutoApplyOffer: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.dismissedAutoApplyOffer) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.dismissedAutoApplyOffer) }
+    }
+
+    /// Decline the offer for the staged version currently on screen.
+    func dismissAutoApplyOffer() {
+        guard let version = stagedUpdate?.stagedVersion else { return }
+        objectWillChange.send()
+        dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version])
+    }
+
+    /// Accept the offer: switch unattended applying on.
     ///
-    /// This is the whole point of offering rather than defaulting — the user turning it on is
+    /// A window stored from an earlier session is reused as-is — the confirmation names it, so
+    /// nothing is silently restored — except an **empty** one (start == end), which admits no
+    /// time at all and would leave the feature enabled but permanently inert. That one is
+    /// replaced with the suggested night window.
+    ///
+    /// This is the whole point of offering rather than defaulting: the user turning it on is
     /// the same event as the app being allowed to close their profiles, instead of two
     /// independent ones where the second can happen without the first having landed.
     func enableAutoApplyFromOffer() {
+        if autoApplyWindow.startMinutes == autoApplyWindow.endMinutes {
+            autoApplyWindow = .suggested
+        }
         Log.autoApply.info("enabled from the stuck-update offer")
         autoApplyEnabled = true
     }

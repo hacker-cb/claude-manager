@@ -52,4 +52,8 @@ enum PreferenceKeys {
     /// retried every minute for the rest of the window, closing and reopening every other
     /// profile each time.
     static let autoApplyLastFailure = "autoApplyLastFailure"
+    /// Staged versions whose "turn on nightly applying?" offer the user declined. Persisted
+    /// because the offer targets updates that may never apply — without a remembered "no" it
+    /// would reappear at every launch for days.
+    static let dismissedAutoApplyOffer = "dismissedAutoApplyOffer"
 }

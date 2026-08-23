@@ -278,6 +278,27 @@ Turning it on from that offer makes consent and the action it licenses **one eve
 alternative — on by default with a one-time announcement — was written and rejected; see
 `DECISIONS.md` for why four separate props were needed to make one flag safe.
 
+Three details the offer needs to stay honest. It is **confirmed**, with the same disclosure
+the Settings toggle carries — accepting licenses unattended profile-quitting, and a one-click
+yes must not be the least-informed path to that. It **names the window it would use**, since a
+window stored in an earlier session is reused as-is (only an *empty* one, which admits no time
+at all, is replaced with the suggested night). And it **takes no for an answer**: the
+population it targets is precisely the one whose update never applies, so "it disappears when
+the update installs" would mean a prompt at every launch for days.
+
+The threshold is a **full day**, not a night: twelve hours from a 07:00 sighting is 19:00, with
+no night-time window having come round at all, so the offer's premise ("this could already have
+been installed for you") would not yet be true.
+
+**Notifications are presented while the app is frontmost.** `AppDelegate` conforms to
+`UNUserNotificationCenterDelegate` and returns `[.banner, .list, .sound]` from `willPresent`.
+Without it UserNotifications drops every notification an *active* app posts — which silently
+covered all four this app has (the staged-update nag, the forced-restart warning, the
+profiles-left-closed notice and the usage-limit warnings), each of them posted from a refresh
+the user often triggers themselves with the app in front. `.sound` is in the list because
+`AppModel+UsageNotifications` sets a sound only for a *critical* limit, and dropping it would
+mute that escalation exactly when the user is looking at the app.
+
 `AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
 while nobody is watching — "it silently did nothing" is the hardest failure to diagnose
 afterwards, so the verdict is a value that can be logged and asserted on. Five conditions,
