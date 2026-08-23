@@ -265,6 +265,60 @@ The outcomes are kept distinct because their advice differs: `noStagedUpdate` is
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.
 
+### Applying it unattended, inside a window you chose
+
+The deadline warning tells you the forced restart is coming; this stops it arriving. **Off
+unless switched on** (Settings → Claude updates): an apply closes every profile and reopens
+it, and doing that unasked would be the same surprise the rest of this section exists to
+prevent, only with our name on it.
+
+`AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
+while nobody is watching — "it silently did nothing" is the hardest failure to diagnose
+afterwards, so the verdict is a value that can be logged and asserted on. Five conditions,
+ordered so the reason reported is the most informative one: enabled, no apply already in
+flight, something staged, inside the window, and the Mac idle for ten minutes.
+
+Two things that ordering deliberately does *not* include. The idle check is a **courtesy** —
+it keeps windows from being yanked away mid-click, and says nothing about an autonomous
+session; that remains Claude's veto's job (above), and conflating the two would be the
+busy-detector this design refuses to grow. And `AutoApplyWindow.contains` is start-inclusive,
+end-exclusive, supports a window crossing midnight (22:00–02:00 is the natural shape of a
+night window, and the case a naive `start...end` gets wrong), and treats an **empty** window
+as admitting nothing — the alternative reading would turn a mis-set window into "apply at any
+moment".
+
+The pass runs from the monitor's tick **regardless of `NSApp.isActive`**, and that is a
+correction worth recording: gating it on being backgrounded looks right — the window is a
+time the user is away — but "away" and "our window isn't frontmost" are different things.
+Leave the manager or Settings in front and walk off, and the whole nominated window passes
+with nothing attempted. Presence is the idle check's job, and that lives inside the pass.
+What *is* branch-specific is the re-probe: while backgrounded the tick skips its usual sweep,
+so the staged update is re-read on its own (one file read) rather than through the full
+process-and-launcher scan a backgrounded menu-bar app has no business doing every minute.
+
+**One quiet failure still speaks.** `swapStillInstalling` leaves every profile closed on
+purpose — reopening would abort the install — and nothing reopens them afterwards. Unattended
+that means waking to an empty desk with no explanation, while the setting promised the
+profiles would come back, so this one outcome posts a notification: heavy enough not to
+vanish, light enough not to seize the screen at 04:30. The settings text says the same thing
+up front rather than promising a return it can't always make.
+
+**It fails quietly.** The apply is invoked with `surfacingFailures: false`. The interactive
+path deliberately fights for attention on failure — it reopens the window and activates the
+app, because a report nobody sees is no report — and that is exactly wrong at 04:30: a
+profile vetoing its quit would foreground Claude Manager with a modal alert while the user is
+asleep, which is the same class of surprise this section exists to remove. Unattended
+failures go to the log and to Doctor, both of which wait to be read.
+
+**A vetoed attempt backs off.** A refusal leaves the update staged and the in-flight flag
+clear, so without this the tick would retry every minute for the rest of the window — closing
+and reopening every *other* profile each time, and re-prompting the one that is busy. An
+attempt that leaves the same version staged is recorded, and the next attempt on it waits
+`AutoApplyDecision.retryBackoff` (six hours — the following night's window). A newly staged
+version clears the record; a recorded time in the *future* (a clock moved back) counts as no
+record at all, since a bad clock should cost one extra attempt rather than silently disable
+the feature.
+
 ### Claude protects its own working sessions
 
 A profile with a **running session** refuses to quit: Claude's own before-quit interceptor

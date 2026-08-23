@@ -36,4 +36,20 @@ enum PreferenceKeys {
     /// Staged versions whose *deadline* warning has been posted — a separate key, because it
     /// is a second, later notification about the same version.
     static let notifiedStagedDeadline = "notifiedStagedDeadline"
+
+    /// Whether Claude Manager may apply a staged Claude update unattended, inside the window
+    /// below. **Off unless the user turns it on**: an apply closes every profile and reopens
+    /// it, and doing that unasked is the same surprise this whole feature exists to prevent —
+    /// only with our name on it.
+    static let autoApplyStagedUpdate = "autoApplyStagedUpdate"
+    /// Start/end of that window as minutes since midnight, local time. Two plain integers
+    /// rather than an encoded `AutoApplyWindow`, so a settings pane can bind each end
+    /// directly and a stored value stays legible in `defaults read`.
+    static let autoApplyWindowStart = "autoApplyWindowStartMinutes"
+    static let autoApplyWindowEnd = "autoApplyWindowEndMinutes"
+    /// `[stagedVersion: seconds-since-1970]` — when an unattended attempt on that version
+    /// last failed. Drives the back-off: without it a veto (a profile busy working) would be
+    /// retried every minute for the rest of the window, closing and reopening every other
+    /// profile each time.
+    static let autoApplyLastFailure = "autoApplyLastFailure"
 }

@@ -127,6 +127,12 @@ final class AppModel: ObservableObject {
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
     @Published private(set) var isApplyingStagedUpdate = false
+    /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
+    /// refresh it from the background tick without a full `refresh()`).
+    func setStagedUpdate(_ value: StagedUpdate?) {
+        stagedUpdate = value
+    }
+
     /// Flip the apply-in-flight flag (`private(set)`, so the extension drives it via this).
     func setApplyingStagedUpdate(_ value: Bool) {
         isApplyingStagedUpdate = value

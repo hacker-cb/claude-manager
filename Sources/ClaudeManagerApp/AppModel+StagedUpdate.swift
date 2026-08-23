@@ -47,26 +47,45 @@ extension AppModel {
     /// if it cleared while the confirmation was open (probe blip, or applied elsewhere),
     /// `applyStagedUpdateToAll` re-reads it and returns `.noStagedUpdate`, so the user gets
     /// the "no staged update" notice instead of a silent no-op.
-    func applyStagedUpdate() async {
+    /// `surfacingFailures` is false for the unattended pass. The interactive path deliberately
+    /// *fights* for attention — it reopens the window and activates the app, because a report
+    /// nobody sees is no report. That is exactly wrong at 04:30: a profile vetoing its quit
+    /// would foreground Claude Manager with a modal alert while the user is asleep, which is
+    /// the same class of surprise this whole feature exists to remove. Unattended failures go
+    /// to the log and to Doctor instead, both of which wait to be read.
+    func applyStagedUpdate(surfacingFailures: Bool = true) async {
         guard !isApplyingStagedUpdate else { return }
         setApplyingStagedUpdate(true)
         let result = await perform { store in await store.applyStagedUpdateToAll() }
         if let result, let notice = Self.notice(for: result) {
             // `notice` is nil on success, so every message reaching here is a reason the
-            // update did not go through — and it has to actually reach the user. The apply
-            // closes every profile and can run for minutes, so by the time it reports, the
-            // user is in another app. Activating alone is not enough: `RootView` is what
-            // presents `currentError`, and Apply can be started from the menu-bar extra with
-            // no main window open at all — the alert would then have no host and stay
-            // invisible until the window happened to be reopened. So reopen it first (the
-            // delegate's closure raises the window *and* activates), falling back to a bare
-            // activate only if the binder hasn't run yet.
-            if let reopenWindow = AppDelegate.shared?.reopenMainWindow {
-                reopenWindow()
+            // update did not go through — and when a person asked for it, it has to actually
+            // reach them. The apply closes every profile and can run for minutes, so by the
+            // time it reports, the user is in another app. Activating alone is not enough:
+            // `RootView` is what presents `currentError`, and Apply can be started from the
+            // menu-bar extra with no main window open at all — the alert would then have no
+            // host and stay invisible until the window happened to be reopened. So reopen it
+            // first (the delegate's closure raises the window *and* activates), falling back
+            // to a bare activate only if the binder hasn't run yet.
+            if surfacingFailures {
+                if let reopenWindow = AppDelegate.shared?.reopenMainWindow {
+                    reopenWindow()
+                } else {
+                    NSApp.activate()
+                }
+                currentError = AppError(title: Self.alertTitle(for: result.outcome), message: notice)
             } else {
-                NSApp.activate()
+                Log.autoApply.info("unattended apply did not complete: \(notice, privacy: .public)")
+                // One outcome can't be left to the log alone. `swapStillInstalling` leaves
+                // every profile **closed** on purpose — reopening would abort the install —
+                // and nothing reopens them afterwards. Unattended, that means waking up to an
+                // empty desk with no explanation, while the setting promised the profiles
+                // would come back. A notification is the right weight for it: it waits to be
+                // read instead of seizing the screen at 04:30, but it does not vanish.
+                if case .swapStillInstalling = result.outcome {
+                    await notifyProfilesLeftClosed(notice: notice)
+                }
             }
-            currentError = AppError(title: Self.alertTitle(for: result.outcome), message: notice)
         }
         // The swap replaced /Applications/Claude.app, so re-read its on-disk version first —
         // otherwise the default profile's version display lags a build until the next poll.
@@ -232,6 +251,21 @@ extension AppModel {
             return
         }
         notifiedStagedDeadline.insert(staged.stagedVersion)
+    }
+
+    /// Tell the user their profiles were left closed, and why — the one unattended outcome
+    /// that changes what they see when they sit down, rather than merely failing to change
+    /// anything. Delivered immediately (no trigger): the fact is already true.
+    private func notifyProfilesLeftClosed(notice: String) async {
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Your profiles are closed — Claude is still installing"
+        content.body = notice
+        try? await center.add(UNNotificationRequest(
+            identifier: "claude-profiles-left-closed", content: content, trigger: nil
+        ))
     }
 
     /// Shared by the scheduler and the withdrawal below. One definition, because the two
