@@ -118,7 +118,10 @@ struct RootView: View {
             // not be a way to license unattended profile-quitting on less information than
             // the settings pane would have given.
             Text(
-                "Between \(model.autoApplyOffer?.windowText ?? AutoApplyWindow.suggested.displayText), "
+                // The offer can clear while this dialog is up (it is driven by separate view
+                // state), so the fallback must name the window an acceptance would install —
+                // not the suggested one, which may not be it.
+                "Between \(model.autoApplyOffer?.windowText ?? model.effectiveAutoApplyWindow.displayText), "
                     + "when your Mac has been idle for 10 minutes, Claude Manager will quit every "
                     + "profile, install the update, and reopen the ones that were running. A "
                     + "profile that is still working refuses to quit and the attempt is called "

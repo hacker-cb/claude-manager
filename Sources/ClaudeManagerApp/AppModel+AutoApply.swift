@@ -43,6 +43,10 @@ extension AppModel {
         set {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate)
+            // `alreadyEnabled` is one of the offer's inputs, so this path has to recompute
+            // like the others — otherwise enabling from Settings leaves the banner offering
+            // to turn on something already on, with a live button that would re-run it.
+            refreshAutoApplyOffer()
         }
     }
 
@@ -106,7 +110,15 @@ extension AppModel {
     /// layout pass — and again from every path that changes one of its inputs, since a cached
     /// answer that outlives its inputs is a button that looks broken.
     func refreshAutoApplyOffer(now: Date = Date()) {
-        guard let version = stagedUpdate?.stagedVersion, let deadline = stagedUpdateDeadline else {
+        // Cheap disqualifiers first. `stagedUpdateDeadline` reads Claude's `Info.plist` and
+        // the managed-config overlay, and the Settings window pickers only exist while the
+        // feature is *enabled* — so evaluating it first would do file I/O on every tick of a
+        // time picker to compute an answer already known to be nil.
+        guard !autoApplyEnabled, let version = stagedUpdate?.stagedVersion else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        guard let deadline = stagedUpdateDeadline else {
             setAutoApplyOffer(nil)
             return
         }
@@ -174,9 +186,15 @@ extension AppModel {
     /// the same event as the app being allowed to close their profiles, instead of two
     /// independent ones where the second can happen without the first having landed.
     func enableAutoApplyFromOffer() {
+        let version = autoApplyOffer?.stagedVersion
         autoApplyWindow = effectiveAutoApplyWindow // no-op unless the stored one was empty
         Log.autoApply.info("enabled from the stuck-update offer")
         autoApplyEnabled = true
+        // Accepting is an answer to the question, just as declining is. Without recording it,
+        // turning the feature back off in Settings would make the banner ask again on the
+        // next refresh — and keep asking for the life of this staged version, since only the
+        // x button ever wrote the set. The user answered twice, deliberately, both times.
+        if let version { dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version]) }
         setAutoApplyOffer(nil) // it is on now — the banner must stop offering it
     }
 

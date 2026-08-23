@@ -347,6 +347,8 @@ final class AppModel: ObservableObject {
             // A vanished Claude has no staged update to apply; clear it so the banner doesn't
             // outlive the app it refers to (refresh, its only other writer, bails while nil).
             stagedUpdate = nil
+            // The offer describes that update; it must not outlive it either.
+            autoApplyOffer = nil
             locateError = Self.describe(error)
         }
     }
@@ -486,6 +488,8 @@ final class AppModel: ObservableObject {
         if located.real == nil {
             primaryProfile = nil
             stagedUpdate = nil
+            // The offer describes that update; it must not outlive it either.
+            autoApplyOffer = nil
         }
         locateError = located.error
     }
