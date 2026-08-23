@@ -112,6 +112,26 @@ so a released build shows a working toggle and any local build — ad-hoc `make 
 Developer ID `make archive` alike — never lands in the user's Login Items. See [DEVELOPMENT.md](DEVELOPMENT.md) § Dev builds carry a
 separate identity for the broader identity split.
 
+## Merging dev → master
+
+The release PR can arrive `BEHIND` on an **empty diff**. Every previous release left a merge
+commit on `master` that `dev` never took back, and `strict_required_status_checks_policy` is
+on — so GitHub requires the branch to be up to date even when the two carry identical
+content.
+
+Two things make that awkward to fix, and both are worth knowing before you hit them:
+
+- **`dev` cannot be pushed to directly** (repository rules require status checks on any
+  write), and `update-branch` on the PR fails for the same reason. The sync has to go through
+  its own PR.
+- **That sync PR has an empty diff**, so `copilot-review-gate` never gets a review out of
+  Copilot — it answers "wasn't able to review any files" and the gate fails after its 15-minute
+  wait. Give the PR something real to review (this section was written for exactly that
+  reason), or merge it with admin rights.
+
+Merge the sync PR as a **merge commit**, not a squash: squashing flattens away the very
+commits `dev` needs in its history for the release PR to stop reading as behind.
+
 ## Cutting a release
 
 ```bash

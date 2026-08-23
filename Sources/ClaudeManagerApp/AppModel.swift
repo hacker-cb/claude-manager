@@ -127,8 +127,11 @@ final class AppModel: ObservableObject {
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
     @Published private(set) var isApplyingStagedUpdate = false
-    /// Staged versions already surfaced as a notification, so it nags once per version.
-    var notifiedStagedUpdate: Set<String> = []
+    /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
+    /// refresh it from the background tick without a full `refresh()`).
+    func setStagedUpdate(_ value: StagedUpdate?) {
+        stagedUpdate = value
+    }
 
     /// Flip the apply-in-flight flag (`private(set)`, so the extension drives it via this).
     func setApplyingStagedUpdate(_ value: Bool) {
@@ -256,7 +259,9 @@ final class AppModel: ObservableObject {
     var brokerApplyTask: Task<Void, Never>?
     private var didFinishInit = false
 
-    private let defaults: UserDefaults
+    /// Non-private: `AppModel+StagedUpdate` persists the staged-update ledgers through it,
+    /// and injecting the store is what keeps those tests off the host's real preferences.
+    let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -368,8 +373,10 @@ final class AppModel: ObservableObject {
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
         // there are none — the default profile can still have one staged).
         stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
+        recordStagedUpdateSighting()
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
+        await notifyStagedDeadlineIfNeeded()
         // Detached: the editor's Save awaits `refresh()`, and a usage pass issues per-account
         // HTTP with a 5s timeout each — awaiting it froze the sheet for tens of seconds offline.
         Task { await refreshUsageIfBindingsChanged() }

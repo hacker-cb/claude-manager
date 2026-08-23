@@ -154,6 +154,19 @@ install because profiles are open, a banner (and a notification) offer **Apply t
 profiles** — it quits every profile, lets the update install, and reopens the ones
 that were running.
 
+Claude Manager can also do this for you, inside a window you choose (Settings → Claude
+updates, off by default) — so the update lands at 4 am on your terms rather than when Claude
+decides to restart the default profile on its own. It only acts when the Mac has been idle
+for ten minutes, and the same protection applies: a working profile refuses to quit and the
+attempt is called off.
+
+A profile that is **still working** won't be closed: Claude refuses the quit and offers
+"Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
+answer — it stops the apply before anything is swapped and reopens whatever it had
+already closed. Installing a large update can take a while; while it is in progress your
+profiles stay closed on purpose, because reopening one mid-install makes the installer
+abort and start over.
+
 ## Troubleshooting
 
 Open the **Doctor** tab for a health report. Common findings:
@@ -163,6 +176,8 @@ Open the **Doctor** tab for a health report. Common findings:
 | _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
 | _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
 | _Claude vX staged but not applied — N running instance(s) block the swap_ | Click **Apply to all profiles** (window banner) or **Apply Claude vX to all profiles** (menu bar) to quit, install, and reopen everything at once. |
+| _Claude's installer has been waiting N min_ | The installer is blocked, not working — it waits for every profile to quit, indefinitely. Same fix: **Apply to all profiles**. |
+| _The last install attempt didn't complete_ | What Claude's installer reported the last time it tried. Usually "a Claude instance was running" — apply again with everything closed. |
 | _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
 | _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |

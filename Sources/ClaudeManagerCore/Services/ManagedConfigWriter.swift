@@ -91,6 +91,34 @@ public struct ManagedConfigWriter {
         return (current[key] as? Bool) == true
     }
 
+    /// An integer flat key from the overlay, or `nil` when it isn't set.
+    ///
+    /// Used for `autoUpdaterEnforcementHours`, where the *value* matters and not merely its
+    /// presence: it shortens the window after which Claude restarts the default profile by
+    /// itself, so an estimate built on the 72 h default would stay silent long past the real
+    /// deadline on a deployment that lowered it.
+    ///
+    /// `nil` under MDM for the same reason `hasFlag` returns false: the managed tier takes
+    /// over there and this local overlay is not what Claude reads, so its value would be a
+    /// guess. Callers fall back to the documented default and say so.
+    public func integer(_ key: String, userDataPath: String) -> Int? {
+        if mdmPresent { return nil }
+        let configLibrary = Self.configLibraryURL(forUserDataPath: userDataPath)
+        guard let appliedID = readAppliedID(at: configLibrary.appendingPathComponent("_meta.json")),
+              let current = readJSONObject(at: configLibrary.appendingPathComponent("\(appliedID).json"))
+        else { return nil }
+        // `as? Int` alone misses a JSON number decoded as `Double`, which is how a value
+        // written by another tool commonly arrives. `Int(exactly:)` on the raw value, with no
+        // rounding: it rejects both what would **trap** (`1e30` is a valid JSON number, and
+        // plain `Int(_:)` traps on it — a malformed file would crash the app from a refresh)
+        // and what is simply **not an integer**. Claude's own schema for these is `int()`, so
+        // `12.5` is a malformed policy, and silently reading it as 12 or 13 would invent a
+        // value nobody configured. Both fall back to the documented default instead.
+        if let value = current[key] as? Int { return value }
+        if let value = current[key] as? Double { return Int(exactly: value) }
+        return nil
+    }
+
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
     /// present with the wanted value. Used by `Doctor` to spot a clone whose overlay
     /// is missing (e.g. a best-effort write that silently failed). MDM presence counts

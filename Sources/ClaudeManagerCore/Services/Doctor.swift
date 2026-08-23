@@ -75,32 +75,6 @@ public struct Doctor {
         )
     }
 
-    /// A warning when a Claude update is staged but not applied — ShipIt can't swap
-    /// `/Applications/Claude.app` while any instance runs, the "Update didn't complete"
-    /// case. Distinct from the per-launcher version-skew warning (there the swap happened).
-    private func stagedUpdateDiagnostics() -> [Diagnostic] {
-        guard let realClaude,
-              let staged = StagedUpdateProbe(
-                  realClaude: realClaude,
-                  shipItStatePath: configuration.shipItStatePath,
-                  fileManager: fileManager
-              ).probe()
-        else { return [] }
-        // Count only real-Claude instances (default + clones exec the real binary) — not
-        // Claude Manager's own process, whose path also contains "Claude".
-        let running = processProbe.allClaudeMains()
-            .count(where: { $0.isRealClaudeBinary(realClaude) })
-
-        let blockers = running == 0
-            ? ""
-            : " — \(running) running instance\(running == 1 ? "" : "s") block the swap"
-        return [Diagnostic(
-            severity: .warning,
-            title: "Claude \(staged.stagedVersion) staged but not applied\(blockers)",
-            detail: "Use “Apply to all profiles” to quit every profile, swap, and reopen"
-        )]
-    }
-
     // MARK: - Individual checks
 
     private func realClaudeDiagnostic() -> Diagnostic {
