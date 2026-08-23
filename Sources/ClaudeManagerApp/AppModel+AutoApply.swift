@@ -147,7 +147,7 @@ extension AppModel {
         let waited = deadline.waited(asOf: now)
         guard AutoApplyDecision.shouldOfferEnabling(
             alreadyEnabled: enabled,
-            dismissed: answered.contains(version),
+            answered: answered.contains(version),
             waited: waited
         ) else {
             setAutoApplyOffer(nil)
