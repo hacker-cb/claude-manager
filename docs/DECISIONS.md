@@ -178,10 +178,13 @@ looking at, once the update has been stuck past `AutoApplyDecision.stuckThreshol
 the action it licenses become one event: there is no announcement that can fail to arrive, and
 if the offer is never shown then nothing was ever enabled — the failure mode is the safe one.
 
-It does persist a declined-offer set, which the first sketch of this section claimed it would
+It does persist an answered-offer set, which the first sketch of this section claimed it would
 not need. The offer targets updates that may never apply, so "it disappears when the update
-installs" is no answer for the very people it is aimed at; without a remembered no it would
-reappear at every launch for days. That set is pruned alongside the notification ledgers, so a
+installs" is no answer for the very people it is aimed at; without a remembered answer it would
+reappear at every launch for days. It records an answer rather than a refusal because touching
+the Settings toggle answers the same question — enabling *and* disabling — and recording only
+refusals is how turning the feature on and then changing your mind re-raised the banner
+instantly, under the cursor that had just dismissed the idea. That set is pruned alongside the notification ledgers, so a
 **different** version staged later asks again. The same version re-staged after a rollback does
 not: the prune only runs when the recorded sighting changes, and a nil probe deliberately
 preserves it (`StagedUpdateDeadline.recordSighting`). It errs toward asking too little.

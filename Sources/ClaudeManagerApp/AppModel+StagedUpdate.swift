@@ -169,7 +169,7 @@ extension AppModel {
         // guard above returns early when nothing changed. So a version declined, installed,
         // and later re-staged unchanged stays declined. That is the price of not resetting on
         // a transient nil, and it errs toward asking too little rather than too often.
-        dismissedAutoApplyOffer = dismissedAutoApplyOffer.intersection(live)
+        answeredAutoApplyOffer = answeredAutoApplyOffer.intersection(live)
     }
 
     /// The wait and the estimated forced restart for the current staged update, if we have

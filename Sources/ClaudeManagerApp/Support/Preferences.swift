@@ -57,8 +57,10 @@ enum PreferenceKeys {
     /// retried every minute for the rest of the window, closing and reopening every other
     /// profile each time.
     static let autoApplyLastFailure = "autoApplyLastFailure"
-    /// Staged versions whose "turn on nightly applying?" offer the user declined. Persisted
-    /// because the offer targets updates that may never apply — without a remembered "no" it
-    /// would reappear at every launch for days.
-    static let dismissedAutoApplyOffer = "dismissedAutoApplyOffer"
+    /// Staged versions whose "turn on nightly applying?" offer the user has **answered** —
+    /// either way. Declining is the common one, but turning the feature on is just as much an
+    /// answer, and so is turning it back off; all three write here, so the banner stops asking
+    /// about that version. Persisted because the offer targets updates that may never apply —
+    /// without a remembered answer it would reappear at every launch for days.
+    static let answeredAutoApplyOffer = "answeredAutoApplyOffer"
 }

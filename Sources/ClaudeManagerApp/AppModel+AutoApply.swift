@@ -50,7 +50,7 @@ extension AppModel {
             // enabling-from-Settings-then-changing-your-mind ended up re-raising the offer
             // *instantly*, under the cursor that had just dismissed the idea.
             if let version = stagedUpdate?.stagedVersion {
-                dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version])
+                answeredAutoApplyOffer = answeredAutoApplyOffer.union([version])
             }
             // `alreadyEnabled` is also one of the offer's inputs, so recompute like the other
             // mutation paths.
@@ -131,7 +131,7 @@ extension AppModel {
             setAutoApplyOffer(nil)
             return
         }
-        let declined = dismissedAutoApplyOffer
+        let declined = answeredAutoApplyOffer
         guard !declined.contains(version) else {
             setAutoApplyOffer(nil)
             return
@@ -185,10 +185,11 @@ extension AppModel {
         return days == 1 ? "over a day" : "\(days) days"
     }
 
-    /// Staged versions whose enabling offer the user has declined.
-    var dismissedAutoApplyOffer: Set<String> {
-        get { Set(defaults.stringArray(forKey: PreferenceKeys.dismissedAutoApplyOffer) ?? []) }
-        set { defaults.set(Array(newValue), forKey: PreferenceKeys.dismissedAutoApplyOffer) }
+    /// Staged versions whose enabling offer the user has answered — declined, or answered by
+    /// touching the Settings toggle either way. `PreferenceKeys` says why all three land here.
+    var answeredAutoApplyOffer: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.answeredAutoApplyOffer) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.answeredAutoApplyOffer) }
     }
 
     /// Decline the offer for the version the banner is **actually showing**.
@@ -198,7 +199,7 @@ extension AppModel {
     /// the row rendering and its click landing, and recording the decline against current
     /// state would then suppress an offer that was never on screen.
     func dismissAutoApplyOffer(version: String) {
-        dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version])
+        answeredAutoApplyOffer = answeredAutoApplyOffer.union([version])
         setAutoApplyOffer(nil) // the input changed; don't leave the line on screen for a minute
     }
 
