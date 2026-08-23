@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 
 /// AppKit delegate wired in via `NSApplicationDelegateAdaptor`. It owns the app lifecycle
 /// and Dock-icon (activation-policy) behavior that SwiftUI's `Window` scene doesn't expose
@@ -18,7 +19,7 @@ import AppKit
 ///   menu-bar-only and dismisses its auto-opened window; a manual launch keeps the window
 ///   (see `applicationDidFinishLaunching` / `shouldDismissInitialWindow`).
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     /// Reopens the main window. Set by the `Window` scene once its content appears and
     /// stays valid for the life of the process (the scene lives in `body` even while its
     /// window is closed). `nil` only before that first appearance, a harmless no-op.
@@ -118,6 +119,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // manual relaunch is non-default too, but keeps its window and flips back to
         // `.regular`.
         setDockIconVisible(!launchWasNonDefault)
+        // Without this, every notification the app posts is **silently dropped whenever the
+        // app is frontmost** — UserNotifications only presents one to an active app if a
+        // delegate says to. That hits exactly the cases the notifications exist for: the
+        // staged-update nag, the forced-restart warning, the "your profiles were left closed"
+        // notice, and the one-time announcement that unattended applying is now on. Each is
+        // posted from a launch or refresh the user may well have triggered themselves, with
+        // the app in front.
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Present notifications even while the app is active — see the delegate assignment
+    /// above. `.banner` and `.list` so it behaves like any other app's alert and stays in
+    /// Notification Centre for later.
+    /// `nonisolated` because the protocol hands over non-`Sendable` arguments, and this
+    /// implementation reads none of them — nor any actor state. It answers a constant.
+    nonisolated func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list]
     }
 
     /// Whether the initial (auto-opened) launch window should be dismissed to keep a login

@@ -178,15 +178,32 @@ struct AutoApplyWindowTests {
     func announcesOnceToAnInstallThatInheritedTheDefault() {
         // The feature arrives through a Sparkle auto-update, so profiles would otherwise
         // start closing overnight with no explanation — the surprise it exists to remove.
-        #expect(AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: false, userSetTheToggle: false))
-        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: true, userSetTheToggle: false))
+        #expect(AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: false, userSetTheToggle: false, hasProfiles: true
+        ))
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: true, userSetTheToggle: false, hasProfiles: true
+        ))
     }
 
     @Test
     func saysNothingToSomeoneWhoAlreadyChose() {
         // Their preference stands untouched either way, and calling it "a new default" when
         // they set it themselves would simply be false.
-        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: false, userSetTheToggle: true))
-        #expect(!AutoApplyDecision.shouldAnnounceDefault(alreadyAnnounced: true, userSetTheToggle: true))
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: false, userSetTheToggle: true, hasProfiles: true
+        ))
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: true, userSetTheToggle: true, hasProfiles: true
+        ))
+    }
+
+    @Test
+    func saysNothingOnAFirstRunWithNoProfilesYet() {
+        // Nothing to update, and no change to report — that person never had another default.
+        // They get it once they have a profile, which is the first moment it means anything.
+        #expect(!AutoApplyDecision.shouldAnnounceDefault(
+            alreadyAnnounced: false, userSetTheToggle: false, hasProfiles: false
+        ))
     }
 }

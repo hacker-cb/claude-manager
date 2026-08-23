@@ -38,9 +38,10 @@ enum PreferenceKeys {
     static let notifiedStagedDeadline = "notifiedStagedDeadline"
 
     /// Whether Claude Manager may apply a staged Claude update unattended, inside the window
-    /// below. **Off unless the user turns it on**: an apply closes every profile and reopens
-    /// it, and doing that unasked is the same surprise this whole feature exists to prevent —
-    /// only with our name on it.
+    /// below. **On unless the user turns it off** — with it off, a Mac running clones never
+    /// installs a Claude update at all. Read through `object(forKey:)`, never
+    /// `bool(forKey:)`: the latter reads an unset key as `false`, which would make "never
+    /// configured" indistinguishable from "explicitly turned off".
     static let autoApplyStagedUpdate = "autoApplyStagedUpdate"
     /// Start/end of that window as minutes since midnight, local time. Two plain integers
     /// rather than an encoded `AutoApplyWindow`, so a settings pane can bind each end
@@ -52,8 +53,10 @@ enum PreferenceKeys {
     /// retried every minute for the rest of the window, closing and reopening every other
     /// profile each time.
     static let autoApplyLastFailure = "autoApplyLastFailure"
-    /// Whether the one-time "this is now on by default" notice has been posted. Set even when
-    /// the notification itself fails to post: the settings pane carries the same information
-    /// permanently, and a notice worth showing once is not worth retrying at every launch.
+    /// Whether the one-time "this is on by default" notice has been posted. Set **only after
+    /// the notification is actually accepted** — an unanswered permission prompt or a failed
+    /// post leaves it unset so a later launch retries. Retiring it early would silence the
+    /// notice for precisely the people who never saw it, and that notice is what makes a
+    /// default that closes windows defensible.
     static let autoApplyDefaultAnnounced = "autoApplyDefaultAnnounced"
 }

@@ -72,7 +72,8 @@ public enum AutoApplyDecision: Equatable, Sendable {
     case skip(Reason)
 
     public enum Reason: Equatable, Sendable {
-        /// The user hasn't turned it on. The default, deliberately.
+        /// The user turned it off. Unattended applying is **on** by default (see
+        /// `AppModel.autoApplyEnabled`), so reaching this means an explicit choice.
         case disabled
         /// Outside the nominated window.
         case outsideWindow
@@ -157,11 +158,17 @@ public enum AutoApplyDecision: Equatable, Sendable {
     /// Announced only when the default is what decided it. Someone who already set the toggle
     /// either way has made the choice knowingly and needs no notice — their preference is
     /// untouched, and telling them about "a new default" would be false.
+    ///
+    /// `hasProfiles` keeps it from firing on a first run of a fresh install, where there is
+    /// nothing to update and no change to report — the notice would be describing a default
+    /// that person never had anything else. They get it once they actually have a profile,
+    /// which is the first moment it means anything.
     public static func shouldAnnounceDefault(
         alreadyAnnounced: Bool,
-        userSetTheToggle: Bool
+        userSetTheToggle: Bool,
+        hasProfiles: Bool
     ) -> Bool {
-        !alreadyAnnounced && !userSetTheToggle
+        !alreadyAnnounced && !userSetTheToggle && hasProfiles
     }
 
     /// How long to wait after a failed unattended attempt before trying that same staged

@@ -116,23 +116,30 @@ extension AppModel {
     func announceAutoApplyDefaultIfNeeded() async {
         guard AutoApplyDecision.shouldAnnounceDefault(
             alreadyAnnounced: defaults.bool(forKey: PreferenceKeys.autoApplyDefaultAnnounced),
-            userSetTheToggle: autoApplyWasConfigured
+            userSetTheToggle: autoApplyWasConfigured,
+            hasProfiles: !profiles.isEmpty
         ) else { return }
-        // Mark it first. A notification that fails to post is not worth repeating at every
-        // launch forever; the settings pane says the same thing, permanently.
-        defaults.set(true, forKey: PreferenceKeys.autoApplyDefaultAnnounced)
-
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
+        // Not yet answered the permission prompt (it is requested moments earlier, and not
+        // awaited) — leave the flag unset so a later launch tries again. Marking it here
+        // would retire the notice for exactly the people who never saw it, and this notice
+        // is the entire reason a default that closes windows is acceptable.
         guard status == .authorized || status == .provisional else { return }
         let content = UNMutableNotificationContent()
-        content.title = "Claude updates now install overnight"
+        content.title = "Claude updates install overnight"
         content.body = "Claude Manager applies a downloaded Claude update between "
             + "\(autoApplyWindow.displayText), when your Mac is idle — quitting your profiles "
             + "and reopening them. Change the window or turn it off in Settings → Claude updates."
-        try? await center.add(UNNotificationRequest(
-            identifier: "claude-auto-apply-default", content: content, trigger: nil
-        ))
+        do {
+            try await center.add(UNNotificationRequest(
+                identifier: "claude-auto-apply-default", content: content, trigger: nil
+            ))
+        } catch {
+            Log.autoApply.error("could not post the default-change notice: \(error, privacy: .public)")
+            return // retry next launch rather than retiring a notice that never arrived
+        }
+        defaults.set(true, forKey: PreferenceKeys.autoApplyDefaultAnnounced)
     }
 
     // MARK: - The pass
