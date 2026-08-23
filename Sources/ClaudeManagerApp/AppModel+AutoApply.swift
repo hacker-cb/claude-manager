@@ -125,21 +125,21 @@ extension AppModel {
         // Each `UserDefaults`-backed value is read once — both are consulted twice below, on a
         // path that runs every refresh tick — but not before the guard that can rule them out:
         // while the feature is enabled the Settings pickers fire this on every edit, and
-        // reading the declined set there would be work to reach an answer already known.
+        // reading the answered set there would be work to reach an answer already known.
         let enabled = autoApplyEnabled
         guard !enabled, let version = stagedUpdate?.stagedVersion else {
             setAutoApplyOffer(nil)
             return
         }
-        let declined = answeredAutoApplyOffer
-        guard !declined.contains(version) else {
+        let answered = answeredAutoApplyOffer
+        guard !answered.contains(version) else {
             setAutoApplyOffer(nil)
             return
         }
         // Only now the expensive one: `stagedUpdateDeadline` reads Claude's `Info.plist` and
-        // parses the managed-config overlay. Someone who declined would otherwise pay those
-        // reads on every refresh tick for as long as the update stays staged — which, for the
-        // population this offer targets, is indefinitely.
+        // parses the managed-config overlay. Someone who has already answered would otherwise
+        // pay those reads on every refresh tick for as long as the update stays staged —
+        // which, for the population this offer targets, is indefinitely.
         guard let deadline = stagedUpdateDeadline else {
             setAutoApplyOffer(nil)
             return
@@ -147,7 +147,7 @@ extension AppModel {
         let waited = deadline.waited(asOf: now)
         guard AutoApplyDecision.shouldOfferEnabling(
             alreadyEnabled: enabled,
-            dismissed: declined.contains(version),
+            dismissed: answered.contains(version),
             waited: waited
         ) else {
             setAutoApplyOffer(nil)
