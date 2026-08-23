@@ -267,10 +267,37 @@ armed install merely failed sends them to re-download the bundle for nothing.
 
 ### Applying it unattended, inside a window you chose
 
-The deadline warning tells you the forced restart is coming; this stops it arriving. **Off
-unless switched on** (Settings → Claude updates): an apply closes every profile and reopens
-it, and doing that unasked would be the same surprise the rest of this section exists to
-prevent, only with our name on it.
+The deadline warning tells you the forced restart is coming; this stops it arriving. **Off by
+default, and offered rather than assumed**: once an update has been stuck past
+`AutoApplyDecision.stuckThreshold`, the staged-update banner grows a line suggesting it. That
+timing is the design — most updates are applied within minutes of the banner appearing, so
+offering at download time would prompt everyone about a problem almost nobody has yet, while
+offering after a night puts the suggestion next to its own evidence.
+
+Turning it on from that offer makes consent and the action it licenses **one event**. The
+alternative — on by default with a one-time announcement — was written and rejected; see
+`DECISIONS.md` for why four separate props were needed to make one flag safe.
+
+Three details the offer needs to stay honest. It is **confirmed**, with the same disclosure
+the Settings toggle carries — accepting licenses unattended profile-quitting, and a one-click
+yes must not be the least-informed path to that. It **names the window it would use**, since a
+window stored in an earlier session is reused as-is (only an *empty* one, which admits no time
+at all, is replaced with the suggested night). And it **takes no for an answer**: the
+population it targets is precisely the one whose update never applies, so "it disappears when
+the update installs" would mean a prompt at every launch for days.
+
+The threshold is a **full day**, not a night: twelve hours from a 07:00 sighting is 19:00, with
+no night-time window having come round at all, so the offer's premise ("this could already have
+been installed for you") would not yet be true.
+
+**Notifications are presented while the app is frontmost.** `AppDelegate` conforms to
+`UNUserNotificationCenterDelegate` and returns `[.banner, .list, .sound]` from `willPresent`.
+Without it UserNotifications drops every notification an *active* app posts — which silently
+covered all four this app has (the staged-update nag, the forced-restart warning, the
+profiles-left-closed notice and the usage-limit warnings), each of them posted from a refresh
+the user often triggers themselves with the app in front. `.sound` is in the list because
+`AppModel+UsageNotifications` sets a sound only for a *critical* limit, and dropping it would
+mute that escalation exactly when the user is looking at the app.
 
 `AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
 while nobody is watching — "it silently did nothing" is the hardest failure to diagnose

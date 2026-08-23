@@ -149,9 +149,9 @@ extension AppModel {
     /// at zero forever.
     ///
     /// Pruning to the current version is what keeps this a fact rather than a log: it also
-    /// clears the two notification ledgers, so a version staged again later — after a
-    /// rollback, say — is a fresh wait that may notify again. A *nil* probe changes nothing;
-    /// `StagedUpdateDeadline.recordSighting` says why.
+    /// clears the two notification ledgers, so a *different* version staged later is a fresh
+    /// wait that may notify again. A *nil* probe changes nothing, and neither does the same
+    /// version re-staged — see the prune below and `StagedUpdateDeadline.recordSighting`.
     func recordStagedUpdateSighting(now: Date = Date()) {
         let updated = StagedUpdateDeadline.recordSighting(
             of: stagedUpdate?.stagedVersion, into: stagedUpdateFirstSeen, now: now
@@ -163,6 +163,13 @@ extension AppModel {
         let live = Set(updated.keys)
         notifiedStagedUpdate = notifiedStagedUpdate.intersection(live)
         notifiedStagedDeadline = notifiedStagedDeadline.intersection(live)
+        // Same rule for the offer's declines, with the same limit the ledgers above have: the
+        // prune only runs when a *different* version is staged, because a nil probe
+        // deliberately preserves the record (`StagedUpdateDeadline.recordSighting`) and the
+        // guard above returns early when nothing changed. So a version declined, installed,
+        // and later re-staged unchanged stays declined. That is the price of not resetting on
+        // a transient nil, and it errs toward asking too little rather than too often.
+        dismissedAutoApplyOffer = dismissedAutoApplyOffer.intersection(live)
     }
 
     /// The wait and the estimated forced restart for the current staged update, if we have
@@ -334,7 +341,10 @@ extension AppModel {
         let behind = profiles.filter(\.claudeUpdateAvailable)
         // Forget skews that resolved (the instance was restarted) so a later update
         // re-notifies; a key is *added* only after its notification is actually posted.
-        notifiedClaudeUpdates.formIntersection(Set(behind.map(Self.claudeUpdateKey)))
+        // Assign only on a real change: this is `UserDefaults`-backed now, so an unconditional
+        // read-modify-write would churn the file on every refresh tick.
+        let live = notifiedClaudeUpdates.intersection(Set(behind.map(Self.claudeUpdateKey)))
+        if live != notifiedClaudeUpdates { notifiedClaudeUpdates = live }
         let fresh = behind.filter { !notifiedClaudeUpdates.contains(Self.claudeUpdateKey($0)) }
         guard !fresh.isEmpty else { return }
         let center = UNUserNotificationCenter.current()
@@ -342,16 +352,28 @@ extension AppModel {
         // Not (yet) authorized — leave keys unmarked so a later refresh retries once
         // the user has answered the permission prompt.
         guard status == .authorized || status == .provisional else { return }
+        // Collected, then written once: `notifiedClaudeUpdates` is `UserDefaults`-backed, so
+        // inserting per profile inside the loop is a read-modify-write of the whole set for
+        // each notification posted.
+        var delivered: Set<String> = []
         for managed in fresh {
             let content = UNMutableNotificationContent()
             content.title = "\(managed.profile.displayName): restart to update"
             content.body = "Running \(managed.runningClaudeVersion ?? "an older build") — "
                 + "Claude \(managed.availableClaudeVersion ?? "") is installed."
-            try? await center.add(UNNotificationRequest(
-                identifier: "claude-update-\(managed.id)", content: content, trigger: nil
-            ))
-            notifiedClaudeUpdates.insert(Self.claudeUpdateKey(managed))
+            do {
+                try await center.add(UNNotificationRequest(
+                    identifier: "claude-update-\(managed.id)", content: content, trigger: nil
+                ))
+            } catch {
+                // Now that this ledger is persisted, marking a failed post as delivered would
+                // silence that profile's "restart to update" for good — the same reason the
+                // two ledgers above record only after a successful `add`.
+                continue
+            }
+            delivered.insert(Self.claudeUpdateKey(managed))
         }
+        if !delivered.isEmpty { notifiedClaudeUpdates.formUnion(delivered) }
     }
 
     private static func claudeUpdateKey(_ managed: ManagedProfile) -> String {

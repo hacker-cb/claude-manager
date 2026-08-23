@@ -157,6 +157,35 @@ while a ShipIt process for our bundle is alive, nothing is relaunched. The poll 
 survives only as a backstop, and when it expires with ShipIt still working, CM leaves the
 profiles closed rather than trade a working install for an open window.
 
+**Offering when it's stuck — rejected: on by default with a one-time announcement.** Leaving
+unattended applying off has a real cost: a Mac running clones never installs a Claude update
+by itself, and Claude's own enforcement restarts the default profile every ~72 h to no effect.
+The obvious answer is to flip the default and announce the change once. It was written, and
+then rejected in review.
+
+The flaw is structural rather than a bug: the action (closing every profile overnight) and the
+safeguard (the notice) are **independent**. When the notice fails to arrive, nothing falls back
+to the safe state — the feature simply runs. And it fails in ordinary ways: notifications
+denied, which for a menu-bar app is common and permanent; authorization still `.notDetermined`
+on the first launch, where the request is issued moments earlier and never awaited; and a
+released version having already shipped the toggle *off*, which makes "no key written"
+indistinguishable from "saw it and chose not to". Making the default safe needed a fallback
+banner, a gate on delivery, a re-check inside the session and a migration — four props holding
+up one flag, each of them new code on a path that runs at night with nobody watching.
+
+So the default stays off, and the app **offers** instead — in the banner the user is already
+looking at, once the update has been stuck past `AutoApplyDecision.stuckThreshold`. Consent and
+the action it licenses become one event: there is no announcement that can fail to arrive, and
+if the offer is never shown then nothing was ever enabled — the failure mode is the safe one.
+
+It does persist a declined-offer set, which the first sketch of this section claimed it would
+not need. The offer targets updates that may never apply, so "it disappears when the update
+installs" is no answer for the very people it is aimed at; without a remembered no it would
+reappear at every launch for days. That set is pruned alongside the notification ledgers, so a
+**different** version staged later asks again. The same version re-staged after a rollback does
+not: the prune only runs when the recorded sighting changes, and a nil probe deliberately
+preserves it (`StagedUpdateDeadline.recordSighting`). It errs toward asking too little.
+
 **Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
 An auto-apply wants to know "is this profile actually working?", and nothing observable
 from outside answers it: power assertions don't track agent work, CPU across the process
