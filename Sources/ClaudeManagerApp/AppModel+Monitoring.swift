@@ -39,7 +39,17 @@ extension AppModel {
                 // @MainActor so NSApp.isActive is read on the main thread. Skip while a
                 // staged-update apply is in flight: re-probing is fine, but a relaunch it
                 // could trigger during the swap window would trip ShipIt's Gate 2.
-                if NSApp.isActive, !isApplyingStagedUpdate { await reconcile() }
+                if NSApp.isActive, !isApplyingStagedUpdate {
+                    await reconcile()
+                } else if autoApplyEnabled, !isApplyingStagedUpdate {
+                    // The unattended apply runs from *this* branch on purpose. Its whole
+                    // point is to land in a window the user spends away from the machine —
+                    // where `NSApp.isActive` is false and the reconcile above never runs. It
+                    // re-probes only the staged update (cheap: one file read), not the full
+                    // sweep this tick otherwise skips.
+                    await refreshStagedUpdateInBackground()
+                    await runAutoApplyPass()
+                }
             }
         }
     }

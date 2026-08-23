@@ -265,6 +265,34 @@ The outcomes are kept distinct because their advice differs: `noStagedUpdate` is
 one that should say "click Restart to update to arm it", and saying that to someone whose
 armed install merely failed sends them to re-download the bundle for nothing.
 
+### Applying it unattended, inside a window you chose
+
+The deadline warning tells you the forced restart is coming; this stops it arriving. **Off
+unless switched on** (Settings → Claude updates): an apply closes every profile and reopens
+it, and doing that unasked would be the same surprise the rest of this section exists to
+prevent, only with our name on it.
+
+`AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
+while nobody is watching — "it silently did nothing" is the hardest failure to diagnose
+afterwards, so the verdict is a value that can be logged and asserted on. Five conditions,
+ordered so the reason reported is the most informative one: enabled, no apply already in
+flight, something staged, inside the window, and the Mac idle for ten minutes.
+
+Two things that ordering deliberately does *not* include. The idle check is a **courtesy** —
+it keeps windows from being yanked away mid-click, and says nothing about an autonomous
+session; that remains Claude's veto's job (above), and conflating the two would be the
+busy-detector this design refuses to grow. And `AutoApplyWindow.contains` is start-inclusive,
+end-exclusive, supports a window crossing midnight (22:00–02:00 is the natural shape of a
+night window, and the case a naive `start...end` gets wrong), and treats an **empty** window
+as admitting nothing — the alternative reading would turn a mis-set window into "apply at any
+moment".
+
+The pass runs from the monitor's tick in the branch where `NSApp.isActive` is *false*, which
+is the opposite of everything else there. That is the point: the window is a time the user
+spends away from the machine, so the foreground reconcile never runs in it. It re-probes only
+the staged update — one file read — rather than the full process-and-launcher sweep a
+backgrounded menu-bar app has no business doing every minute.
+
 ### Claude protects its own working sessions
 
 A profile with a **running session** refuses to quit: Claude's own before-quit interceptor
