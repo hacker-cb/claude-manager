@@ -43,9 +43,17 @@ extension AppModel {
         set {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate)
-            // `alreadyEnabled` is one of the offer's inputs, so this path has to recompute
-            // like the others — otherwise enabling from Settings leaves the banner offering
-            // to turn on something already on, with a live button that would re-run it.
+            // **Touching this toggle at all is an answer to the offer's question**, whichever
+            // way it lands and wherever it came from — the banner button, the Settings pane,
+            // a future entry point. Recording it here rather than at each call site is what
+            // makes that true by construction: patching the paths one at a time is how
+            // enabling-from-Settings-then-changing-your-mind ended up re-raising the offer
+            // *instantly*, under the cursor that had just dismissed the idea.
+            if let version = stagedUpdate?.stagedVersion {
+                dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version])
+            }
+            // `alreadyEnabled` is also one of the offer's inputs, so recompute like the other
+            // mutation paths.
             refreshAutoApplyOffer()
         }
     }
@@ -186,16 +194,11 @@ extension AppModel {
     /// the same event as the app being allowed to close their profiles, instead of two
     /// independent ones where the second can happen without the first having landed.
     func enableAutoApplyFromOffer() {
-        let version = autoApplyOffer?.stagedVersion
         autoApplyWindow = effectiveAutoApplyWindow // no-op unless the stored one was empty
         Log.autoApply.info("enabled from the stuck-update offer")
+        // The setter records the answer and recomputes; this path adds only the window
+        // resolution and the log line.
         autoApplyEnabled = true
-        // Accepting is an answer to the question, just as declining is. Without recording it,
-        // turning the feature back off in Settings would make the banner ask again on the
-        // next refresh — and keep asking for the life of this staged version, since only the
-        // x button ever wrote the set. The user answered twice, deliberately, both times.
-        if let version { dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version]) }
-        setAutoApplyOffer(nil) // it is on now — the banner must stop offering it
     }
 
     // MARK: - The pass
@@ -254,9 +257,11 @@ extension AppModel {
         }.value
         setStagedUpdate(staged)
         recordStagedUpdateSighting()
-        // The staged version may have changed under the offer; recompute rather than leaving
-        // the banner quoting a wait that belongs to a version no longer staged.
-        refreshAutoApplyOffer()
+        // No offer recompute here: this runs only from the monitor's `autoApplyEnabled`
+        // branch, and an offer exists only while the feature is *off* — so it could do
+        // nothing but re-clear an already-nil value. A staged version that changes while the
+        // app is backgrounded and the feature off is picked up by `didBecomeActive`, which
+        // reconciles in full.
     }
 
     /// Seconds since the last human input, across the whole session.
