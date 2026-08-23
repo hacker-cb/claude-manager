@@ -296,6 +296,13 @@ What *is* branch-specific is the re-probe: while backgrounded the tick skips its
 so the staged update is re-read on its own (one file read) rather than through the full
 process-and-launcher scan a backgrounded menu-bar app has no business doing every minute.
 
+**It fails quietly.** The apply is invoked with `surfacingFailures: false`. The interactive
+path deliberately fights for attention on failure — it reopens the window and activates the
+app, because a report nobody sees is no report — and that is exactly wrong at 04:30: a
+profile vetoing its quit would foreground Claude Manager with a modal alert while the user is
+asleep, which is the same class of surprise this section exists to remove. Unattended
+failures go to the log and to Doctor, both of which wait to be read.
+
 **A vetoed attempt backs off.** A refusal leaves the update staged and the in-flight flag
 clear, so without this the tick would retry every minute for the rest of the window — closing
 and reopening every *other* profile each time, and re-prompting the one that is busy. An

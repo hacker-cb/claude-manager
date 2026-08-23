@@ -16,6 +16,12 @@ import Foundation
 /// Claude answers it, by vetoing its own quit while a session runs, and `applyStagedUpdateToAll`
 /// treats that refusal as an abort and restores everything it closed. This file only chooses
 /// *when to ask*.
+///
+/// It also asks **quietly**: the apply is invoked with `surfacingFailures: false`, because the
+/// interactive path fights for attention on failure — it reopens the window and activates the
+/// app — and doing that at 04:30 because a profile was busy would be the same surprise this
+/// feature exists to remove. Unattended failures go to the log and to Doctor, which wait to be
+/// read.
 extension AppModel {
     // MARK: - Settings
 
@@ -102,7 +108,7 @@ extension AppModel {
         guard decision == .apply, let version = stagedUpdate?.stagedVersion else { return decision }
         let windowText = autoApplyWindow.displayText
         Log.autoApply.info("applying inside window \(windowText, privacy: .public)")
-        await applyStagedUpdate()
+        await applyStagedUpdate(surfacingFailures: false)
         // Still staged afterwards means the attempt did not go through — most often a profile
         // vetoed its quit because it was working. Record it so the back-off holds: retrying on
         // the next tick would close and reopen every *other* profile once a minute, and
