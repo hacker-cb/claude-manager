@@ -162,4 +162,13 @@ struct AutoApplyWindowTests {
         // record is version-scoped state that means nothing if we weren't going to try anyway.
         #expect(decide(idleSeconds: 5, lastFailedAttempt: time(4, 25)) == .skip(.userIsPresent))
     }
+
+    @Test
+    func aFailureTimestampInTheFutureIsIgnored() {
+        // A clock moved back, or preferences restored from another machine, would otherwise
+        // make the elapsed time negative and hold the back-off until the wall clock caught
+        // up — skipping windows for days. A bad clock costs one extra attempt at most.
+        let future = time(4, 30).addingTimeInterval(48 * 3600)
+        #expect(decide(lastFailedAttempt: future) == .apply)
+    }
 }

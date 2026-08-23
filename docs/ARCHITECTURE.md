@@ -287,11 +287,23 @@ night window, and the case a naive `start...end` gets wrong), and treats an **em
 as admitting nothing — the alternative reading would turn a mis-set window into "apply at any
 moment".
 
-The pass runs from the monitor's tick in the branch where `NSApp.isActive` is *false*, which
-is the opposite of everything else there. That is the point: the window is a time the user
-spends away from the machine, so the foreground reconcile never runs in it. It re-probes only
-the staged update — one file read — rather than the full process-and-launcher sweep a
-backgrounded menu-bar app has no business doing every minute.
+The pass runs from the monitor's tick **regardless of `NSApp.isActive`**, and that is a
+correction worth recording: gating it on being backgrounded looks right — the window is a
+time the user is away — but "away" and "our window isn't frontmost" are different things.
+Leave the manager or Settings in front and walk off, and the whole nominated window passes
+with nothing attempted. Presence is the idle check's job, and that lives inside the pass.
+What *is* branch-specific is the re-probe: while backgrounded the tick skips its usual sweep,
+so the staged update is re-read on its own (one file read) rather than through the full
+process-and-launcher scan a backgrounded menu-bar app has no business doing every minute.
+
+**A vetoed attempt backs off.** A refusal leaves the update staged and the in-flight flag
+clear, so without this the tick would retry every minute for the rest of the window — closing
+and reopening every *other* profile each time, and re-prompting the one that is busy. An
+attempt that leaves the same version staged is recorded, and the next attempt on it waits
+`AutoApplyDecision.retryBackoff` (six hours — the following night's window). A newly staged
+version clears the record; a recorded time in the *future* (a clock moved back) counts as no
+record at all, since a bad clock should cost one extra attempt rather than silently disable
+the feature.
 
 ### Claude protects its own working sessions
 

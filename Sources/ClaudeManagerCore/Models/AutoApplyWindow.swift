@@ -134,8 +134,12 @@ public enum AutoApplyDecision: Equatable, Sendable {
         guard inputs.hasStagedUpdate else { return .skip(.nothingStaged) }
         guard inputs.window.contains(inputs.now, calendar: calendar) else { return .skip(.outsideWindow) }
         guard inputs.idleSeconds >= inputs.minimumIdleSeconds else { return .skip(.userIsPresent) }
+        // A timestamp in the *future* — a clock moved back, restored preferences from another
+        // machine — would make the elapsed time negative and hold the back-off until the wall
+        // clock caught up, skipping windows for days. Treated as no record at all: a bad clock
+        // should cost at most one extra attempt, never a silently disabled feature.
         let sinceFailure = inputs.lastFailedAttempt.map { inputs.now.timeIntervalSince($0) }
-        guard sinceFailure.map({ $0 >= Self.retryBackoff }) ?? true else {
+        guard sinceFailure.map({ $0 < 0 || $0 >= Self.retryBackoff }) ?? true else {
             return .skip(.backingOffAfterFailure)
         }
         return .apply
