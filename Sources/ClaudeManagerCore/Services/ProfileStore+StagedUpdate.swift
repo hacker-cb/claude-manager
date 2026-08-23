@@ -9,9 +9,14 @@ import Foundation
 /// the same bundle has taken 28 s and 57 s under disk contention, so no timeout can tell
 /// "still copying" from "gave up". Getting that wrong is destructive rather than merely
 /// unhelpful: relaunching mid-install makes ShipIt's own instance re-check fail
-/// (`App Still Running Error`), killing an install that was going through. So profiles are
-/// relaunched only once ShipIt is **gone** — with a large budget as a backstop, and a
-/// deliberate refusal to relaunch while it is still installing.
+/// (`App Still Running Error`), killing an install that was going through. So while the swap
+/// is *pending*, nothing is relaunched — a large budget as a backstop, and a deliberate
+/// refusal to relaunch while it is still installing.
+///
+/// One bounded exception, once the bundle is already in place: success drains until ShipIt
+/// exits, but only for `swapDrainPolls`. Past that the swap has demonstrably landed — the
+/// on-disk version changed — so an installer still lingering over its cleanup is no reason to
+/// keep the user's profiles closed indefinitely.
 public extension ProfileStore {
     struct ApplyStagedUpdateResult: Sendable, Equatable {
         public enum Outcome: Sendable, Equatable {
