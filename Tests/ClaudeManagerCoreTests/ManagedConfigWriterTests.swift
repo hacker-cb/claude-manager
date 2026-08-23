@@ -359,4 +359,19 @@ struct ManagedConfigWriterTests {
             ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
         #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == 12)
     }
+
+    @Test
+    func refusesANumericPolicyOutOfRange() throws {
+        // `1e30` is a valid JSON number, and a plain `Int(_:)` conversion traps on it. This
+        // getter runs from a refresh whenever an update is staged, so a malformed policy file
+        // would crash the app rather than falling back to the documented default.
+        let root = try Fixture.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let userData = root.appendingPathComponent("Claude").path
+        try seedRawOverlayValues(["autoUpdaterEnforcementHours": 1e30], userDataPath: userData)
+
+        let writer =
+            ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
+        #expect(writer.integer("autoUpdaterEnforcementHours", userDataPath: userData) == nil)
+    }
 }

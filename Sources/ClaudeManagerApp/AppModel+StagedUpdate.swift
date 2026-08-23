@@ -191,6 +191,10 @@ extension AppModel {
             await cancelStagedDeadlineWarnings()
             return
         }
+        // Withdraw any warning still pending for a *different* version. Pruning the ledger
+        // isn't enough: v1's request carries its own identifier, so replacing v1 with v2
+        // leaves v1's trigger armed and it fires later about a version long gone.
+        await cancelStagedDeadlineWarnings(except: staged.stagedVersion)
         guard !notifiedStagedDeadline.contains(staged.stagedVersion) else { return }
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
@@ -205,8 +209,14 @@ extension AppModel {
             ? "soon"
             : "in about \(hoursAtFire) hour\(hoursAtFire == 1 ? "" : "s")"
         let content = UNMutableNotificationContent()
-        content.title = "Claude will restart your default profile \(when)"
-        content.body = "Claude \(staged.stagedVersion) has been waiting to install, and Claude "
+        // Conditional on purpose. This is scheduled hours ahead and delivered by the system,
+        // so it can arrive when the premise no longer holds: if every profile happened to
+        // close while Claude Manager was shut down, ShipIt would have installed the update
+        // and there is nothing left running to withdraw the request. A notification that
+        // *asserts* an imminent restart would then simply be wrong, so it states the
+        // condition it was scheduled under instead.
+        content.title = "Claude may restart your default profile \(when)"
+        content.body = "If Claude \(staged.stagedVersion) is still waiting to install, Claude "
             + "restarts the default profile on its own to finish. Use “Apply to all profiles” "
             + "to do it at a moment you choose."
         do {
@@ -240,15 +250,20 @@ extension AppModel {
     /// or the staged version changes — a pending trigger would still fire hours later,
     /// announcing a restart for an update that already happened. Withdrawal is by identifier
     /// over the pending set, so it also clears one left by a previous run of the app.
-    func cancelStagedDeadlineWarnings() async {
+    /// `keeping` names the version whose warning is still true — everything else pending is
+    /// withdrawn. Passing `nil` (nothing staged) withdraws all of them.
+    func cancelStagedDeadlineWarnings(except keeping: String? = nil) async {
         let center = UNUserNotificationCenter.current()
         let pending = await center.pendingNotificationRequests()
+        let keepID = keeping.map(Self.deadlineNotificationID(for:))
         let stale = pending
             .map(\.identifier)
-            .filter { $0.hasPrefix(Self.deadlineNotificationPrefix) }
+            .filter { $0.hasPrefix(Self.deadlineNotificationPrefix) && $0 != keepID }
         guard !stale.isEmpty else { return }
         center.removePendingNotificationRequests(withIdentifiers: stale)
-        notifiedStagedDeadline = []
+        // Drop the ledger entries the withdrawal invalidated, so those versions could warn
+        // again if they were ever staged anew — but keep the one still armed.
+        notifiedStagedDeadline = notifiedStagedDeadline.intersection(Set(keeping.map { [$0] } ?? []))
     }
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked

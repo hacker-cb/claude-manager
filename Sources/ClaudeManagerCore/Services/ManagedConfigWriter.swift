@@ -108,9 +108,12 @@ public struct ManagedConfigWriter {
               let current = readJSONObject(at: configLibrary.appendingPathComponent("\(appliedID).json"))
         else { return nil }
         // `as? Int` alone misses a JSON number decoded as `Double`, which is how a value
-        // written by another tool commonly arrives.
+        // written by another tool commonly arrives. The conversion is **range-checked**:
+        // `1e30` is a syntactically valid JSON number, and plain `Int(_:)` traps on it — a
+        // malformed policy file would crash the app from a refresh, rather than falling back
+        // to the documented default the way every other unreadable value here does.
         if let value = current[key] as? Int { return value }
-        if let value = current[key] as? Double { return Int(value) }
+        if let value = current[key] as? Double { return Int(exactly: value.rounded()) }
         return nil
     }
 
