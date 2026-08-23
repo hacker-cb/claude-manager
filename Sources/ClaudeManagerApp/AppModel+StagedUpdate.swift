@@ -341,7 +341,10 @@ extension AppModel {
         let behind = profiles.filter(\.claudeUpdateAvailable)
         // Forget skews that resolved (the instance was restarted) so a later update
         // re-notifies; a key is *added* only after its notification is actually posted.
-        notifiedClaudeUpdates.formIntersection(Set(behind.map(Self.claudeUpdateKey)))
+        // Assign only on a real change: this is `UserDefaults`-backed now, so an unconditional
+        // read-modify-write would churn the file on every refresh tick.
+        let live = notifiedClaudeUpdates.intersection(Set(behind.map(Self.claudeUpdateKey)))
+        if live != notifiedClaudeUpdates { notifiedClaudeUpdates = live }
         let fresh = behind.filter { !notifiedClaudeUpdates.contains(Self.claudeUpdateKey($0)) }
         guard !fresh.isEmpty else { return }
         let center = UNUserNotificationCenter.current()
@@ -354,9 +357,16 @@ extension AppModel {
             content.title = "\(managed.profile.displayName): restart to update"
             content.body = "Running \(managed.runningClaudeVersion ?? "an older build") — "
                 + "Claude \(managed.availableClaudeVersion ?? "") is installed."
-            try? await center.add(UNNotificationRequest(
-                identifier: "claude-update-\(managed.id)", content: content, trigger: nil
-            ))
+            do {
+                try await center.add(UNNotificationRequest(
+                    identifier: "claude-update-\(managed.id)", content: content, trigger: nil
+                ))
+            } catch {
+                // Now that this ledger is persisted, marking a failed post as delivered would
+                // silence that profile's "restart to update" for good — the same reason the
+                // two ledgers above record only after a successful `add`.
+                continue
+            }
             notifiedClaudeUpdates.insert(Self.claudeUpdateKey(managed))
         }
     }

@@ -208,7 +208,7 @@ struct RootView: View {
                     // paragraph, and this must not be the shortcut around it.
                     Button("Turn on…") { confirmingAutoApplyOffer = true }
                     Button {
-                        model.dismissAutoApplyOffer()
+                        model.dismissAutoApplyOffer(version: offer.stagedVersion)
                     } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                     }

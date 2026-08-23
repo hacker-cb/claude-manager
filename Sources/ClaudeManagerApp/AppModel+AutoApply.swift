@@ -122,10 +122,17 @@ extension AppModel {
         // the managed-config overlay, and the Settings window pickers only exist while the
         // feature is *enabled* — so evaluating it first would do file I/O on every tick of a
         // time picker to compute an answer already known to be nil.
-        guard !autoApplyEnabled, let version = stagedUpdate?.stagedVersion else {
+        guard !autoApplyEnabled,
+              let version = stagedUpdate?.stagedVersion,
+              !dismissedAutoApplyOffer.contains(version)
+        else {
             setAutoApplyOffer(nil)
             return
         }
+        // Only now the expensive one: `stagedUpdateDeadline` reads Claude's `Info.plist` and
+        // parses the managed-config overlay. Someone who declined would otherwise pay those
+        // reads on every refresh tick for as long as the update stays staged — which, for the
+        // population this offer targets, is indefinitely.
         guard let deadline = stagedUpdateDeadline else {
             setAutoApplyOffer(nil)
             return
@@ -179,11 +186,11 @@ extension AppModel {
 
     /// Decline the offer for the version the banner is **actually showing**.
     ///
-    /// Keyed off the offer rather than `stagedUpdate`, which a background probe can have
-    /// already moved on: recording the decline against a version the user was never shown
-    /// would suppress an offer that never appeared.
-    func dismissAutoApplyOffer() {
-        guard let version = autoApplyOffer?.stagedVersion else { return }
+    /// Takes the version the *caller's row captured*, never today's `stagedUpdate` or even
+    /// today's `autoApplyOffer`: a background probe can move the staged version on between
+    /// the row rendering and its click landing, and recording the decline against current
+    /// state would then suppress an offer that was never on screen.
+    func dismissAutoApplyOffer(version: String) {
         dismissedAutoApplyOffer = dismissedAutoApplyOffer.union([version])
         setAutoApplyOffer(nil) // the input changed; don't leave the line on screen for a minute
     }

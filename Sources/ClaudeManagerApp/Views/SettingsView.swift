@@ -129,7 +129,7 @@ struct SettingsView: View {
                     // so beats quietly substituting a window the user didn't choose.
                     Label(
                         "This window is empty, so no update will ever be applied. "
-                            + "Set an end time later than the start.",
+                            + "Set two different times — a window may cross midnight.",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.caption)
