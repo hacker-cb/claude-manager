@@ -122,14 +122,17 @@ extension AppModel {
         // the managed-config overlay, and the Settings window pickers only exist while the
         // feature is *enabled* — so evaluating it first would do file I/O on every tick of a
         // time picker to compute an answer already known to be nil.
-        // Read each `UserDefaults`-backed value once: both are consulted twice below, and
-        // this runs on every refresh tick.
+        // Each `UserDefaults`-backed value is read once — both are consulted twice below, on a
+        // path that runs every refresh tick — but not before the guard that can rule them out:
+        // while the feature is enabled the Settings pickers fire this on every edit, and
+        // reading the declined set there would be work to reach an answer already known.
         let enabled = autoApplyEnabled
+        guard !enabled, let version = stagedUpdate?.stagedVersion else {
+            setAutoApplyOffer(nil)
+            return
+        }
         let declined = dismissedAutoApplyOffer
-        guard !enabled,
-              let version = stagedUpdate?.stagedVersion,
-              !declined.contains(version)
-        else {
+        guard !declined.contains(version) else {
             setAutoApplyOffer(nil)
             return
         }
