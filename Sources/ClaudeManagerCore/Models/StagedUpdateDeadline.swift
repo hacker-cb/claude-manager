@@ -72,11 +72,13 @@ public struct StagedUpdateDeadline: Equatable, Sendable {
     ///   hold the wait at zero and the warning would never fire.
     /// - **Only the current version is kept.** Otherwise the record grows a row per Claude
     ///   release for the life of the install, and the file is meant to be a fact, not a log.
-    /// - **No staged update clears everything**, so a version staged again later — after a
-    ///   rollback, or a re-download — is a genuinely fresh wait.
+    /// - **Nothing staged does not clear the record** — the body below says why at length.
+    ///   So a *different* version staged later is a genuinely fresh wait, while the same one
+    ///   re-staged after a rollback keeps its original date and is not.
     ///
     /// Callers prune their notification ledgers to the returned keys, which is what makes a
-    /// fresh wait able to notify again.
+    /// fresh wait able to notify again — and, by the same rule, what makes a re-staged
+    /// identical version stay silent.
     public static func recordSighting(
         of version: String?,
         into existing: [String: Date],

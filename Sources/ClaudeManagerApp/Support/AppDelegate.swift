@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 
 /// AppKit delegate wired in via `NSApplicationDelegateAdaptor`. It owns the app lifecycle
 /// and Dock-icon (activation-policy) behavior that SwiftUI's `Window` scene doesn't expose
@@ -18,7 +19,7 @@ import AppKit
 ///   menu-bar-only and dismisses its auto-opened window; a manual launch keeps the window
 ///   (see `applicationDidFinishLaunching` / `shouldDismissInitialWindow`).
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     /// Reopens the main window. Set by the `Window` scene once its content appears and
     /// stays valid for the life of the process (the scene lives in `body` even while its
     /// window is closed). `nil` only before that first appearance, a harmless no-op.
@@ -118,6 +119,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // manual relaunch is non-default too, but keeps its window and flips back to
         // `.regular`.
         setDockIconVisible(!launchWasNonDefault)
+        // Without this, every notification the app posts is **silently dropped while the app
+        // is frontmost** — UserNotifications only presents to an active app if a delegate
+        // says so. That hit exactly the cases the notifications exist for: the staged-update
+        // nag, the forced-restart warning, the "your profiles were left closed" notice, and
+        // the usage-limit warnings — all posted from a refresh the user may well have
+        // triggered themselves, with the app in front.
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Present notifications even while the app is active — see the delegate assignment
+    /// above.
+    ///
+    /// `.sound` is included deliberately: `AppModel+UsageNotifications` sets
+    /// `content.sound = .default` only for a *critical* limit warning, and omitting the
+    /// option here would mute exactly that escalation in its most likely moment — the user
+    /// looking at the app when the limit fills. A notification with no sound configured stays
+    /// silent either way.
+    ///
+    /// `nonisolated` because the protocol hands over non-`Sendable` arguments, and this
+    /// implementation reads none of them — nor any actor state. It answers a constant.
+    nonisolated func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
     }
 
     /// Whether the initial (auto-opened) launch window should be dismissed to keep a login

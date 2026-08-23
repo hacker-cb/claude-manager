@@ -36,6 +36,8 @@ CLAUDE.local.md
 
 # --- Swift / SwiftPM ---
 .build/
+# Xcode DerivedData from ad-hoc review/CI builds run with an explicit -derivedDataPath.
+build-*/
 .swiftpm/
 Package.resolved
 

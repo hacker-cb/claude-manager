@@ -41,6 +41,15 @@ struct AutoApplyWindowTests {
     }
 
     @Test
+    func namesAnEmptyWindowAsSuch() {
+        // The settings pickers bind each end independently, so this is reachable — and a
+        // feature switched on that can never run needs to say so rather than be substituted.
+        #expect(AutoApplyWindow(startMinutes: 3 * 60, endMinutes: 3 * 60).isEmpty)
+        #expect(!AutoApplyWindow.suggested.isEmpty)
+        #expect(!AutoApplyWindow(startMinutes: 22 * 60, endMinutes: 2 * 60).isEmpty)
+    }
+
+    @Test
     func anEmptyWindowAdmitsNothing() {
         // The alternative reading — an empty range meaning "all day" — would turn a mis-set
         // window into "apply at any moment", which is the surprise this feature exists to
@@ -170,5 +179,49 @@ struct AutoApplyWindowTests {
         // up — skipping windows for days. A bad clock costs one extra attempt at most.
         let future = time(4, 30).addingTimeInterval(48 * 3600)
         #expect(decide(lastFailedAttempt: future) == .apply)
+    }
+
+    // MARK: - Offering to enable it
+
+    @Test
+    func staysQuietUntilTheUpdateHasActuallyBeenStuck() {
+        // Most updates are applied within minutes of the banner appearing. Suggesting at
+        // download time would put a prompt in front of everyone, for a problem almost nobody
+        // has yet.
+        #expect(!AutoApplyDecision.shouldOfferEnabling(alreadyEnabled: false, dismissed: false, waited: 0))
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: false, waited: 12 * 3600
+        ))
+    }
+
+    @Test
+    func offersOnceAFullDayHasPassed() {
+        // A full day, not twelve hours: the offer's premise is "this could already have been
+        // installed for you", and only a whole day makes that true whatever time the update
+        // arrived — twelve hours from a 07:00 sighting is 19:00, with no night-time window
+        // having come round at all.
+        #expect(AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: false, waited: AutoApplyDecision.stuckThreshold
+        ))
+        #expect(AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: false, waited: 70 * 3600
+        ))
+    }
+
+    @Test
+    func neverOffersWhatIsAlreadyOn() {
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: true, dismissed: false, waited: 70 * 3600
+        ))
+    }
+
+    @Test
+    func takesNoForAnAnswer() {
+        // The population this targets is the one whose update never applies, so "it goes away
+        // when the update installs" is no answer for them — without a remembered no, the offer
+        // would reappear at every launch for days.
+        #expect(!AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: false, dismissed: true, waited: 70 * 3600
+        ))
     }
 }
