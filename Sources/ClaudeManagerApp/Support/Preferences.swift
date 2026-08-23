@@ -36,6 +36,11 @@ enum PreferenceKeys {
     /// Staged versions whose *deadline* warning has been posted — a separate key, because it
     /// is a second, later notification about the same version.
     static let notifiedStagedDeadline = "notifiedStagedDeadline"
+    /// Launcher+version keys whose "restart to update" notification has been posted. Persisted
+    /// for the same reason as the two above — and it started mattering the moment notifications
+    /// became visible while the app is frontmost: in memory, every launch re-notified about
+    /// every profile still running an older Claude.
+    static let notifiedClaudeUpdates = "notifiedClaudeUpdates"
 
     /// Whether Claude Manager may apply a staged Claude update unattended, inside the window
     /// below. **Off unless the user turns it on**: an apply closes every profile and reopens

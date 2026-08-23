@@ -41,6 +41,15 @@ struct AutoApplyWindowTests {
     }
 
     @Test
+    func namesAnEmptyWindowAsSuch() {
+        // The settings pickers bind each end independently, so this is reachable — and a
+        // feature switched on that can never run needs to say so rather than be substituted.
+        #expect(AutoApplyWindow(startMinutes: 3 * 60, endMinutes: 3 * 60).isEmpty)
+        #expect(!AutoApplyWindow.suggested.isEmpty)
+        #expect(!AutoApplyWindow(startMinutes: 22 * 60, endMinutes: 2 * 60).isEmpty)
+    }
+
+    @Test
     func anEmptyWindowAdmitsNothing() {
         // The alternative reading — an empty range meaning "all day" — would turn a mis-set
         // window into "apply at any moment", which is the surprise this feature exists to

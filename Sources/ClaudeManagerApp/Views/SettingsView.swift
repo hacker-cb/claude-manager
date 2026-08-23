@@ -123,6 +123,18 @@ struct SettingsView: View {
                             .accessibilityLabel("Window end time")
                     }
                 }
+                if model.autoApplyWindow.isEmpty {
+                    // Both ends bind independently, so this is a couple of clicks away — and
+                    // the result is a feature that is switched on and can never run. Saying
+                    // so beats quietly substituting a window the user didn't choose.
+                    Label(
+                        "This window is empty, so no update will ever be applied. "
+                            + "Set an end time later than the start.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
                 Text("Claude restarts the default profile by itself once an update has waited "
                     + "about 72 hours, at a moment you're away. Applying inside a window you "
                     + "chose is what keeps that from being a surprise.")

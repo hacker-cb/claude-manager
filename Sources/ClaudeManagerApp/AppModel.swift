@@ -158,7 +158,11 @@ final class AppModel: ObservableObject {
     /// instance was restarted) drops out, so a later update notifies afresh.
     /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
     /// notifications.
-    var notifiedClaudeUpdates: Set<String> = []
+    var notifiedClaudeUpdates: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedClaudeUpdates) }
+    }
+
     var monitorTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 

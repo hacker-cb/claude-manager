@@ -45,6 +45,14 @@ public struct AutoApplyWindow: Equatable, Sendable, Codable {
         return nowMinutes >= startMinutes || nowMinutes < endMinutes
     }
 
+    /// A window that admits no time at all. Reachable from the settings pickers, which bind
+    /// each end independently — and a feature that is switched on yet can never act is worse
+    /// than one that is off, because nothing says so. Callers surface it rather than silently
+    /// substituting a different window.
+    public var isEmpty: Bool {
+        startMinutes == endMinutes
+    }
+
     /// `HH:mm–HH:mm`, for the settings summary and the log line that explains an apply.
     public var displayText: String {
         "\(Self.clock(startMinutes))–\(Self.clock(endMinutes))"

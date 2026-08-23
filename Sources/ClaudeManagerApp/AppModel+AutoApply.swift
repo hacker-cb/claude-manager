@@ -154,7 +154,7 @@ extension AppModel {
     /// The window an acceptance would install: the stored one, unless it is empty.
     var effectiveAutoApplyWindow: AutoApplyWindow {
         let window = autoApplyWindow
-        return window.startMinutes == window.endMinutes ? .suggested : window
+        return window.isEmpty ? .suggested : window
     }
 
     /// "over a day" / "3 days", for the offer's first sentence.
@@ -166,7 +166,7 @@ extension AppModel {
     /// fallback and for callers other than the offer, which never asks below a full day.
     static func waitDescription(_ waited: TimeInterval) -> String {
         guard let hours = Int(exactly: (waited / 3600).rounded(.down)) else { return "a while" }
-        guard hours >= 24 else { return "\(hours) hours" }
+        guard hours >= 24 else { return hours == 1 ? "an hour" : "\(hours) hours" }
         let days = hours / 24
         return days == 1 ? "over a day" : "\(days) days"
     }
