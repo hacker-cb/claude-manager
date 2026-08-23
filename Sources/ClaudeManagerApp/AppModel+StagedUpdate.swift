@@ -224,10 +224,14 @@ extension AppModel {
         notifiedStagedDeadline.insert(staged.stagedVersion)
     }
 
-    /// Identifier for a version's scheduled deadline warning — one place, so scheduling and
-    /// withdrawal can't drift apart and leave an undismissable pending notification.
+    /// Shared by the scheduler and the withdrawal below. One definition, because the two
+    /// have to agree: a prefix that drifts leaves a pending notification nothing can cancel,
+    /// which then fires hours later about an update that already landed.
+    static let deadlineNotificationPrefix = "claude-staged-deadline-"
+
+    /// Identifier for a version's scheduled deadline warning.
     static func deadlineNotificationID(for version: String) -> String {
-        "claude-staged-deadline-\(version)"
+        deadlineNotificationPrefix + version
     }
 
     /// Withdraw any scheduled deadline warning that is no longer true.
@@ -241,7 +245,7 @@ extension AppModel {
         let pending = await center.pendingNotificationRequests()
         let stale = pending
             .map(\.identifier)
-            .filter { $0.hasPrefix("claude-staged-deadline-") }
+            .filter { $0.hasPrefix(Self.deadlineNotificationPrefix) }
         guard !stale.isEmpty else { return }
         center.removePendingNotificationRequests(withIdentifiers: stale)
         notifiedStagedDeadline = []
@@ -249,8 +253,9 @@ extension AppModel {
 
     /// Post a local notification once per staged version, so a downloaded-but-blocked
     /// update nags a single time. Keyed by version, so a later staged version notifies
-    /// afresh; `recordStagedUpdateSighting` prunes the ledger when nothing is staged, which
-    /// is what lets a re-staged version notify again.
+    /// afresh — `recordStagedUpdateSighting` replaces the record (and prunes this ledger)
+    /// when a *different* version is staged. A nil probe deliberately changes nothing; see
+    /// `StagedUpdateDeadline.recordSighting`.
     func notifyStagedUpdateIfNeeded() async {
         guard let staged = stagedUpdate else { return }
         guard !notifiedStagedUpdate.contains(staged.stagedVersion) else { return }

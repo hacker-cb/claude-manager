@@ -19,19 +19,24 @@ func seedRawOverlay(
         .write(to: library.appendingPathComponent("\(appliedID).json"))
 }
 
+/// Seed a raw overlay carrying **non-boolean** values. Throws rather than swallowing a
 /// Seed a raw overlay carrying **non-boolean** values — the shape `ManagedConfigWriter.integer`
 /// reads, and the one a policy like `autoUpdaterEnforcementHours` actually arrives in.
+///
+/// Throws rather than swallowing a setup failure: a fixture that silently wrote nothing turns
+/// into a confusing assertion failure downstream — or a test that passes without ever reading
+/// an overlay at all.
 func seedRawOverlayValues(
     _ entries: [String: Any],
     userDataPath: String,
     fileManager: FileManager = .default
-) {
+) throws {
     let library = ManagedConfigWriter.configLibraryURL(forUserDataPath: userDataPath)
-    try? fileManager.createDirectory(at: library, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: library, withIntermediateDirectories: true)
     let appliedID = "00000000-0000-4000-8000-000000000000"
-    try? JSONSerialization.data(withJSONObject: ["appliedId": appliedID])
+    try JSONSerialization.data(withJSONObject: ["appliedId": appliedID])
         .write(to: library.appendingPathComponent("_meta.json"))
-    try? JSONSerialization.data(withJSONObject: entries)
+    try JSONSerialization.data(withJSONObject: entries)
         .write(to: library.appendingPathComponent("\(appliedID).json"))
 }
 

@@ -339,7 +339,7 @@ struct ManagedConfigWriterTests {
         let root = try Fixture.makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let userData = root.appendingPathComponent("Claude").path
-        seedRawOverlayValues(["autoUpdaterEnforcementHours": 8], userDataPath: userData)
+        try seedRawOverlayValues(["autoUpdaterEnforcementHours": 8], userDataPath: userData)
 
         let writer =
             ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
@@ -353,7 +353,7 @@ struct ManagedConfigWriterTests {
         let root = try Fixture.makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let userData = root.appendingPathComponent("Claude").path
-        seedRawOverlayValues(["autoUpdaterEnforcementHours": 12.0], userDataPath: userData)
+        try seedRawOverlayValues(["autoUpdaterEnforcementHours": 12.0], userDataPath: userData)
 
         let writer =
             ManagedConfigWriter(managedPreferencesURLs: [root.appendingPathComponent("no-mdm.plist")])
