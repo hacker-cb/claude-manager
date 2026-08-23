@@ -23,6 +23,16 @@ import Foundation
 /// feature exists to remove. Unattended failures go to the log and to Doctor, which wait to be
 /// read.
 extension AppModel {
+    /// The banner's enabling offer: whether to show it, and the wait to quote.
+    struct AutoApplyOffer: Equatable {
+        /// The version the banner is showing. Carried so a decline is recorded against what
+        /// the user actually saw — a background probe can move `stagedUpdate` on before the
+        /// offer is recomputed, and keying off that would suppress an offer never shown.
+        let stagedVersion: String
+        let waitDescription: String
+        let windowText: String
+    }
+
     // MARK: - Settings
 
     /// Backed by `defaults` rather than `@Published` (an extension can't declare one), so
@@ -33,6 +43,18 @@ extension AppModel {
         set {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.autoApplyStagedUpdate)
+            // **Touching this toggle at all is an answer to the offer's question**, whichever
+            // way it lands and wherever it came from — the banner button, the Settings pane,
+            // a future entry point. Recording it here rather than at each call site is what
+            // makes that true by construction: patching the paths one at a time is how
+            // enabling-from-Settings-then-changing-your-mind ended up re-raising the offer
+            // *instantly*, under the cursor that had just dismissed the idea.
+            if let version = stagedUpdate?.stagedVersion {
+                answeredAutoApplyOffer = answeredAutoApplyOffer.union([version])
+            }
+            // `alreadyEnabled` is also one of the offer's inputs, so recompute like the other
+            // mutation paths.
+            refreshAutoApplyOffer()
         }
     }
 
@@ -49,6 +71,9 @@ extension AppModel {
             objectWillChange.send() // same reason as the toggle above
             defaults.set(newValue.startMinutes, forKey: PreferenceKeys.autoApplyWindowStart)
             defaults.set(newValue.endMinutes, forKey: PreferenceKeys.autoApplyWindowEnd)
+            // The offer quotes this window; leaving the cache alone would have the banner and
+            // its confirmation naming a schedule the acceptance no longer uses.
+            refreshAutoApplyOffer()
         }
     }
 
@@ -86,6 +111,109 @@ extension AppModel {
                 newValue.mapValues(\.timeIntervalSince1970), forKey: PreferenceKeys.autoApplyLastFailure
             )
         }
+    }
+
+    /// Recompute the banner offer. Called from `refresh()` — never from a view body, where
+    /// the file reads behind `stagedUpdateDeadline` would land on the main thread on every
+    /// layout pass — and again from every path that changes one of its inputs, since a cached
+    /// answer that outlives its inputs is a button that looks broken.
+    func refreshAutoApplyOffer(now: Date = Date()) {
+        // Cheap disqualifiers first. `stagedUpdateDeadline` reads Claude's `Info.plist` and
+        // the managed-config overlay, and the Settings window pickers only exist while the
+        // feature is *enabled* — so evaluating it first would do file I/O on every tick of a
+        // time picker to compute an answer already known to be nil.
+        // Each `UserDefaults`-backed value is read once — both are consulted twice below, on a
+        // path that runs every refresh tick — but not before the guard that can rule them out:
+        // while the feature is enabled the Settings pickers fire this on every edit, and
+        // reading the answered set there would be work to reach an answer already known.
+        let enabled = autoApplyEnabled
+        guard !enabled, let version = stagedUpdate?.stagedVersion else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        let answered = answeredAutoApplyOffer
+        guard !answered.contains(version) else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        // Only now the expensive one: `stagedUpdateDeadline` reads Claude's `Info.plist` and
+        // parses the managed-config overlay. Someone who has already answered would otherwise
+        // pay those reads on every refresh tick for as long as the update stays staged —
+        // which, for the population this offer targets, is indefinitely.
+        guard let deadline = stagedUpdateDeadline else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        let waited = deadline.waited(asOf: now)
+        guard AutoApplyDecision.shouldOfferEnabling(
+            alreadyEnabled: enabled,
+            answered: answered.contains(version),
+            waited: waited
+        ) else {
+            setAutoApplyOffer(nil)
+            return
+        }
+        setAutoApplyOffer(AppModel.AutoApplyOffer(
+            stagedVersion: version,
+            waitDescription: Self.waitDescription(waited),
+            // The window the offer *would actually use*, resolved here rather than at
+            // acceptance. An empty stored window (start == end) admits no time at all, so
+            // accepting it would enable a permanently inert feature — it is replaced with the
+            // suggested night. Resolving that after the user has read "between 04:00–04:00"
+            // and agreed is precisely the silent substitution this offer promises not to make.
+            windowText: effectiveAutoApplyWindow.displayText
+        ))
+    }
+
+    /// The window an acceptance would install: the stored one, unless it is empty.
+    var effectiveAutoApplyWindow: AutoApplyWindow {
+        let window = autoApplyWindow
+        return window.isEmpty ? .suggested : window
+    }
+
+    /// "over a day" / "3 days", for the offer's first sentence.
+    ///
+    /// `Int(exactly:)` rather than a plain conversion: `waited` comes from a date decoded out
+    /// of `UserDefaults` with no range check, and a corrupt or hand-edited entry (`1e300`)
+    /// would trap on the conversion — crashing the app from a banner render. Same hazard
+    /// `ManagedConfigWriter.integer` already guards. The sub-day branch exists only for that
+    /// fallback and for callers other than the offer, which never asks below a full day.
+    static func waitDescription(_ waited: TimeInterval) -> String {
+        guard let hours = Int(exactly: (waited / 3600).rounded(.down)) else { return "a while" }
+        guard hours >= 24 else { return hours == 1 ? "an hour" : "\(hours) hours" }
+        let days = hours / 24
+        return days == 1 ? "over a day" : "\(days) days"
+    }
+
+    /// Staged versions whose enabling offer the user has answered — declined, or answered by
+    /// touching the Settings toggle either way. `PreferenceKeys` says why all three land here.
+    var answeredAutoApplyOffer: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.answeredAutoApplyOffer) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.answeredAutoApplyOffer) }
+    }
+
+    /// Decline the offer for the version the banner is **actually showing**.
+    ///
+    /// Takes the version the *caller's row captured*, never today's `stagedUpdate` or even
+    /// today's `autoApplyOffer`: a background probe can move the staged version on between
+    /// the row rendering and its click landing, and recording the decline against current
+    /// state would then suppress an offer that was never on screen.
+    func dismissAutoApplyOffer(version: String) {
+        answeredAutoApplyOffer = answeredAutoApplyOffer.union([version])
+        setAutoApplyOffer(nil) // the input changed; don't leave the line on screen for a minute
+    }
+
+    /// Accept the offer: switch unattended applying on, with the window that was shown.
+    ///
+    /// This is the whole point of offering rather than defaulting: the user turning it on is
+    /// the same event as the app being allowed to close their profiles, instead of two
+    /// independent ones where the second can happen without the first having landed.
+    func enableAutoApplyFromOffer() {
+        autoApplyWindow = effectiveAutoApplyWindow // no-op unless the stored one was empty
+        Log.autoApply.info("enabled from the stuck-update offer")
+        // The setter records the answer and recomputes; this path adds only the window
+        // resolution and the log line.
+        autoApplyEnabled = true
     }
 
     // MARK: - The pass
@@ -144,6 +272,11 @@ extension AppModel {
         }.value
         setStagedUpdate(staged)
         recordStagedUpdateSighting()
+        // No offer recompute here: this runs only from the monitor's `autoApplyEnabled`
+        // branch, and an offer exists only while the feature is *off* — so it could do
+        // nothing but re-clear an already-nil value. A staged version that changes while the
+        // app is backgrounded and the feature off is picked up by `didBecomeActive`, which
+        // reconciles in full.
     }
 
     /// Seconds since the last human input, across the whole session.

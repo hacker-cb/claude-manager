@@ -45,6 +45,14 @@ public struct AutoApplyWindow: Equatable, Sendable, Codable {
         return nowMinutes >= startMinutes || nowMinutes < endMinutes
     }
 
+    /// A window that admits no time at all. Reachable from the settings pickers, which bind
+    /// each end independently — and a feature that is switched on yet can never act is worse
+    /// than one that is off, because nothing says so. Callers surface it rather than silently
+    /// substituting a different window.
+    public var isEmpty: Bool {
+        startMinutes == endMinutes
+    }
+
     /// `HH:mm–HH:mm`, for the settings summary and the log line that explains an apply.
     public var displayText: String {
         "\(Self.clock(startMinutes))–\(Self.clock(endMinutes))"
@@ -72,7 +80,8 @@ public enum AutoApplyDecision: Equatable, Sendable {
     case skip(Reason)
 
     public enum Reason: Equatable, Sendable {
-        /// The user hasn't turned it on. The default, deliberately.
+        /// Unattended applying is not enabled. Core sees only the `enabled` input and does
+        /// not know the app layer's default, so this says nothing about *why*.
         case disabled
         /// Outside the nominated window.
         case outsideWindow
@@ -144,6 +153,41 @@ public enum AutoApplyDecision: Equatable, Sendable {
         }
         return .apply
     }
+
+    /// Whether to offer turning unattended applying on, given how long the update has been
+    /// stuck behind open profiles.
+    ///
+    /// The offer exists because the feature is **off by default**, and that default has a real
+    /// cost: a Mac running clones never installs a Claude update by itself, while Claude's own
+    /// enforcement restarts the default profile every ~72 h to no effect. Flipping the default
+    /// instead was tried and rejected (see `DECISIONS.md`) — the short version is that consent
+    /// and the action it licenses have to be one event, not two independent ones.
+    ///
+    /// Timing is the whole design. Offering the moment an update is downloaded would be noise:
+    /// most waits end within minutes of the user seeing the banner and clicking Apply. Offering
+    /// once it has been stuck past ``stuckThreshold`` means the suggestion arrives with the
+    /// evidence for it already on screen.
+    /// `answered` is the user having settled the question for this version — by declining, or
+    /// by reaching for the Settings toggle, which answers it either way. Without it the offer
+    /// would reappear on every launch for the rest of the update's life — and the population
+    /// this targets is exactly the one whose update *never* applies, so "it goes away when the
+    /// update installs" is no answer for them.
+    public static func shouldOfferEnabling(
+        alreadyEnabled: Bool,
+        answered: Bool,
+        waited: TimeInterval
+    ) -> Bool {
+        !alreadyEnabled && !answered && waited >= stuckThreshold
+    }
+
+    /// How long an update must have been waiting before enabling is suggested.
+    ///
+    /// **A full day**, not twelve hours. The offer's premise is "this could already have been
+    /// installed for you", and only a whole day makes that true whatever time the update
+    /// arrived: twelve hours from a 07:00 sighting is 19:00 — no night has passed, and a
+    /// night-time window has not come round even once. Twenty-four guarantees the user's
+    /// window elapsed regardless of where in the day the clock started.
+    public static let stuckThreshold: TimeInterval = 24 * 3600
 
     /// How long to wait after a failed unattended attempt before trying that same staged
     /// version again.

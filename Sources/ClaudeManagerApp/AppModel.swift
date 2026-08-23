@@ -3,43 +3,6 @@ import ClaudeManagerCore
 import SwiftUI
 import UserNotifications
 
-/// A user-facing message, presented by `RootView` through `.alert(_:isPresented:presenting:)`.
-///
-/// Carries its own `title` because this is the app's only alert channel and not everything
-/// routed through it is a failure — a removal that kept shared profile data, or a batch
-/// rebuild reporting what it skipped, are outcomes the user has to act on, and "Something
-/// went wrong" over them is simply untrue. The heading is a plain argument to that modifier
-/// rather than something the `presenting:` closure supplies, which is why `RootView` holds it
-/// in view state instead of reading it back off this published value.
-struct AppError: Identifiable {
-    /// The heading for anything that genuinely is a failure — the common case, so it stays
-    /// the default rather than being spelled at every call site.
-    static let defaultTitle = "Something went wrong"
-
-    let id = UUID()
-    let title: String
-    let message: String
-
-    init(title: String = AppError.defaultTitle, message: String) {
-        self.title = title
-        self.message = message
-    }
-
-    /// Prefer a domain error's `errorDescription` over the opaque `localizedDescription`.
-    init(_ error: Error) {
-        self.init(message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-    }
-}
-
-/// A message-carrying error so a thrown failure can surface a specific reason (e.g.
-/// the concrete `locateError`) through the editor's alert instead of a generic one.
-struct MessageError: LocalizedError {
-    let message: String
-    var errorDescription: String? {
-        message
-    }
-}
-
 /// The single source of view state. All blocking core operations are dispatched
 /// off the main actor (`perform`) so the UI never stalls; results and errors are
 /// published back on the main actor.
@@ -127,9 +90,29 @@ final class AppModel: ObservableObject {
     /// True while a coordinated apply is in flight, so the UI disables re-triggering and
     /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
     @Published private(set) var isApplyingStagedUpdate = false
+    /// Whether to show the "turn on nightly applying?" line in the staged-update banner, and
+    /// the wait it quotes.
+    ///
+    /// **Published, not computed in the view.** Deriving it needs `stagedUpdateDeadline` —
+    /// several file reads and a JSON parse — and `RootView.body` re-runs on every publish, on
+    /// layout, and through the banner-height round trip: computing it there would put
+    /// synchronous disk I/O on the main thread for as long as a staged update exists.
+    @Published private(set) var autoApplyOffer: AutoApplyOffer?
+
+    /// Set the offer (`private(set)`, driven by `AppModel+AutoApply` during a refresh).
+    ///
+    /// Assigns only on a real change: `@Published` publishes on *every* assignment, while
+    /// `refreshAutoApplyOffer()` runs each refresh tick and each time-picker edit and mostly
+    /// recomputes the same nil — republishing the model and re-running `RootView.body`.
+    func setAutoApplyOffer(_ value: AutoApplyOffer?) {
+        guard value != autoApplyOffer else { return }
+        autoApplyOffer = value
+    }
+
     /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
     /// refresh it from the background tick without a full `refresh()`).
     func setStagedUpdate(_ value: StagedUpdate?) {
+        guard value != stagedUpdate else { return } // same reason as `setAutoApplyOffer`
         stagedUpdate = value
     }
 
@@ -143,7 +126,11 @@ final class AppModel: ObservableObject {
     /// instance was restarted) drops out, so a later update notifies afresh.
     /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
     /// notifications.
-    var notifiedClaudeUpdates: Set<String> = []
+    var notifiedClaudeUpdates: Set<String> {
+        get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
+        set { defaults.set(Array(newValue), forKey: PreferenceKeys.notifiedClaudeUpdates) }
+    }
+
     var monitorTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
@@ -331,7 +318,9 @@ final class AppModel: ObservableObject {
             primaryProfile = nil
             // A vanished Claude has no staged update to apply; clear it so the banner doesn't
             // outlive the app it refers to (refresh, its only other writer, bails while nil).
-            stagedUpdate = nil
+            setStagedUpdate(nil)
+            // The offer describes that update; it must not outlive it either.
+            setAutoApplyOffer(nil)
             locateError = Self.describe(error)
         }
     }
@@ -372,8 +361,10 @@ final class AppModel: ObservableObject {
         prunePendingRestarts()
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
         // there are none — the default profile can still have one staged).
-        stagedUpdate = await perform { store in store.stagedUpdate() }.flatMap(\.self)
+        let staged = await perform { store in store.stagedUpdate() }.flatMap(\.self)
+        setStagedUpdate(staged)
         recordStagedUpdateSighting()
+        refreshAutoApplyOffer()
         await notifyClaudeUpdatesIfNeeded()
         await notifyStagedUpdateIfNeeded()
         await notifyStagedDeadlineIfNeeded()
@@ -469,7 +460,9 @@ final class AppModel: ObservableObject {
         // primary row and staged-update banner here.
         if located.real == nil {
             primaryProfile = nil
-            stagedUpdate = nil
+            setStagedUpdate(nil)
+            // The offer describes that update; it must not outlive it either.
+            setAutoApplyOffer(nil)
         }
         locateError = located.error
     }

@@ -154,11 +154,14 @@ install because profiles are open, a banner (and a notification) offer **Apply t
 profiles** — it quits every profile, lets the update install, and reopens the ones
 that were running.
 
-Claude Manager can also do this for you, inside a window you choose (Settings → Claude
-updates, off by default) — so the update lands at 4 am on your terms rather than when Claude
-decides to restart the default profile on its own. It only acts when the Mac has been idle
-for ten minutes, and the same protection applies: a working profile refuses to quit and the
-attempt is called off.
+Claude Manager can also do this for you overnight, inside a window you choose (Settings →
+Claude updates; off by default). When an update has been stuck for a while the banner offers
+to turn it on, since that is the point at which it starts to matter: until an update installs,
+Claude keeps restarting your default profile every few days trying to force it through.
+
+It only acts when the Mac has been idle for ten minutes, and the same protection applies — a
+working profile refuses to quit and the attempt is called off, to be retried after a back-off
+(six hours, so usually the following night).
 
 A profile that is **still working** won't be closed: Claude refuses the quit and offers
 "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an

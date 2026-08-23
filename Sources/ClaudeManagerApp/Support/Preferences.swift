@@ -36,6 +36,11 @@ enum PreferenceKeys {
     /// Staged versions whose *deadline* warning has been posted — a separate key, because it
     /// is a second, later notification about the same version.
     static let notifiedStagedDeadline = "notifiedStagedDeadline"
+    /// Launcher+version keys whose "restart to update" notification has been posted. Persisted
+    /// for the same reason as the two above — and it started mattering the moment notifications
+    /// became visible while the app is frontmost: in memory, every launch re-notified about
+    /// every profile still running an older Claude.
+    static let notifiedClaudeUpdates = "notifiedClaudeUpdates"
 
     /// Whether Claude Manager may apply a staged Claude update unattended, inside the window
     /// below. **Off unless the user turns it on**: an apply closes every profile and reopens
@@ -52,4 +57,10 @@ enum PreferenceKeys {
     /// retried every minute for the rest of the window, closing and reopening every other
     /// profile each time.
     static let autoApplyLastFailure = "autoApplyLastFailure"
+    /// Staged versions whose "turn on nightly applying?" offer the user has **answered** —
+    /// either way. Declining is the common one, but turning the feature on is just as much an
+    /// answer, and so is turning it back off; all three write here, so the banner stops asking
+    /// about that version. Persisted because the offer targets updates that may never apply —
+    /// without a remembered answer it would reappear at every launch for days.
+    static let answeredAutoApplyOffer = "answeredAutoApplyOffer"
 }
