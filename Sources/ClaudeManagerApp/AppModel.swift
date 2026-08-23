@@ -361,7 +361,8 @@ final class AppModel: ObservableObject {
         prunePendingRestarts()
         // Probe the staged update directly (not via `snapshot`, which is empty of clones when
         // there are none — the default profile can still have one staged).
-        await setStagedUpdate(perform { store in store.stagedUpdate() }.flatMap(\.self))
+        let staged = await perform { store in store.stagedUpdate() }.flatMap(\.self)
+        setStagedUpdate(staged)
         recordStagedUpdateSighting()
         refreshAutoApplyOffer()
         await notifyClaudeUpdatesIfNeeded()
