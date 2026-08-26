@@ -23,8 +23,4 @@ enum Log {
     /// Fetching, verifying and installing Claude itself — the app's half of the story the
     /// core logs under the same category name.
     static let claudeUpdate = Logger(subsystem: subsystem, category: "update")
-    /// The unattended staged-update apply. Logged for the same reason as the deep-link path:
-    /// it runs while nobody is watching, so "it didn't happen" needs a paper trail to be
-    /// diagnosable at all.
-    static let autoApply = Logger(subsystem: subsystem, category: "autoapply")
 }

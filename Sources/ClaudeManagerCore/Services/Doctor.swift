@@ -53,7 +53,6 @@ public struct Doctor {
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
         diagnostics.append(contentsOf: managedConfigDiagnostics(discovered, managingUpdates: managingUpdates))
-        diagnostics.append(contentsOf: stagedUpdateDiagnostics())
         diagnostics.append(
             contentsOf: orphanProfileDiagnostics(known: knownProfiles, scan: scan)
         )

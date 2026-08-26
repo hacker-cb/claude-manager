@@ -255,9 +255,11 @@ extension AppModel {
     }
 
     private func forwardToProfile(_ profile: Profile, url: URL) async {
-        guard await !launchBlockedByStagedApply() else {
+        guard await !launchBlockedByUpdate() else {
             Log.deepLink
-                .error("forwardToProfile(\(profile.displayName, privacy: .public)): blocked by staged apply")
+                .error(
+                    "forwardToProfile(\(profile.displayName, privacy: .public)): blocked by an update in progress"
+                )
             return
         }
         // Clones are `shlock`-guarded, so a not-running clone is safe to just cold-launch —
@@ -286,7 +288,7 @@ extension AppModel {
     /// shares no `shlock` and would corrupt its LevelDB); the slot is held across the poll +
     /// deliver and released via the forwarder's `release` once the instance is reachable.
     private func forwardToDefaultProfile(url: URL) async {
-        guard await !launchBlockedByStagedApply() else { return }
+        guard await !launchBlockedByUpdate() else { return }
         let forwarder = DeepLinkForwarder(
             probePID: { [weak self] in await self?.defaultPID() },
             launch: { [weak self] in await self?.acquireDefaultLaunchSlot() ?? .failed },

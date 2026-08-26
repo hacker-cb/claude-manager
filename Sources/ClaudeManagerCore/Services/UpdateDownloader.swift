@@ -30,7 +30,7 @@ public struct PreparedDownload: Equatable, Sendable {
 /// left off rather than re-fetching a third of a gigabyte. That cost is the whole reason
 /// this is worth doing carefully — a destroyed ShipIt install used to cost exactly that, and
 /// it was what made the old update path so expensive to get wrong.
-/// `Sendable`, unlike the core's other filesystem services. Those (`StagedUpdateProbe`,
+/// `Sendable`, unlike the core's other filesystem services. Those (ShipIt's own staging,
 /// `ManagedConfigWriter`) are entirely synchronous, so they never leave the actor that owns
 /// them and holding a `FileManager` costs nothing. `fetch` is `async` and runs for minutes:
 /// a `@MainActor` owner storing one of these would be sending a non-`Sendable` value across

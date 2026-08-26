@@ -15,36 +15,6 @@ struct MenuBarContent: View {
             Text("Claude.app not found")
         } else {
             claudeUpdateItems
-            if let staged = model.stagedUpdate {
-                if model.isApplyingStagedUpdate {
-                    // A disabled Button, not a bare Label: an item with no action can still
-                    // look selectable in a menu, so mark it clearly non-interactive.
-                    Button {} label: {
-                        Label(
-                            "Applying Claude \(staged.stagedVersion)…",
-                            systemImage: "arrow.down.circle.fill"
-                        )
-                    }
-                    .disabled(true)
-                } else {
-                    // A submenu, not a one-click button: applying quits and relaunches every
-                    // open profile (interrupting live sessions), so it must never fire from a
-                    // single click. Opening the submenu and clicking the explicit item is the
-                    // menu-bar's confirmation (a `.confirmationDialog` can't present from a menu).
-                    Menu {
-                        Button("Quit & Update All Profiles") {
-                            Task { await model.applyStagedUpdate() }
-                        }
-                    } label: {
-                        Label(
-                            "Apply Claude \(staged.stagedVersion) to all profiles…",
-                            systemImage: "arrow.down.circle.fill"
-                        )
-                    }
-                }
-                Divider()
-            }
-
             // Profiles — the default profile first, then each clone, as one uniform list.
             // The default keeps its own person glyph (filled when running, mirroring the
             // clones' filled/empty circle) so it reads as a peer, not a special case.
@@ -64,7 +34,7 @@ struct MenuBarContent: View {
                     bindingID: TokenBinding.defaultID
                 ))
             }
-            .disabled(model.isApplyingStagedUpdate)
+            .disabled(model.claudeUpdateState.blocksProfileActivity)
 
             if model.profiles.isEmpty {
                 Text("No launchers yet")
@@ -83,7 +53,7 @@ struct MenuBarContent: View {
                             bindingID: managed.profile.id
                         ))
                     }
-                    .disabled(model.isApplyingStagedUpdate)
+                    .disabled(model.claudeUpdateState.blocksProfileActivity)
                 }
             }
 
@@ -117,7 +87,7 @@ struct MenuBarContent: View {
                         }
                     }
                 }
-                .disabled(model.isApplyingStagedUpdate)
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
             }
         }
 

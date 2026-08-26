@@ -30,12 +30,25 @@ public enum ClaudeUpdateState: Equatable, Sendable {
         }
     }
 
-    /// Whether work is in flight, so the UI can disable the controls that would start more.
+    /// Whether update work is in flight, so the UI can disable the controls that would
+    /// start more of it.
     public var isBusy: Bool {
         switch self {
         case .downloading, .installing: true
         case .idle, .available, .ready, .failed: false
         }
+    }
+
+    /// Whether this state makes it unsafe to open, close or sweep profiles.
+    ///
+    /// Narrower than ``isBusy``, and the difference matters: a download touches nothing but
+    /// a cache directory and can run for several minutes on a slow line. Gating profile
+    /// activity on `isBusy` would make a menu-bar app refuse to open a profile — and stop
+    /// refreshing usage — for the whole of a background download that was never in the way.
+    /// Only the swap itself is.
+    public var blocksProfileActivity: Bool {
+        if case .installing = self { return true }
+        return false
     }
 }
 
