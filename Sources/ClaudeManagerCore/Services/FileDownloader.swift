@@ -84,6 +84,10 @@ public struct URLSessionFileDownloader: FileDownloader {
             throw DownloadFailure.unexpectedStatus(http.statusCode)
         }
         let fileManager = FileManager.default
+        // The staged file is ours from here on, and every exit below can throw: without this
+        // a cache directory that is full or unwritable leaks ~335 MB into the temporary
+        // directory on *every* retry, and the retries are on a timer.
+        defer { try? fileManager.removeItem(at: temporaryURL) }
         try? fileManager.removeItem(at: destination)
         try fileManager.createDirectory(
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -102,45 +106,97 @@ public struct URLSessionFileDownloader: FileDownloader {
 
     /// Bridge `URLSessionDownloadTask` — whose progress and completion arrive through KVO
     /// and a callback — into one `async` call.
+    ///
+    /// Wrapped in `withTaskCancellationHandler` so cancelling the Swift task actually stops
+    /// the transfer. Without it the download runs to completion in the background and the
+    /// caller then publishes it — which, when the cancellation came from switching the
+    /// feature off, means an archive reappearing seconds after it was discarded. The
+    /// URLSession task is asked for resume data on the way out, so a cancellation is no more
+    /// expensive than any other interruption.
     private func transfer(
         url: URL,
         resumeData: Data?,
         progress: @Sendable @escaping (Int64, Int64?) -> Void
     ) async throws -> (URL, URLResponse?) {
         let observer = ProgressRelay(report: progress)
-        return try await withCheckedThrowingContinuation { continuation in
-            let handler: @Sendable (URL?, URLResponse?, Error?) -> Void = { location, response, error in
-                observer.stop()
-                if let error {
-                    // `NSURLSessionDownloadTaskResumeData` is how URLSession hands back the
-                    // "you can continue from here" token; without it the next attempt starts
-                    // from zero, which is allowed but expensive.
-                    let token = (error as NSError)
-                        .userInfo[NSURLSessionDownloadTaskResumeData] as? Data
-                    continuation.resume(throwing: DownloadInterrupted(resumeData: token, underlying: error))
-                    return
+        let holder = TaskHolder()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let handler: @Sendable (URL?, URLResponse?, Error?) -> Void = { location, response, error in
+                    observer.stop()
+                    if let error {
+                        // `NSURLSessionDownloadTaskResumeData` is how URLSession hands back
+                        // the "you can continue from here" token; without it the next attempt
+                        // starts from zero, which is allowed but expensive.
+                        let token = (error as NSError)
+                            .userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+                        continuation.resume(
+                            throwing: DownloadInterrupted(resumeData: token, underlying: error)
+                        )
+                        return
+                    }
+                    guard let location else {
+                        continuation.resume(throwing: DownloadFailure.noFileProduced)
+                        return
+                    }
+                    // The completion handler's file is deleted the moment this returns, so it
+                    // is moved aside *here*, synchronously, and handed on as a URL that will
+                    // still exist when the caller resumes.
+                    let staging = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("claude-manager-download-\(UUID().uuidString)")
+                    do {
+                        try FileManager.default.moveItem(at: location, to: staging)
+                        continuation.resume(returning: (staging, response))
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
                 }
-                guard let location else {
-                    continuation.resume(throwing: DownloadFailure.noFileProduced)
-                    return
-                }
-                // The completion handler's file is deleted the moment this returns, so it is
-                // moved aside *here*, synchronously, and handed on as a URL that will still
-                // exist when the caller resumes.
-                let staging = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("claude-manager-download-\(UUID().uuidString)")
-                do {
-                    try FileManager.default.moveItem(at: location, to: staging)
-                    continuation.resume(returning: (staging, response))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
+                let task = resumeData
+                    .map { session.downloadTask(withResumeData: $0, completionHandler: handler) }
+                    ?? session.downloadTask(with: url, completionHandler: handler)
+                observer.observe(task)
+                holder.hold(task)
+                // Cancellation can land before the task is held; asking the holder to stop
+                // covers that ordering as well as the ordinary one.
+                task.resume()
             }
-            let task = resumeData.map { session.downloadTask(withResumeData: $0, completionHandler: handler) }
-                ?? session.downloadTask(with: url, completionHandler: handler)
-            observer.observe(task)
-            task.resume()
+        } onCancel: {
+            holder.cancel()
         }
+    }
+}
+
+/// Holds the in-flight download task so a cancellation can reach it.
+///
+/// A lock rather than an actor: `onCancel` is synchronous and cannot await, and the window
+/// it guards — between creating the task and storing it — is a few instructions wide.
+private final class TaskHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDownloadTask?
+    private var cancelled = false
+
+    func hold(_ task: URLSessionDownloadTask) {
+        lock.lock()
+        defer { lock.unlock() }
+        // Already cancelled while the task was being created: cancel it straight away rather
+        // than storing a task nothing will ever stop.
+        if cancelled {
+            task.cancel()
+            return
+        }
+        self.task = task
+    }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        cancelled = true
+        // `cancel(byProducingResumeData:)` rather than plain `cancel()`: the bytes already
+        // fetched stay usable, so switching the feature off and on again does not restart a
+        // 335 MB transfer from zero. The token reaches the caller through the completion
+        // handler's error, like any other interruption.
+        task?.cancel(byProducingResumeData: { _ in })
+        task = nil
     }
 }
 

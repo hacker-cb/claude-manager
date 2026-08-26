@@ -22,13 +22,22 @@ public struct PreparedDownload: Equatable, Sendable {
 /// never rolls back. So when a newer release appears, whatever was staged is discarded and
 /// the new one fetched from scratch.
 ///
+/// **Not single-flight.** Overlapping `fetch` calls are the caller's to prevent; the cache
+/// self-corrects (each publish sweeps again, and `prepared()` reports the newest) but two
+/// concurrent transfers still waste a download. The orchestrator drives one at a time.
+///
 /// An interrupted transfer is resumable: a laptop that sleeps mid-download picks up where it
 /// left off rather than re-fetching a third of a gigabyte. That cost is the whole reason
 /// this is worth doing carefully — a destroyed ShipIt install used to cost exactly that, and
 /// it was what made the old update path so expensive to get wrong.
-/// Not `Sendable`: it holds a `FileManager`, like every other filesystem service in the
-/// core (`StagedUpdateProbe`, `ManagedConfigWriter`). Callers keep it on one actor.
-public struct UpdateDownloader {
+/// `Sendable`, unlike the core's other filesystem services. Those (`StagedUpdateProbe`,
+/// `ManagedConfigWriter`) are entirely synchronous, so they never leave the actor that owns
+/// them and holding a `FileManager` costs nothing. `fetch` is `async` and runs for minutes:
+/// a `@MainActor` owner storing one of these would be sending a non-`Sendable` value across
+/// an isolation boundary, which Swift 6 rejects outright — so this type uses
+/// `FileManager.default` (documented thread-safe for these operations) rather than storing
+/// an injected one.
+public struct UpdateDownloader: Sendable {
     public enum Failure: Error, Equatable {
         /// The transfer completed but the file on disk is empty, so there is nothing to
         /// verify. Distinct from a transport error: the network said it succeeded.
@@ -37,16 +46,19 @@ public struct UpdateDownloader {
 
     let downloader: FileDownloader
     let cacheDirectory: URL
-    let fileManager: FileManager
+
+    /// `FileManager.default`, reached through a computed property so the call sites read the
+    /// same as the rest of the core.
+    private var fileManager: FileManager {
+        .default
+    }
 
     public init(
         downloader: FileDownloader = URLSessionFileDownloader(),
-        cacheDirectory: URL,
-        fileManager: FileManager = .default
+        cacheDirectory: URL
     ) {
         self.downloader = downloader
         self.cacheDirectory = cacheDirectory
-        self.fileManager = fileManager
     }
 
     /// The archive already staged, if one is.
@@ -105,18 +117,21 @@ public struct UpdateDownloader {
             \(resumeData == nil ? "" : " (resuming)", privacy: .public)
             """
         )
-        let byteSize: Int64
+        var byteSize: Int64
         do {
             byteSize = try await downloader.download(
                 from: update.downloadURL, to: partial, resumeData: resumeData, progress: progress
             )
+        } catch is CancellationError {
+            CoreLog.update.info("download: cancelled")
+            throw CancellationError()
         } catch let interrupted as DownloadInterrupted {
             // Keep the token so the next attempt continues; without it the retry starts from
             // zero. A `nil` token means the failure was not resumable, and any stale token
             // from a previous attempt has to go with it.
             if let token = interrupted.resumeData {
                 try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-                try? token.write(to: resume)
+                try? token.write(to: resume, options: .atomic)
                 CoreLog.update.error(
                     """
                     download: interrupted, \(token.count, privacy: .public) bytes of resume state kept \
@@ -133,6 +148,23 @@ public struct UpdateDownloader {
                 )
             }
             throw interrupted
+        } catch where resumeData != nil {
+            // A resumed transfer that failed outright — the classic case is the server
+            // rejecting the byte range with 416 after the archive behind it was replaced.
+            // Keeping the token would wedge this version forever: every later attempt would
+            // replay the same bad range and fail identically. Drop it and start over once,
+            // here, rather than leaving the user to hope a background tick recovers.
+            try? fileManager.removeItem(at: resume)
+            try? fileManager.removeItem(at: partial)
+            CoreLog.update.error(
+                """
+                download: resumed attempt failed \
+                (\(error.localizedDescription, privacy: .public)) — refetching from scratch
+                """
+            )
+            byteSize = try await downloader.download(
+                from: update.downloadURL, to: partial, resumeData: nil, progress: progress
+            )
         } catch {
             CoreLog.update.error("download: failed — \(error.localizedDescription, privacy: .public)")
             throw error
@@ -148,6 +180,11 @@ public struct UpdateDownloader {
         // file looking installable.
         try? fileManager.removeItem(at: destination)
         try fileManager.moveItem(at: partial, to: destination)
+        // Swept again *after* publishing, not only before: this type is not single-flight,
+        // and two overlapping fetches can each pass the first discard before either renames.
+        // The second sweep leaves one archive whichever way they interleave; `prepared()`
+        // picking the newest covers the instant in between.
+        discardStaged(except: update.version)
         CoreLog.update.info(
             """
             download: staged \(update.version, privacy: .public), \
