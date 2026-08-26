@@ -28,6 +28,7 @@ extension AppModel {
                 // the poll loop: avoid a relaunch during ShipIt's swap window).
                 guard !self.isApplyingStagedUpdate else { return }
                 await self.reconcile()
+                await self.refreshClaudeUpdateIfDue()
             }
         }
         monitorTask = Task { @MainActor [weak self] in
@@ -54,6 +55,10 @@ extension AppModel {
                 // the whole nominated window would pass with nothing attempted. Presence is
                 // the idle check's job, and it is inside the pass.
                 if autoApplyEnabled { await runAutoApplyPass() }
+                // Claude's own update, checked and fetched on its own. Unlike the staged
+                // path this never acts — it only leaves a build ready — so it is safe on a
+                // timer whether or not anyone is watching.
+                await refreshClaudeUpdateIfDue()
             }
         }
     }

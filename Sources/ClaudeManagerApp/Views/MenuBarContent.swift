@@ -14,6 +14,7 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
+            claudeUpdateItems
             if let staged = model.stagedUpdate {
                 if model.isApplyingStagedUpdate {
                     // A disabled Button, not a bare Label: an item with no action can still
@@ -177,6 +178,42 @@ struct MenuBarContent: View {
             : nil
         if let resets { suffix += " · \(resets)" }
         return suffix
+    }
+
+    /// Claude's own update, in the menu bar.
+    ///
+    /// A submenu rather than a one-click item, for the same reason the staged-update entry
+    /// below is one: installing closes and reopens every open profile, interrupting live
+    /// sessions, and that must never fire from a single stray click. A menu cannot present a
+    /// `.confirmationDialog`, so opening the submenu and choosing the explicit item *is* the
+    /// confirmation.
+    @ViewBuilder
+    private var claudeUpdateItems: some View {
+        switch model.claudeUpdateState {
+        case .idle, .available, .failed:
+            EmptyView()
+        case let .downloading(version, _, _):
+            // Disabled Button, not a bare Label: an item with no action still looks
+            // selectable in a menu.
+            Button {} label: {
+                Label("Downloading Claude \(version)…", systemImage: "arrow.down.circle")
+            }
+            .disabled(true)
+        case let .installing(version):
+            Button {} label: {
+                Label("Installing Claude \(version)…", systemImage: "arrow.down.circle.fill")
+            }
+            .disabled(true)
+        case let .ready(verified):
+            Menu {
+                Button("Close profiles and install") {
+                    Task { await model.installClaudeUpdate() }
+                }
+            } label: {
+                Label("Update Claude to \(verified.version)…", systemImage: "arrow.down.circle.fill")
+            }
+        }
+        Divider()
     }
 }
 

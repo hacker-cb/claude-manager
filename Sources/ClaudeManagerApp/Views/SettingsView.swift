@@ -99,6 +99,27 @@ struct SettingsView: View {
     /// which is Claude Manager updating itself.
     private var claudeUpdateSection: some View {
         Section("Claude updates") {
+            Toggle("Let Claude Manager update Claude", isOn: $model.managesClaudeUpdates)
+            Text("Claude Manager fetches each new Claude build in the background, checks it is "
+                + "signed and notarized by Anthropic, and offers to install it. Installing "
+                + "closes every open profile and reopens the same set, so it only ever happens "
+                + "when you press the button.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !model.managesClaudeUpdates {
+                // The honest version of what switching this off means. Claude's own updater
+                // decides when to restart the default profile, and no setting here changes
+                // that — saying so is better than letting it come as a surprise.
+                Label(
+                    "Claude updates itself instead. Claude Manager cannot control when that "
+                        + "happens, and Claude may close your default profile on its own to "
+                        + "install one.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            Divider()
             Toggle("Apply staged Claude updates automatically", isOn: $model.autoApplyEnabled)
             // Say plainly what it does. A user who reads "automatically" and finds their
             // windows closed at 4 am has met the same surprise this feature exists to

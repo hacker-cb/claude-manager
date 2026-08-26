@@ -20,6 +20,9 @@ enum Log {
     static let deepLink = Logger(subsystem: subsystem, category: "deeplink")
     /// The `claude://` handler broker (registration, hold/re-assert, restore).
     static let broker = Logger(subsystem: subsystem, category: "broker")
+    /// Fetching, verifying and installing Claude itself — the app's half of the story the
+    /// core logs under the same category name.
+    static let claudeUpdate = Logger(subsystem: subsystem, category: "update")
     /// The unattended staged-update apply. Logged for the same reason as the deep-link path:
     /// it runs while nobody is watching, so "it didn't happen" needs a paper trail to be
     /// diagnosable at all.
