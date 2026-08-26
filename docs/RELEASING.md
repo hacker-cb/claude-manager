@@ -132,6 +132,17 @@ Two things make that awkward to fix, and both are worth knowing before you hit t
 Merge the sync PR as a **merge commit**, not a squash: squashing flattens away the very
 commits `dev` needs in its history for the release PR to stop reading as behind.
 
+The whole dance, as commands. Run from a clean checkout with `origin` fetched:
+
+```bash
+git switch -c sync-master-into-dev origin/master && git merge --no-edit origin/dev
+git diff --stat origin/dev   # expect empty: the trees must already match
+git push origin HEAD:refs/heads/chore/sync-master-into-dev
+```
+
+Then open the PR against `dev`, give it something real to review (see below), merge it as
+a **merge commit**, and only then open the release PR.
+
 Two more things learned cutting v0.10.1:
 
 - **Branch the sync off `master` and merge `dev` into it**, rather than pushing `master` as-is.
@@ -139,6 +150,12 @@ Two more things learned cutting v0.10.1:
   just `master` is itself `BEHIND` its base and the same strict-checks rule blocks it — you'd
   be one PR deeper in the same hole. Merging `dev` in leaves the tree identical to `dev` and
   the branch up to date.
+- **The empty-diff gate is not a one-off.** It has now blocked every release sync, each
+  time after burning its full 15-minute wait. Adding a real change to the sync PR is the
+  reliable way through, and this section is where those changes have gone: each release has
+  paid for the paragraph documenting the trap it hit. If that stops being funny, the fix is
+  to teach `copilot-review-gate` to pass a diff with no reviewable files rather than to keep
+  feeding it prose.
 - **Admin merge may not be available to you.** It is the documented escape from the empty-diff
   gate, but an agent session can have it withheld (it is, after all, a branch-protection
   bypass). Giving the PR something real to review is the path that needs no special rights —

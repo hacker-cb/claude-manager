@@ -37,7 +37,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dockRefreshPending = false
 
     /// Flip the Dock-refresh banner (`private(set)`, so the extensions drive it via this —
-    /// the same shape `setApplyingStagedUpdate` uses).
+    /// the same shape the other setters use).
     func setDockRefreshPending(_ value: Bool) {
         dockRefreshPending = value
     }
@@ -84,47 +84,22 @@ final class AppModel: ObservableObject {
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
-    /// A Claude update ShipIt has staged but not applied (any open profile blocks the
-    /// swap) — drives the "Apply to all profiles" affordance. `nil` when none.
-    @Published private(set) var stagedUpdate: StagedUpdate?
-    /// True while a coordinated apply is in flight, so the UI disables re-triggering and
-    /// the background monitor pauses (a relaunch mid-swap would trip ShipIt's Gate 2).
-    @Published private(set) var isApplyingStagedUpdate = false
-    /// Whether to show the "turn on nightly applying?" line in the staged-update banner, and
-    /// the wait it quotes.
-    ///
-    /// **Published, not computed in the view.** Deriving it needs `stagedUpdateDeadline` —
-    /// several file reads and a JSON parse — and `RootView.body` re-runs on every publish, on
-    /// layout, and through the banner-height round trip: computing it there would put
-    /// synchronous disk I/O on the main thread for as long as a staged update exists.
-    @Published private(set) var autoApplyOffer: AutoApplyOffer?
+    /// Where this app is in fetching and installing Claude's own updates — see
+    /// `AppModel+ClaudeUpdate`.
+    @Published private(set) var claudeUpdateState: ClaudeUpdateState = .idle
 
-    /// Set the offer (`private(set)`, driven by `AppModel+AutoApply` during a refresh).
-    ///
-    /// Assigns only on a real change: `@Published` publishes on *every* assignment, while
-    /// `refreshAutoApplyOffer()` runs each refresh tick and each time-picker edit and mostly
-    /// recomputes the same nil — republishing the model and re-running `RootView.body`.
-    func setAutoApplyOffer(_ value: AutoApplyOffer?) {
-        guard value != autoApplyOffer else { return }
-        autoApplyOffer = value
-    }
-
-    /// Set the staged-update probe result (`private(set)`, so `AppModel+AutoApply` can
-    /// refresh it from the background tick without a full `refresh()`).
-    func setStagedUpdate(_ value: StagedUpdate?) {
-        guard value != stagedUpdate else { return } // same reason as `setAutoApplyOffer`
-        stagedUpdate = value
-    }
-
-    /// Flip the apply-in-flight flag (`private(set)`, so the extension drives it via this).
-    func setApplyingStagedUpdate(_ value: Bool) {
-        isApplyingStagedUpdate = value
+    /// Set the update state (`private(set)`, driven from `AppModel+ClaudeUpdate`). Assigns
+    /// only on a change: `@Published` publishes on every assignment, and a background tick
+    /// that recomputes the same value would re-run `RootView.body` for nothing.
+    func setClaudeUpdateState(_ value: ClaudeUpdateState) {
+        guard value != claudeUpdateState else { return }
+        claudeUpdateState = value
     }
 
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
+    /// Non-private for the `AppModel+ClaudeUpdate` extension, which owns the update
     /// notifications.
     var notifiedClaudeUpdates: Set<String> {
         get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
@@ -132,6 +107,9 @@ final class AppModel: ObservableObject {
     }
 
     var monitorTask: Task<Void, Never>?
+    /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
+    /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
+    var claudeUpdateTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
@@ -246,7 +224,7 @@ final class AppModel: ObservableObject {
     var brokerApplyTask: Task<Void, Never>?
     private var didFinishInit = false
 
-    /// Non-private: `AppModel+StagedUpdate` persists the staged-update ledgers through it,
+    /// Non-private: `AppModel+ClaudeUpdate` persists the staged-update ledgers through it,
     /// and injecting the store is what keeps those tests off the host's real preferences.
     let defaults: UserDefaults
 
@@ -316,11 +294,9 @@ final class AppModel: ObservableObject {
             realClaude = nil
             realClaudeVersion = nil
             primaryProfile = nil
-            // A vanished Claude has no staged update to apply; clear it so the banner doesn't
-            // outlive the app it refers to (refresh, its only other writer, bails while nil).
-            setStagedUpdate(nil)
-            // The offer describes that update; it must not outlive it either.
-            setAutoApplyOffer(nil)
+            // A vanished Claude has nothing to update; the banner must not outlive the app
+            // it refers to.
+            setClaudeUpdateState(.idle)
             locateError = Self.describe(error)
         }
     }
@@ -359,23 +335,25 @@ final class AppModel: ObservableObject {
         profiles = snapshot.profiles
         primaryProfile = snapshot.primaryProfile
         prunePendingRestarts()
-        // Probe the staged update directly (not via `snapshot`, which is empty of clones when
-        // there are none — the default profile can still have one staged).
-        let staged = await perform { store in store.stagedUpdate() }.flatMap(\.self)
-        setStagedUpdate(staged)
-        recordStagedUpdateSighting()
-        refreshAutoApplyOffer()
         await notifyClaudeUpdatesIfNeeded()
-        await notifyStagedUpdateIfNeeded()
-        await notifyStagedDeadlineIfNeeded()
         // Detached: the editor's Save awaits `refresh()`, and a usage pass issues per-account
         // HTTP with a 5s timeout each — awaiting it froze the sheet for tens of seconds offline.
         Task { await refreshUsageIfBindingsChanged() }
     }
 
     func runDoctor() async {
-        guard var result = await perform({ store in store.doctor() }) else { return }
+        let managingUpdates = managesClaudeUpdates
+        guard var result = await perform({ store in store.doctor(managingUpdates: managingUpdates) })
+        else { return }
         if let usage = usageDoctorDiagnostic() { result.append(usage) }
+        // The same reading the core run used, not a fresh one: this method awaits in between,
+        // and a diagnostics set half-computed for "we update Claude" and half for "Claude
+        // does" would contradict itself on screen.
+        if let stale = Doctor.staleUpdateCheckDiagnostic(
+            managingUpdates: managingUpdates,
+            lastSuccess: (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
+                .map(Date.init(timeIntervalSince1970:))
+        ) { result.append(stale) }
         diagnostics = result
     }
 
@@ -455,14 +433,11 @@ final class AppModel: ObservableObject {
         }.value
         realClaude = located.real
         realClaudeVersion = located.version
-        // A vanished Claude leaves no default profile and no staged update to apply;
-        // `reconcile` returns before `refresh` could recompute them, so clear the stale
-        // primary row and staged-update banner here.
+        // A vanished Claude leaves no default profile and nothing to update; `reconcile`
+        // returns before `refresh` could recompute them, so clear the stale rows here.
         if located.real == nil {
             primaryProfile = nil
-            setStagedUpdate(nil)
-            // The offer describes that update; it must not outlive it either.
-            setAutoApplyOffer(nil)
+            setClaudeUpdateState(.idle)
         }
         locateError = located.error
     }

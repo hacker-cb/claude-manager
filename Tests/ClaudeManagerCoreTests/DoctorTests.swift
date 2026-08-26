@@ -89,7 +89,7 @@ func runDoctor(
         // Hermetic MDM state: point at an absent path so tests never depend on the
         // host machine's real managed-preferences.
         managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
-    ).run()
+    ).run(managingUpdates: false)
 }
 
 struct DoctorTests {
@@ -123,7 +123,7 @@ struct DoctorTests {
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
             codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
-        ).run()
+        ).run(managingUpdates: false)
         #expect(diags.contains { $0.severity == .error && $0.title.contains("Real Claude.app is missing") })
     }
 
@@ -143,7 +143,7 @@ struct DoctorTests {
             bundle: LauncherBundle(runner: RecordingCommandRunner(handler: idleStub)),
             codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub))
-        ).run()
+        ).run(managingUpdates: false)
         #expect(diags.contains { $0.severity == .error && $0.title.contains("no executable") })
     }
 
@@ -220,7 +220,7 @@ struct DoctorTests {
             codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
-        ).run()
+        ).run(managingUpdates: false)
         // An informational (.ok) note — not a standing warning — replaces the per-clone
         // warnings (the managed tier owns the policy).
         #expect(diags.contains { $0.severity == .ok && $0.title.contains("MDM-managed") })
@@ -246,7 +246,7 @@ struct DoctorTests {
             codeSigner: CodeSigner(runner: RecordingCommandRunner(handler: idleStub)),
             processProbe: ProcessProbe(runner: RecordingCommandRunner(handler: idleStub)),
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: [mdm])
-        ).run()
+        ).run(managingUpdates: false)
         #expect(!diags.contains { $0.title.contains("MDM-managed") })
     }
 

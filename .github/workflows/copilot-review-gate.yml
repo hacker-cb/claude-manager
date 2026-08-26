@@ -52,5 +52,21 @@ jobs:
   copilot-review-gate:
     name: copilot-review-gate
     runs-on: ubuntu-latest
+
+    # The action bounds its own STEP with `timeout`, derived from its inputs — but
+    # a composite action cannot set `timeout-minutes`, so nothing of its own covers
+    # a runner stalling BEFORE that step starts: this job would then sit here for
+    # GitHub's default of 360 minutes, with the required check pending throughout.
+    # That gap is what this backstop covers.
+    #
+    # Deliberately generous rather than derived. This file sets no inputs, so the
+    # wait window belongs to the action's defaults and can move in a release; a
+    # number computed from today's defaults would quietly become wrong, and one
+    # that fires before the action's own ceiling would replace the gate's
+    # diagnosis with a bare cancellation. If an upgrade ever raises the window
+    # near this, this is the line to raise — the Dependabot PR for the major is
+    # where to look.
+    timeout-minutes: 25
+
     steps:
       - uses: hacker-cb/action-copilot-review-gate@v1

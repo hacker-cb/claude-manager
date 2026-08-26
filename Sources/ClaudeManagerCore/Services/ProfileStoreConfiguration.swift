@@ -20,6 +20,9 @@ public struct ProfileStoreConfiguration: Sendable, Equatable {
     public var defaultProfileUserDataPath: String
     /// ShipIt state file that names a staged Claude update (`ShipItState.plist`).
     /// Injectable so tests never read the host's real ShipIt cache.
+    /// ShipIt's per-bundle state file. Claude's own updater is switched off, so nothing here
+    /// reads it for a staged update any more — it names the cache directory that
+    /// `SquirrelResidue` sweeps, and the file whose presence means a job is still armed.
     public var shipItStatePath: String
 
     public init(

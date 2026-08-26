@@ -78,7 +78,7 @@ struct PrimaryProfileDetailView: View {
                 Label(status?.isRunning == true ? "Activate" : "Open", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(model.isApplyingStagedUpdate)
+            .disabled(model.claudeUpdateState.blocksProfileActivity)
 
             if status?.isRunning == true {
                 Button { Task { await model.stopDefaultProfile(force: false) } } label: {

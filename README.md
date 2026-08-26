@@ -72,10 +72,10 @@ The first time you re-activate an *already-running* profile, macOS asks for
   callbacks would otherwise always land in whichever Claude the system opens. Claude
   Manager intercepts them and shows a picker so you send each to the right profile.
   On by default; toggle in **Settings → Deep links**. See [Deep links](#deep-links).
-- **Coordinated Claude updates** — clones don't each run Claude's own updater (only
-  your default profile checks and downloads), and when a downloaded update is blocked
-  by open windows, **Apply to all profiles** quits them, lets it install, and reopens
-  the set. See [Updates](#updates).
+- **Claude Manager updates Claude** — Claude's own updater is switched off on every
+  profile, including the default. Each new build is fetched in the background, checked to
+  be signed and notarized by Anthropic, and installed when you press the button: your
+  profiles close and reopen as one step, at a moment you chose. See [Updates](#updates).
 - **Auto-update** — the app updates itself via Sparkle (each update EdDSA-signed),
   separate from Claude Desktop's own updates.
 
@@ -145,30 +145,29 @@ profile or your default profile. That profile then opens the link itself.
 update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
 separate from Claude Desktop's own update mechanism.
 
-**Claude Desktop** updates are coordinated so multiple profiles don't fight over them.
-Every profile runs the one on-disk `Claude.app`, so a clone updating itself would just
-re-download the build your default profile already fetches. So Claude Manager **turns
-off the self-updater in clones** and lets your **default profile** be the one that
-checks, downloads, and stages Claude updates. When an update is downloaded but can't
-install because profiles are open, a banner (and a notification) offer **Apply to all
-profiles** — it quits every profile, lets the update install, and reopens the ones
-that were running.
+**Claude Desktop** is updated by Claude Manager, not by Claude. Every profile runs the one
+on-disk `Claude.app`, and Claude's own updater cannot install anything while a profile is
+open — it aborts unless *nothing* is running. Left to itself it downloads a build, fails to
+install it, and force-restarts your default profile every few days trying again, each time
+re-downloading a third of a gigabyte. So Claude Manager switches that updater off on every
+profile, including the default, and takes the job over.
 
-Claude Manager can also do this for you overnight, inside a window you choose (Settings →
-Claude updates; off by default). When an update has been stuck for a while the banner offers
-to turn it on, since that is the point at which it starts to matter: until an update installs,
-Claude keeps restarting your default profile every few days trying to force it through.
+It checks Anthropic's release service every few hours, downloads each new build in the
+background, and verifies it before offering anything: the bundle must be signed by Anthropic
+(team `Q6L2SF6YDW`), carry Apple's notarization ticket, and be the version it claimed to be.
+A build that fails any of that is discarded, not installed.
 
-It only acts when the Mac has been idle for ten minutes, and the same protection applies — a
-working profile refuses to quit and the attempt is called off, to be retried after a back-off
-(six hours, so usually the following night).
+Installing is always yours to trigger — a banner in the window and an entry in the menu bar.
+Pressing it closes every open profile, swaps the app, and reopens exactly the set that was
+running. A profile that is **still working** won't be closed: Claude refuses the quit and
+offers "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
+answer — nothing is swapped, and whatever it had already closed is reopened.
 
-A profile that is **still working** won't be closed: Claude refuses the quit and offers
-"Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
-answer — it stops the apply before anything is swapped and reopens whatever it had
-already closed. Installing a large update can take a while; while it is in progress your
-profiles stay closed on purpose, because reopening one mid-install makes the installer
-abort and start over.
+You can hand the job back at any time with **Settings → Claude updates → Let Claude Manager
+update Claude**. Turning it off restores Claude's own updater — along with its habit of
+restarting your default profile to install things. **Do this before uninstalling Claude
+Manager**, or Claude is left with its updater disabled and nothing to take over; see
+[Uninstall](#uninstall).
 
 ## Troubleshooting
 
@@ -178,9 +177,7 @@ Open the **Doctor** tab for a health report. Common findings:
 |---|---|
 | _built by an older launcher format — rebuild to update_ | Click **Rebuild** on the launcher, or **Settings → Badge style → Apply to all launchers** for every profile at once. |
 | _running vX — Claude vY available, restart to update_ | Quit and reopen that profile; Claude updated on disk while it was running. |
-| _Claude vX staged but not applied — N running instance(s) block the swap_ | Click **Apply to all profiles** (window banner) or **Apply Claude vX to all profiles** (menu bar) to quit, install, and reopen everything at once. |
-| _Claude's installer has been waiting N min_ | The installer is blocked, not working — it waits for every profile to quit, indefinitely. Same fix: **Apply to all profiles**. |
-| _The last install attempt didn't complete_ | What Claude's installer reported the last time it tried. Usually "a Claude instance was running" — apply again with everything closed. |
+| _Claude has not been checked for updates in a while_ | Claude Manager owns Claude's updates and has not reached Anthropic's release service in over a week — so Claude will stay on its current build. Check the network, or turn off **Let Claude Manager update Claude** in Settings to hand the job back. |
 | _profile dir missing — created on launch_ | Informational — it launches fine and creates the dir. |
 | _Real Claude.app is missing_ | Install Claude Desktop (found automatically wherever it lives). If it's installed but not detected, click **Re-detect** in **Settings → Real Claude**. |
 | _Duplicate instances on one profile_ | Close the extra windows; the launcher normally prevents this. |
@@ -209,15 +206,24 @@ Open the **Doctor** tab for a health report. Common findings:
 
 ## Uninstall
 
-1. In Claude Manager, **remove each launcher profile** (this deletes its launcher
+1. In Settings, turn **“Let Claude Manager update Claude” off**. This matters: while it
+   is on, Claude's own updater is switched off and Claude Manager does the updating. Turning
+   it off hands the job back. Skip this and Claude keeps its updater disabled with nothing
+   left to take over — it will stay on its current build indefinitely.
+2. In Claude Manager, **remove each launcher profile** (this deletes its launcher
    app). The **Default profile** has no launcher and nothing to remove.
-2. Quit and drag **Claude Manager** to the Trash.
-3. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
+3. Quit and drag **Claude Manager** to the Trash.
+4. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
    and app metadata).
 
 Removing Claude Manager never touches your real `/Applications/Claude.app` or its
 data. If it was handling `claude://` links, the scheme falls back to Claude on its own
 once Claude Manager is gone (no cleanup needed).
+
+If you have already removed Claude Manager with managed updates left on, the setting
+lives in a file beside your default profile's data:
+`~/Library/Application Support/Claude-3p/configLibrary/` — deleting that directory
+restores Claude's own updater.
 
 ## Contributing &amp; development
 

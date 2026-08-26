@@ -22,45 +22,25 @@ enum PreferenceKeys {
     /// Whether limit-approaching reminders are posted. On by default.
     static let usageNotificationsEnabled = "usageNotificationsEnabled"
 
-    /// `[stagedVersion: seconds-since-1970]` as a plist dictionary — when the staged Claude
-    /// update was **first seen**.
-    /// Persisted because it is the only clock we have on Claude's own 72 h enforcement
-    /// timer: that counter lives in the updater's memory, and nothing on disk survives a
-    /// re-arm (`ShipItState.plist`'s mtime is rewritten on every retry). Kept to the
-    /// currently-staged version, so it can't grow a row per Claude release forever.
-    static let stagedUpdateFirstSeen = "stagedUpdateFirstSeen"
-    /// Staged versions whose "downloaded, blocked by open profiles" notification has already
-    /// been posted. Persisted so the once-per-version promise survives an app restart —
-    /// in memory it was renewed on every launch, re-nagging about the same version.
-    static let notifiedStagedUpdate = "notifiedStagedUpdate"
-    /// Staged versions whose *deadline* warning has been posted — a separate key, because it
-    /// is a second, later notification about the same version.
-    static let notifiedStagedDeadline = "notifiedStagedDeadline"
     /// Launcher+version keys whose "restart to update" notification has been posted. Persisted
-    /// for the same reason as the two above — and it started mattering the moment notifications
-    /// became visible while the app is frontmost: in memory, every launch re-notified about
-    /// every profile still running an older Claude.
+    /// because it started mattering the moment notifications became visible while the app is
+    /// frontmost: in memory, every launch re-notified about every profile still running an
+    /// older Claude.
     static let notifiedClaudeUpdates = "notifiedClaudeUpdates"
 
-    /// Whether Claude Manager may apply a staged Claude update unattended, inside the window
-    /// below. **Off unless the user turns it on**: an apply closes every profile and reopens
-    /// it, and doing that unasked is the same surprise this whole feature exists to prevent —
-    /// only with our name on it.
-    static let autoApplyStagedUpdate = "autoApplyStagedUpdate"
-    /// Start/end of that window as minutes since midnight, local time. Two plain integers
-    /// rather than an encoded `AutoApplyWindow`, so a settings pane can bind each end
-    /// directly and a stored value stays legible in `defaults read`.
-    static let autoApplyWindowStart = "autoApplyWindowStartMinutes"
-    static let autoApplyWindowEnd = "autoApplyWindowEndMinutes"
-    /// `[stagedVersion: seconds-since-1970]` — when an unattended attempt on that version
-    /// last failed. Drives the back-off: without it a veto (a profile busy working) would be
-    /// retried every minute for the rest of the window, closing and reopening every other
-    /// profile each time.
-    static let autoApplyLastFailure = "autoApplyLastFailure"
-    /// Staged versions whose "turn on nightly applying?" offer the user has **answered** —
-    /// either way. Declining is the common one, but turning the feature on is just as much an
-    /// answer, and so is turning it back off; all three write here, so the banner stops asking
-    /// about that version. Persisted because the offer targets updates that may never apply —
-    /// without a remembered answer it would reappear at every launch for days.
-    static let answeredAutoApplyOffer = "answeredAutoApplyOffer"
+    /// Whether Claude Manager fetches and installs Claude's updates itself, rather than
+    /// leaving that to Claude's own Squirrel updater. Absent means **on**: it is this app's
+    /// model of how updating works, not an experiment to be discovered in Settings.
+    static let manageClaudeUpdates = "manageClaudeUpdates"
+
+    /// When the release feed was last asked, as epoch seconds. Persisted so relaunching the
+    /// app does not turn a four-hourly check into a per-launch one.
+    static let lastClaudeUpdateCheck = "lastClaudeUpdateCheck"
+
+    /// When the feed last answered *successfully*, as epoch seconds. Distinct from
+    /// `lastClaudeUpdateCheck`, which is stamped when an attempt starts: with Claude's own
+    /// updater switched off, a feed that has been failing for weeks means nothing is updating
+    /// Claude at all, and only a record of the last success can tell that apart from a
+    /// machine that is simply up to date.
+    static let lastClaudeUpdateSuccess = "lastClaudeUpdateSuccess"
 }

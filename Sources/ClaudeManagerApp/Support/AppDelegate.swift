@@ -1,4 +1,5 @@
 import AppKit
+import ClaudeManagerCore
 import UserNotifications
 
 /// AppKit delegate wired in via `NSApplicationDelegateAdaptor`. It owns the app lifecycle

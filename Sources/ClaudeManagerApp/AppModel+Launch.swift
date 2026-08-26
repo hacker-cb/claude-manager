@@ -8,7 +8,7 @@ import ClaudeManagerCore
 /// `AppModel+PrimaryProfile`; deep-link forwarding in `AppModel+DeepLink`.
 extension AppModel {
     func open(_ profile: Profile) async {
-        guard await !launchBlockedByStagedApply() else { return }
+        guard await !launchBlockedByUpdate() else { return }
         // A running profile only needs its window raised — activate it by pid instead of
         // relaunching the launcher app, which would flash a transient Dock icon (it
         // starts, self-activates via `activate_existing`, and exits at once). Fall back to
@@ -34,7 +34,7 @@ extension AppModel {
     /// picks up an in-place app update). Graceful stop first; if it won't exit, leave
     /// it running and surface the same notice `stop` does rather than force-killing.
     func restart(_ profile: Profile) async {
-        guard await !launchBlockedByStagedApply() else { return }
+        guard await !launchBlockedByUpdate() else { return }
         let outcome = await perform { store in await store.stop(profile, force: false) }
         switch outcome {
         case .stopped?, .notRunning?:

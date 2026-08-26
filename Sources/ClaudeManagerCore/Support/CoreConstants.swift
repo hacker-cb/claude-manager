@@ -116,36 +116,15 @@ public enum CoreConstants {
 
     /// ShipIt (Squirrel.Mac) per-bundle state file — `ShipItState.plist` under Caches,
     /// which is **JSON** despite the extension. When a job is armed it names the staged
-    /// `updateBundleURL`; reading it is how we detect a staged-but-unapplied update that
-    /// running clones are blocking. Keyed by the app's bundle id.
+    /// `updateBundleURL`. Nothing reads it for a staged update any more — Claude's updater
+    /// is switched off — but its presence still means a job is armed, and its directory is
+    /// what `SquirrelResidue` sweeps. Keyed by the app's bundle id.
     public static func shipItStatePath(
         forBundleID bundleID: String,
         home: String = NSHomeDirectory()
     ) -> String {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
-
-    /// ShipIt's own `stderr` log, which sits beside the state file in the same per-bundle
-    /// cache — the only place the *reason* an install failed is ever written (the state
-    /// file records the job, never its outcome).
-    ///
-    /// Derived from the state path rather than taking a second injectable path: Squirrel
-    /// writes both into one directory it names itself, so a test that redirects the state
-    /// file redirects this too, and the two can never drift onto different bundles.
-    public static func shipItStderrPath(forStatePath statePath: String) -> String {
-        URL(fileURLWithPath: statePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("ShipIt_stderr.log")
-            .path
-    }
-
-    /// How long Claude's installer has to be running before Doctor calls it stuck.
-    ///
-    /// A swap is 3–5 s, and the worst measured under disk contention was 57 s. Ten minutes
-    /// is therefore two orders of magnitude past "installing" and can only mean ShipIt is
-    /// waiting for every Claude instance to quit — which it does **indefinitely and
-    /// silently**, the failure mode that ran unnoticed for nine days.
-    public static let shipItStuckSeconds: TimeInterval = 600
 
     // MARK: - Plan-usage statistics
 
@@ -225,6 +204,85 @@ public enum CoreConstants {
     public static let oauthInferenceScope = "user:inference"
     public static let oauthProfileScope = "user:profile"
 
+    // MARK: - Claude Desktop releases
+
+    /// Anthropic's desktop release API: the newest published build and its `.zip`, as
+    /// `{"version": "1.37937.1", "url": "https://…/Claude-<id>.zip"}`.
+    ///
+    /// `universal` matches how Claude Desktop ships on macOS — the same slice its own
+    /// updater requests — so the download is the very bundle Anthropic distributes rather
+    /// than a per-architecture variant this app would have to choose between.
+    ///
+    /// The API is not publicly documented, which is why every field is parsed defensively
+    /// and ``claudeReleaseFeedValidatedVersion`` records what it was last checked against.
+    public static let latestReleaseFeedURL = URL(
+        string: "https://api.anthropic.com/api/desktop/darwin/universal/zip/latest"
+    )! // swiftlint:disable:this force_unwrapping
+
+    /// Release whose feed contract — the two-field payload above — was verified by hand.
+    /// A `LiveUpdateFeedTests` case re-checks it against the real endpoint on demand, so a
+    /// reshaped payload surfaces as a failing opt-in test rather than a silent no-op.
+    public static let claudeReleaseFeedValidatedVersion = "1.37937.1"
+
+    /// Anthropic's Apple Developer team identifier, as it appears in Claude's signature
+    /// (`TeamIdentifier=Q6L2SF6YDW`).
+    public static let anthropicTeamIdentifier = "Q6L2SF6YDW"
+
+    /// The requirement a downloaded bundle must satisfy to be Anthropic's build.
+    ///
+    /// This is the form Apple's own tooling prints for a Developer ID application, not a
+    /// hand-rolled shorthand: `anchor apple generic` pins the chain to Apple's roots, the
+    /// two marker OIDs pin it to the **Developer ID** CA and leaf specifically, and the
+    /// leaf's OU is the team. Together they say "Apple issued this, as a Developer ID
+    /// application, to Anthropic".
+    ///
+    /// The marker OIDs are not decoration. Without them the requirement admits any
+    /// Apple-anchored certificate whose OU happens to match — a Mac Developer or
+    /// installer-signing certificate, for instance. `spctl` would normally catch that, but
+    /// `spctl --assess` answers according to the machine's Gatekeeper state, and on a system
+    /// where assessments are disabled it stops asserting anything at all. This requirement
+    /// is then the only line left, so it is the one that must be exact.
+    ///
+    /// Handed to `codesign -R`, so it is evaluated by the same code that validates the
+    /// signature rather than by parsing `codesign -dv` output, where a locale or a format
+    /// change is a silent misread. A malformed requirement fails closed: `codesign` exits
+    /// non-zero rather than skipping the check.
+    public static let anthropicDesignatedRequirement = """
+    =anchor apple generic \
+    and certificate 1[field.1.2.840.113635.100.6.2.6] \
+    and certificate leaf[field.1.2.840.113635.100.6.1.13] \
+    and certificate leaf[subject.OU] = "\(anthropicTeamIdentifier)"
+    """
+
+    /// The bundle name inside a release archive, and the name it is installed under.
+    public static let claudeAppName = "Claude.app"
+
+    /// Names a macOS-built zip may carry beside its payload. Enumerated deliberately: a
+    /// blanket "ignore hidden entries" rule would let an archive hide arbitrary content from
+    /// a check whose claim is that it unpacked to exactly one bundle.
+    public static let archiveMetadataNames: Set<String> = ["__MACOSX", ".DS_Store"]
+
+    /// Where downloaded builds and the bundle unpacked from them live.
+    ///
+    /// Under `Caches` because it is all reproducible — losing it costs a re-download, not
+    /// data — and, more importantly, because it is on the same volume as `/Applications`:
+    /// the install swaps the unpacked bundle in by rename, which is atomic only within a
+    /// volume. A staging area under `/tmp` would satisfy neither.
+    public static func updateCacheDirectory(
+        forBundleID bundleID: String,
+        home: String = NSHomeDirectory()
+    ) -> URL {
+        URL(fileURLWithPath: "\(home)/Library/Caches/\(bundleID)/ClaudeUpdates")
+    }
+
+    /// Subdirectory of the cache holding the unpacked, verified bundle.
+    public static let updateStagingDirectoryName = "staged"
+
+    /// Timeout for the feed request. Short on purpose: this runs on a background check
+    /// whose failure is simply "ask again later", so waiting out a hung connection buys
+    /// nothing.
+    public static let updateFeedTimeout: TimeInterval = 20
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =
@@ -239,4 +297,9 @@ public enum CoreConstants {
     public static let touchPath = "/usr/bin/touch"
     public static let killallPath = "/usr/bin/killall"
     public static let duPath = "/usr/bin/du"
+    /// Apple's archive tool. Used instead of `unzip` to unpack a signed bundle: it preserves
+    /// extended attributes and symlinks, which a signature covers and `unzip` need not keep.
+    public static let dittoPath = "/usr/bin/ditto"
+    /// Gatekeeper assessment — the notarization ticket check.
+    public static let spctlPath = "/usr/sbin/spctl"
 }

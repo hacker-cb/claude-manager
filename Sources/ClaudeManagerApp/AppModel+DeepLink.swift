@@ -140,9 +140,14 @@ extension AppModel {
     /// needs only the default user-data path, not the real app. Exactly one path ever
     /// writes the default profile, so the two never race.
     func applyDeepLinkBroker() async {
-        let storeReconciled = await perform { store in store.reconcileAllManagedConfigs() } != nil
+        // The default profile's updater is switched off exactly when this app is the one
+        // doing the updating; the setting is read here, on the main actor, and carried in.
+        let managingUpdates = managesClaudeUpdates
+        let storeReconciled = await perform { store in
+            store.reconcileAllManagedConfigs(managingUpdates: managingUpdates)
+        } != nil
         if !storeReconciled {
-            await reconcileDefaultProfileOverlayDirectly()
+            await reconcileDefaultProfileOverlayDirectly(managingUpdates: managingUpdates)
         }
         // A build that doesn't declare `claude://` (the dev identity — project.yml
         // `settings.configs`) must not touch the system handler at all: neither grab it
@@ -173,14 +178,16 @@ extension AppModel {
         }
     }
 
-    /// Clean any CM-written overlay off the default profile (its handler is held by the
-    /// guard, never a written key), independently of `realClaude` via a plain
+    /// Bring the default profile's overlay in line without needing the store — its updater
+    /// key depends only on the setting and the default user-data path, not on where Claude
+    /// is. Written through a plain
     /// `ManagedConfigWriter`. Used only as the fallback when the store is unavailable, so
     /// it never races the store's own default-profile cleanup. Off-main (file IO).
-    private func reconcileDefaultProfileOverlayDirectly() async {
+    private func reconcileDefaultProfileOverlayDirectly(managingUpdates: Bool) async {
         await Task.detached {
             try? ManagedConfigWriter().reconcilePreservingUntouched(
-                .defaultProfile, userDataPath: ProfileStoreConfiguration.systemDefaultProfileUserDataPath
+                .defaultProfile(managingUpdates: managingUpdates),
+                userDataPath: ProfileStoreConfiguration.systemDefaultProfileUserDataPath
             )
         }.value
     }
@@ -248,9 +255,11 @@ extension AppModel {
     }
 
     private func forwardToProfile(_ profile: Profile, url: URL) async {
-        guard await !launchBlockedByStagedApply() else {
+        guard await !launchBlockedByUpdate() else {
             Log.deepLink
-                .error("forwardToProfile(\(profile.displayName, privacy: .public)): blocked by staged apply")
+                .error(
+                    "forwardToProfile(\(profile.displayName, privacy: .public)): blocked by an update in progress"
+                )
             return
         }
         // Clones are `shlock`-guarded, so a not-running clone is safe to just cold-launch —
@@ -279,7 +288,7 @@ extension AppModel {
     /// shares no `shlock` and would corrupt its LevelDB); the slot is held across the poll +
     /// deliver and released via the forwarder's `release` once the instance is reachable.
     private func forwardToDefaultProfile(url: URL) async {
-        guard await !launchBlockedByStagedApply() else { return }
+        guard await !launchBlockedByUpdate() else { return }
         let forwarder = DeepLinkForwarder(
             probePID: { [weak self] in await self?.defaultPID() },
             launch: { [weak self] in await self?.acquireDefaultLaunchSlot() ?? .failed },
