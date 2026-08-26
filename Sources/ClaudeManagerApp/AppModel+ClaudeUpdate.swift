@@ -42,6 +42,16 @@ extension AppModel {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.manageClaudeUpdates)
             Log.claudeUpdate.info("managed updates \(newValue ? "on" : "off", privacy: .public)")
+            // The default profile's overlay encodes this answer, so it has to be rewritten
+            // now rather than at the next broker apply. Left until a relaunch, switching the
+            // feature *off* would leave `disableAutoUpdates` in place — Claude would not
+            // update itself and neither would this app: no update mechanism at all.
+            //
+            // Through the scheduler rather than a bare `Task`: each apply reads the setting
+            // and then does async work, so two of them racing can finish out of order and
+            // leave the *earlier* answer on disk. Toggling off and on quickly is exactly how
+            // you would get there.
+            scheduleBrokerApply()
             if newValue {
                 startClaudeUpdateRefresh()
             } else {
@@ -156,6 +166,10 @@ extension AppModel {
         let available: AvailableUpdate?
         do {
             available = try await claudeUpdateService.checkForUpdate(installedVersion: installed)
+            // Recorded on success only. With Claude's updater off, a feed that has been
+            // unreachable for weeks means nothing is updating Claude — and without this,
+            // that is indistinguishable from a machine that is simply current.
+            defaults.set(Date().timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateSuccess)
         } catch {
             // Unreachable is not "up to date", but it is also not worth a banner: a laptop
             // is offline all the time. Logged, and left for the next tick.

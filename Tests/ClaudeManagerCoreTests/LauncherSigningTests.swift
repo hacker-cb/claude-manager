@@ -305,7 +305,7 @@ struct LauncherSigningTests {
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         try setWrapperVersion(CoreConstants.minimumRunnableWrapperVersion - 1, atAppPath: profile.appPath)
 
-        let diagnostics = env.store.doctor()
+        let diagnostics = env.store.doctor(managingUpdates: false)
 
         #expect(diagnostics.contains {
             $0.severity == .error && $0.title.contains("unsigned — macOS will not run it")
@@ -321,13 +321,13 @@ struct LauncherSigningTests {
         let env = try makeStoreEnv(signingForReal: true)
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        #expect(!env.store.doctor().contains { $0.severity == .error })
+        #expect(!env.store.doctor(managingUpdates: false).contains { $0.severity == .error })
 
         try Data("#!/bin/bash\nexit 0\n".utf8).write(
             to: URL(fileURLWithPath: profile.appPath).appendingPathComponent("Contents/MacOS/launcher")
         )
 
-        #expect(env.store.doctor().contains {
+        #expect(env.store.doctor(managingUpdates: false).contains {
             $0.severity == .error && $0.title.contains("signature is broken")
         })
     }
@@ -353,7 +353,7 @@ struct LauncherSigningTests {
 
         let profilePath = env.profilesDir.appendingPathComponent(env.name("work")).path
         #expect(!fm.fileExists(atPath: profilePath))
-        #expect(!env.store.doctor().contains { $0.title.contains("Orphan profile") })
+        #expect(!env.store.doctor(managingUpdates: false).contains { $0.title.contains("Orphan profile") })
     }
 
     /// `rebuildAll` must carry *why* each launcher failed: a signing failure leaves the

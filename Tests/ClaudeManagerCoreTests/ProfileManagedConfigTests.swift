@@ -25,10 +25,23 @@ struct ProfileManagedConfigTests {
         #expect(ProfileManagedConfig.clone().flatEntries == ["disableAutoUpdates": true])
     }
 
+    /// The default profile's overlay now says who is updating Claude — and the empty case
+    /// still has to be empty, so that handing the job back *removes* the key rather than
+    /// writing `false` and leaving a fossil in an otherwise untouched profile.
     @Test
-    func defaultProfileOverlayIsAlwaysEmpty() {
-        // The default profile is never written to — its handler is held by the guard, so
-        // its overlay is always empty (nothing to orphan if Claude Manager is removed).
-        #expect(ProfileManagedConfig.defaultProfile.flatEntries.isEmpty)
+    func defaultProfileOverlayFollowsWhoIsUpdating() {
+        #expect(ProfileManagedConfig.defaultProfile(managingUpdates: false).flatEntries.isEmpty)
+        #expect(
+            ProfileManagedConfig.defaultProfile(managingUpdates: true)
+                .flatEntries["disableAutoUpdates"] == true
+        )
+    }
+
+    /// Whichever way the updater key goes, the deep-link key is never written: that handler
+    /// belongs to the event-driven guard, and this key makes Claude drop forwarded links.
+    @Test(arguments: [true, false])
+    func defaultProfileOverlayNeverTouchesDeepLinks(_ managingUpdates: Bool) {
+        let entries = ProfileManagedConfig.defaultProfile(managingUpdates: managingUpdates).flatEntries
+        #expect(entries[ProfileManagedConfig.disableDeepLinkRegistrationKey] == nil)
     }
 }

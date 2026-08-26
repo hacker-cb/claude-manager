@@ -47,7 +47,7 @@ struct ProfileStoreManagedConfigTests {
         try fm.removeItem(at: tier(work))
         try fm.removeItem(at: tier(home))
 
-        let failed = env.store.reconcileAllManagedConfigs()
+        let failed = env.store.reconcileAllManagedConfigs(managingUpdates: false)
         #expect(failed.isEmpty)
         #expect(probe(env).isSatisfied(.clone(), userDataPath: work.profilePath))
         #expect(probe(env).isSatisfied(.clone(), userDataPath: home.profilePath))
@@ -121,7 +121,7 @@ struct ProfileStoreManagedConfigTests {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
-        _ = env.store.reconcileAllManagedConfigs()
+        _ = env.store.reconcileAllManagedConfigs(managingUpdates: false)
 
         // The clone disables its own updater...
         let overlay = try #require(rawOverlay(profile.profilePath))
@@ -161,7 +161,43 @@ struct ProfileStoreManagedConfigTests {
             ["disableDeepLinkRegistration": true],
             userDataPath: env.defaultProfileUserDataPath
         )
-        _ = try env.store.reconcileDefaultProfileConfig()
+        _ = try env.store.reconcileDefaultProfileConfig(managingUpdates: false)
         #expect(rawOverlay(env.defaultProfileUserDataPath)?["disableDeepLinkRegistration"] == nil)
+    }
+
+    // MARK: - Who updates Claude
+
+    /// The switch-over itself: with this app in charge, the default profile's own updater is
+    /// written off — the key that stops Claude force-restarting it every ~72 h.
+    @Test
+    func writesTheUpdaterOffOnTheDefaultProfileWhenManagingUpdates() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+
+        _ = try env.store.reconcileDefaultProfileConfig(managingUpdates: true)
+
+        #expect(env.store.managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableAutoUpdates: true),
+            userDataPath: env.defaultProfileUserDataPath
+        ))
+    }
+
+    /// And handing the job back *removes* it rather than writing `false`: a fossil in an
+    /// otherwise untouched profile is what this project spent a whole design note avoiding.
+    @Test
+    func removesTheKeyWhenHandingUpdatesBackToClaude() throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        _ = try env.store.reconcileDefaultProfileConfig(managingUpdates: true)
+
+        _ = try env.store.reconcileDefaultProfileConfig(managingUpdates: false)
+
+        #expect(!env.store.managedConfigWriter.isSatisfied(
+            ProfileManagedConfig(disableAutoUpdates: true),
+            userDataPath: env.defaultProfileUserDataPath
+        ))
+        #expect(!env.store.managedConfigWriter.hasFlag(
+            "disableAutoUpdates", userDataPath: env.defaultProfileUserDataPath
+        ))
     }
 }

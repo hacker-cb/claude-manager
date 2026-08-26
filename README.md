@@ -209,15 +209,24 @@ Open the **Doctor** tab for a health report. Common findings:
 
 ## Uninstall
 
-1. In Claude Manager, **remove each launcher profile** (this deletes its launcher
+1. In Settings, turn **“Let Claude Manager update Claude” off**. This matters: while it
+   is on, Claude's own updater is switched off and Claude Manager does the updating. Turning
+   it off hands the job back. Skip this and Claude keeps its updater disabled with nothing
+   left to take over — it will stay on its current build indefinitely.
+2. In Claude Manager, **remove each launcher profile** (this deletes its launcher
    app). The **Default profile** has no launcher and nothing to remove.
-2. Quit and drag **Claude Manager** to the Trash.
-3. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
+3. Quit and drag **Claude Manager** to the Trash.
+4. Optionally delete `~/Library/Application Support/Claude Manager` (per-profile data
    and app metadata).
 
 Removing Claude Manager never touches your real `/Applications/Claude.app` or its
 data. If it was handling `claude://` links, the scheme falls back to Claude on its own
 once Claude Manager is gone (no cleanup needed).
+
+If you have already removed Claude Manager with managed updates left on, the setting
+lives in a file beside your default profile's data:
+`~/Library/Application Support/Claude-3p/configLibrary/` — deleting that directory
+restores Claude's own updater.
 
 ## Contributing &amp; development
 

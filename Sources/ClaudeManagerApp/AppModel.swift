@@ -388,8 +388,18 @@ final class AppModel: ObservableObject {
     }
 
     func runDoctor() async {
-        guard var result = await perform({ store in store.doctor() }) else { return }
+        let managingUpdates = managesClaudeUpdates
+        guard var result = await perform({ store in store.doctor(managingUpdates: managingUpdates) })
+        else { return }
         if let usage = usageDoctorDiagnostic() { result.append(usage) }
+        // The same reading the core run used, not a fresh one: this method awaits in between,
+        // and a diagnostics set half-computed for "we update Claude" and half for "Claude
+        // does" would contradict itself on screen.
+        if let stale = Doctor.staleUpdateCheckDiagnostic(
+            managingUpdates: managingUpdates,
+            lastSuccess: (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
+                .map(Date.init(timeIntervalSince1970:))
+        ) { result.append(stale) }
         diagnostics = result
     }
 

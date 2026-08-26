@@ -72,4 +72,11 @@ enum PreferenceKeys {
     /// When the release feed was last asked, as epoch seconds. Persisted so relaunching the
     /// app does not turn a four-hourly check into a per-launch one.
     static let lastClaudeUpdateCheck = "lastClaudeUpdateCheck"
+
+    /// When the feed last answered *successfully*, as epoch seconds. Distinct from
+    /// `lastClaudeUpdateCheck`, which is stamped when an attempt starts: with Claude's own
+    /// updater switched off, a feed that has been failing for weeks means nothing is updating
+    /// Claude at all, and only a record of the last success can tell that apart from a
+    /// machine that is simply up to date.
+    static let lastClaudeUpdateSuccess = "lastClaudeUpdateSuccess"
 }
