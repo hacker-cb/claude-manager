@@ -72,13 +72,17 @@ public extension ProfileStore {
     /// Clear what Claude's own updater left behind, now that it is switched off.
     ///
     /// Switching `disableAutoUpdates` on stops Squirrel arming again but tidies nothing: the
-    /// last armed job and the several hundred megabytes it points at both survive. Skipped
-    /// while an installer is actually running — removing a bundle out from under a live
-    /// ShipIt is precisely the failure this rewrite exists to stop causing — and skipped
-    /// silently, because a sweep that has to wait for the next reconcile has lost nothing.
+    /// last armed job and the several hundred megabytes it points at both survive.
+    ///
+    /// Skipped whenever an installer might be running — `isRunning()`, which reads an
+    /// unreadable probe as *running*, not `isConfirmedRunning()`, which reads it as not.
+    /// A guard protecting a live install has to fail closed, and this one can afford to:
+    /// the sweep is housekeeping, it runs again on the next reconcile, and waiting costs
+    /// nothing but disk. Deleting a bundle out from under a live ShipIt costs the user their
+    /// install.
     func sweepSquirrelResidue() {
-        guard !shipItProbe().isConfirmedRunning() else {
-            CoreLog.update.info("squirrel: installer is running, leaving its cache alone")
+        guard !shipItProbe().isRunning() else {
+            CoreLog.update.info("squirrel: an installer may be running, leaving its cache alone")
             return
         }
         let outcome = SquirrelResidue(

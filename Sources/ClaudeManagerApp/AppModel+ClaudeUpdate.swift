@@ -42,6 +42,11 @@ extension AppModel {
             objectWillChange.send()
             defaults.set(newValue, forKey: PreferenceKeys.manageClaudeUpdates)
             Log.claudeUpdate.info("managed updates \(newValue ? "on" : "off", privacy: .public)")
+            // The default profile's overlay encodes this answer, so it has to be rewritten
+            // now rather than at the next broker apply. Left until a relaunch, switching the
+            // feature *off* would leave `disableAutoUpdates` in place — Claude would not
+            // update itself and neither would this app: no update mechanism at all.
+            Task { await applyDeepLinkBroker() }
             if newValue {
                 startClaudeUpdateRefresh()
             } else {
