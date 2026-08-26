@@ -87,7 +87,7 @@ public struct UpdateFeed: Sendable {
             // payload sends whoever is triaging to look for a broken server.
             CoreLog.update.error(
                 """
-                feed: malformed payload (\(reason, privacy: .public)), \
+                feed: refused payload (\(reason, privacy: .public)), \
                 \(response.body.count, privacy: .public) bytes of \
                 \(contentType, privacy: .public) — body: \(body, privacy: .private)
                 """
