@@ -56,6 +56,12 @@ struct UpdateFeedTests {
         #"{"version":"2.0.0"}"#, // no url
         #"{"version":"","url":"https://example.invalid/a.zip"}"#, // empty version
         #"{"version":2,"url":"https://example.invalid/a.zip"}"#, // version not a string
+        #"{"version":"v1.40000.0","url":"https://example.invalid/a.zip"}"#, // not dotted-numeric
+        #"{"version":"1.notnumeric.0","url":"https://example.invalid/a.zip"}"#,
+        #"{"version":"1..0","url":"https://example.invalid/a.zip"}"#, // empty component
+        #"{"version":" 1.2.3","url":"https://example.invalid/a.zip"}"#, // padded
+        #"{"version":"1.2.3\n","url":"https://example.invalid/a.zip"}"#, // trailing newline
+        #"{"version":"١.٢.٣","url":"https://example.invalid/a.zip"}"#, // non-ASCII digits
         #"{"version":"2.0.0","url":"not a url at all"}"#, // unparseable url
         #"{"version":"2.0.0","url":"https:///a.zip"}"#, // no host
         "[]", // not an object
@@ -87,7 +93,11 @@ struct UpdateFeedTests {
         let update = try UpdateFeed.parse(Data(
             #"{"version":"2.0.0","url":"HTTPS://downloads.claude.ai/a.zip"}"#.utf8
         ))
-        #expect(update.downloadURL.absoluteString == "HTTPS://downloads.claude.ai/a.zip")
+        // Asserted on the parsed components, not on `absoluteString`: Foundation is free to
+        // normalise the scheme's case, and pinning the literal would make this test about
+        // Foundation's spelling rather than about the URL being accepted.
+        #expect(update.downloadURL.scheme?.lowercased() == "https")
+        #expect(update.downloadURL.host == "downloads.claude.ai")
     }
 
     // MARK: - Transport
@@ -149,6 +159,27 @@ struct UpdateFeedTests {
     func doesNotClaimAnUpgradeWithoutABaseline() {
         let update = AvailableUpdate(version: "1.37937.1", downloadURL: Self.endpoint)
         #expect(!update.isUpgrade(over: nil))
+    }
+
+    /// The dangerous half of the same guard, and the one `nil` does not cover.
+    /// `RealClaude.version()` reads the plist with `as? String`, so a bundle caught
+    /// mid-write hands back `""` rather than `nil` — and an all-zeroes baseline makes
+    /// *every* release look like an upgrade, which is exactly backwards for a decision that
+    /// replaces `/Applications/Claude.app`.
+    @Test(arguments: ["", "   ", "unknown", "v1.37937.1", "1.x.0"])
+    func doesNotClaimAnUpgradeOverAnUnparseableBaseline(_ installed: String) {
+        let update = AvailableUpdate(version: "1.37937.1", downloadURL: Self.endpoint)
+        #expect(!update.isUpgrade(over: installed))
+    }
+
+    /// The https guard is the only trust boundary in this slice, so it is worth one case
+    /// that goes through the real entry point rather than the parser alone.
+    @Test
+    func refusesAnInsecureDownloadThroughLatest() async {
+        let feed = feed { _, _, _ in
+            ok(#"{"version":"2.0.0","url":"http://downloads.claude.ai/a.zip"}"#)
+        }
+        await #expect(throws: UpdateFeed.Failure.insecureDownloadURL) { try await feed.latest() }
     }
 }
 

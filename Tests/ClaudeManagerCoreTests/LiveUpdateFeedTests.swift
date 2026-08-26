@@ -32,19 +32,18 @@ struct LiveUpdateFeedTests {
         )
         #expect(update.downloadURL.scheme?.lowercased() == "https")
 
-        // Not an assertion — the feed legitimately moves ahead of what was verified by
-        // hand. It is a note in the log for whoever is looking at a failure above.
-        if update.version != CoreConstants.claudeReleaseFeedValidatedVersion {
-            Comment.record("""
-            feed now offers \(update.version); \
-            contract last verified against \(CoreConstants.claudeReleaseFeedValidatedVersion)
-            """)
-        }
-    }
-}
-
-private extension Comment {
-    static func record(_ message: String) {
-        Issue.record(Comment(rawValue: message), sourceLocation: #_sourceLocation)
+        // The feed legitimately moves ahead of what was verified by hand, so drift *forward*
+        // is expected and must not fail: a test that has to be silenced with a constant bump
+        // on every Claude release would be turned off long before the reshape it exists to
+        // catch. Only a feed that has gone *backwards* from the verified build is suspicious
+        // enough to fail on.
+        #expect(
+            VersionOrder.compare(update.version, CoreConstants.claudeReleaseFeedValidatedVersion)
+                != .orderedAscending,
+            """
+            feed offers \(update.version), older than the \
+            \(CoreConstants.claudeReleaseFeedValidatedVersion) the contract was verified against
+            """
+        )
     }
 }

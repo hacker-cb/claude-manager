@@ -69,18 +69,25 @@ public struct UpdateFeed: Sendable {
         }
         do {
             let update = try Self.parse(response.body)
-            let url = update.downloadURL.absoluteString
+            let url = update.downloadURL.logDescription
             CoreLog.update
                 .info("feed: offers \(update.version, privacy: .public) at \(url, privacy: .public)")
             return update
         } catch {
-            // The body is logged on a parse failure and only then: it is ~150 bytes of
-            // public release metadata, and without it a reshaped payload is undebuggable
-            // from a user's log alone.
+            // What *shape* the answer had is public; the answer itself is not. A 200 that
+            // fails to parse is often not release metadata at all but an interception page
+            // from a corporate proxy or captive portal, which can name the user — so the
+            // body stays `.private` while the facts that make a log triageable without it
+            // (why it failed, how big it was, what it claimed to be) are public.
             let body = String(decoding: response.body.prefix(512), as: UTF8.self)
             let reason = String(describing: error)
+            let contentType = response.header("content-type") ?? "unknown"
             CoreLog.update.error(
-                "feed: malformed payload (\(reason, privacy: .public)) — body: \(body, privacy: .public)"
+                """
+                feed: malformed payload (\(reason, privacy: .public)), \
+                \(response.body.count, privacy: .public) bytes of \
+                \(contentType, privacy: .public) — body: \(body, privacy: .private)
+                """
             )
             throw error
         }
@@ -88,6 +95,11 @@ public struct UpdateFeed: Sendable {
 
     /// Parse the feed body. Kept `static` and separate so the wire format is testable
     /// without a client at all.
+    ///
+    /// The version must parse as dotted-numeric, not merely be non-empty: `VersionOrder`
+    /// reads a non-numeric component as `0`, so a feed that started answering `v1.40000.0`
+    /// would parse, compare as `0.40000.0`, and read as "no update available" forever with
+    /// nothing in the log to explain it. Refusing surfaces the reshape immediately.
     ///
     /// Unknown keys are ignored by construction, and both fields are required: a payload
     /// missing either one is malformed rather than partially usable, since a version with no
@@ -97,7 +109,7 @@ public struct UpdateFeed: Sendable {
               let dict = object as? [String: Any],
               let version = dict["version"] as? String,
               let urlString = dict["url"] as? String,
-              !version.isEmpty,
+              VersionOrder.isComparable(version),
               let url = URL(string: urlString)
         else { throw Failure.malformedPayload }
         // `URL(string:)` accepts a bare string like `not a url at all` as a *relative* URL,
