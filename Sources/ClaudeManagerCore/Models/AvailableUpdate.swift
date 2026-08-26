@@ -32,6 +32,16 @@ public struct AvailableUpdate: Equatable, Sendable {
     /// upgrade, which is precisely the case this guard exists to refuse. So the baseline
     /// must parse as a version, not merely be non-nil.
     public func isUpgrade(over installedVersion: String?) -> Bool {
+        Self.isUpgrade(version, over: installedVersion)
+    }
+
+    /// The same question about a bare version string.
+    ///
+    /// Needed wherever an already-prepared build has to be re-checked against what is
+    /// installed — at a press, at startup, on a scheduled tick — none of which have an
+    /// `AvailableUpdate` in hand, and inventing one with a placeholder URL just to ask would
+    /// be a lie about where it came from.
+    public static func isUpgrade(_ version: String, over installedVersion: String?) -> Bool {
         guard let installedVersion, VersionOrder.isComparable(installedVersion) else { return false }
         return VersionOrder.isNewer(version, than: installedVersion)
     }

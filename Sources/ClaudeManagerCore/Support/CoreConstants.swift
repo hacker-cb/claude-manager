@@ -283,6 +283,22 @@ public enum CoreConstants {
     /// a check whose claim is that it unpacked to exactly one bundle.
     public static let archiveMetadataNames: Set<String> = ["__MACOSX", ".DS_Store"]
 
+    /// Where downloaded builds and the bundle unpacked from them live.
+    ///
+    /// Under `Caches` because it is all reproducible — losing it costs a re-download, not
+    /// data — and, more importantly, because it is on the same volume as `/Applications`:
+    /// the install swaps the unpacked bundle in by rename, which is atomic only within a
+    /// volume. A staging area under `/tmp` would satisfy neither.
+    public static func updateCacheDirectory(
+        forBundleID bundleID: String,
+        home: String = NSHomeDirectory()
+    ) -> URL {
+        URL(fileURLWithPath: "\(home)/Library/Caches/\(bundleID)/ClaudeUpdates")
+    }
+
+    /// Subdirectory of the cache holding the unpacked, verified bundle.
+    public static let updateStagingDirectoryName = "staged"
+
     /// Timeout for the feed request. Short on purpose: this runs on a background check
     /// whose failure is simply "ask again later", so waiting out a hung connection buys
     /// nothing.

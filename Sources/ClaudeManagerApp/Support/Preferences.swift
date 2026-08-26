@@ -63,4 +63,13 @@ enum PreferenceKeys {
     /// about that version. Persisted because the offer targets updates that may never apply —
     /// without a remembered answer it would reappear at every launch for days.
     static let answeredAutoApplyOffer = "answeredAutoApplyOffer"
+
+    /// Whether Claude Manager fetches and installs Claude's updates itself, rather than
+    /// leaving that to Claude's own Squirrel updater. Absent means **on**: it is this app's
+    /// model of how updating works, not an experiment to be discovered in Settings.
+    static let manageClaudeUpdates = "manageClaudeUpdates"
+
+    /// When the release feed was last asked, as epoch seconds. Persisted so relaunching the
+    /// app does not turn a four-hourly check into a per-launch one.
+    static let lastClaudeUpdateCheck = "lastClaudeUpdateCheck"
 }

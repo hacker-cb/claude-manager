@@ -84,6 +84,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var diagnostics: [Diagnostic] = []
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
+    /// Where this app is in fetching and installing Claude's own updates — see
+    /// `AppModel+ClaudeUpdate`.
+    @Published private(set) var claudeUpdateState: ClaudeUpdateState = .idle
+
+    /// Set the update state (`private(set)`, driven from `AppModel+ClaudeUpdate`). Assigns
+    /// only on a change, for the reason `setAutoApplyOffer` gives.
+    func setClaudeUpdateState(_ value: ClaudeUpdateState) {
+        guard value != claudeUpdateState else { return }
+        claudeUpdateState = value
+    }
+
     /// A Claude update ShipIt has staged but not applied (any open profile blocks the
     /// swap) — drives the "Apply to all profiles" affordance. `nil` when none.
     @Published private(set) var stagedUpdate: StagedUpdate?
@@ -132,6 +143,9 @@ final class AppModel: ObservableObject {
     }
 
     var monitorTask: Task<Void, Never>?
+    /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
+    /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
+    var claudeUpdateTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two

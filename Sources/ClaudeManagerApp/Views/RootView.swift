@@ -141,6 +141,7 @@ struct RootView: View {
             if let staged = model.stagedUpdate {
                 stagedUpdateBanner(staged)
             }
+            ClaudeUpdateBanner()
             if model.dockRefreshPending {
                 dockRefreshBanner
             }
