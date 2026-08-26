@@ -122,10 +122,13 @@ public struct UpdateDownloader: Sendable {
             byteSize = try await downloader.download(
                 from: update.downloadURL, to: partial, resumeData: resumeData, progress: progress
             )
-        } catch is CancellationError {
-            CoreLog.update.info("download: cancelled")
-            throw CancellationError()
         } catch let interrupted as DownloadInterrupted {
+            // Cancellation arrives here too, as `URLError.cancelled` with a resume token
+            // attached — deliberately not special-cased, because the handling is identical
+            // and the one thing that must not happen is throwing the token away. (An earlier
+            // `catch is CancellationError` branch was dead code that would have done exactly
+            // that the day an implementation started throwing one.)
+            //
             // Keep the token so the next attempt continues; without it the retry starts from
             // zero. A `nil` token means the failure was not resumable, and any stale token
             // from a previous attempt has to go with it.

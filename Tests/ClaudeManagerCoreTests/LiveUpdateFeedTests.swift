@@ -69,6 +69,9 @@ struct LiveUpdateFeedTests {
         )
 
         #expect(size > 0)
+        // The progress callback is half of what this bridge is for; a download that reports
+        // nothing would still pass every other assertion here.
+        #expect(await received.take() ?? 0 > 0)
         let written = try Data(contentsOf: destination)
         #expect(Int64(written.count) == size)
         // It fetched the thing it was pointed at, not an error page.

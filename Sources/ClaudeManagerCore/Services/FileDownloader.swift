@@ -48,9 +48,13 @@ public enum DownloadFailure: Error, Equatable {
 /// ShipIt install so expensive.
 public struct DownloadInterrupted: Error, Sendable {
     public let resumeData: Data?
-    public let underlying: Error
+    /// Constrained to `Sendable` rather than a bare `Error`: this type crosses isolation
+    /// boundaries (it is thrown out of an `async` call an actor awaits), and a `Sendable`
+    /// struct wrapping a non-`Sendable` payload is a conformance that only looks safe.
+    /// `URLError` and `NSError`, the two things ever put in here, both qualify.
+    public let underlying: any Error & Sendable
 
-    public init(resumeData: Data?, underlying: Error) {
+    public init(resumeData: Data?, underlying: any Error & Sendable) {
         self.resumeData = resumeData
         self.underlying = underlying
     }
@@ -179,9 +183,10 @@ private final class TaskHolder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         // Already cancelled while the task was being created: cancel it straight away rather
-        // than storing a task nothing will ever stop.
+        // than storing a task nothing will ever stop — and through the resume-data form, or
+        // this ordering would be the one case that silently throws away a partial transfer.
         if cancelled {
-            task.cancel()
+            task.cancel(byProducingResumeData: { _ in })
             return
         }
         self.task = task
