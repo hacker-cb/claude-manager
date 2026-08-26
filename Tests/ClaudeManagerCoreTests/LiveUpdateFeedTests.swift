@@ -18,9 +18,11 @@ struct LiveUpdateFeedTests {
     func theRealEndpointStillAnswersInTheExpectedShape() async throws {
         let update = try await UpdateFeed().latest()
 
-        // A dotted-numeric marketing version, the form `VersionOrder` compares.
+        // Asks the same question the parser asks, rather than a second regex of its own:
+        // two definitions of "a version" are two things to keep in sync, and this test
+        // exists to check the real feed against *our* contract.
         #expect(
-            update.version.range(of: #"^\d+(\.\d+)+$"#, options: .regularExpression) != nil,
+            VersionOrder.isComparable(update.version),
             "unexpected version format: \(update.version)"
         )
 

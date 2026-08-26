@@ -52,7 +52,7 @@ public struct UpdateFeed: Sendable {
     /// ``AvailableUpdate/isUpgrade(over:)``, and the caller owns it, because "no update" and
     /// "the feed is unreachable" must not collapse into the same answer.
     public func latest(timeout: TimeInterval = Self.defaultTimeout) async throws -> AvailableUpdate {
-        CoreLog.update.info("feed: asking \(endpoint.absoluteString, privacy: .public)")
+        CoreLog.update.info("feed: asking \(endpoint.logDescription, privacy: .public)")
         let response: HTTPResponse
         do {
             response = try await client.get(url: endpoint, headers: [:], timeout: timeout)
@@ -82,6 +82,9 @@ public struct UpdateFeed: Sendable {
             let body = String(decoding: response.body.prefix(512), as: UTF8.self)
             let reason = String(describing: error)
             let contentType = response.header("content-type") ?? "unknown"
+            // "refused" rather than "malformed": `parse` also rejects a perfectly
+            // well-formed payload whose download is not HTTPS, and calling that a malformed
+            // payload sends whoever is triaging to look for a broken server.
             CoreLog.update.error(
                 """
                 feed: malformed payload (\(reason, privacy: .public)), \

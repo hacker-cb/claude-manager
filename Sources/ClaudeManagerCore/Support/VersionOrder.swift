@@ -14,7 +14,9 @@ enum VersionOrder {
         compare(candidate, baseline) == .orderedDescending
     }
 
-    /// Whether `version` is the dotted-numeric form this type can meaningfully order.
+    /// Whether `version` is made of dot-separated ASCII numbers — the form this type can
+    /// meaningfully order. A single component (`"1"`) qualifies: it orders fine, and
+    /// demanding a dot would refuse a baseline that is merely unusual rather than unreadable.
     ///
     /// ``compare(_:_:)`` reads a non-numeric component as `0`, which is the right call for
     /// *ordering* — garbage then never sorts above a real version. As an acceptance test it
