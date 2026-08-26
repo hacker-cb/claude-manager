@@ -46,7 +46,7 @@ extension AppModel {
     }
 
     private func pollUsageOnce() async {
-        guard usageTrackingEnabled, usagePollIntervalMinutes > 0, !isApplyingStagedUpdate else { return }
+        guard usageTrackingEnabled, usagePollIntervalMinutes > 0, !claudeUpdateState.isBusy else { return }
         await refreshUsage(interactive: false)
         // The master switch can flip off during the refresh above; re-check before pruning so a
         // toggle-off never opens or mutates usage.db after it — "off stops all storage".

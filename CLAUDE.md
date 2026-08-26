@@ -148,28 +148,31 @@ short form:
   be its own operation, moving the directory and its `-3p` overlay together. Keep both halves —
   passing a whole `Profile` as the edit target, or making those fields `var` again, each
   restores the hole on its own.
-- **Never relaunch profiles while ShipIt is alive, and never wait on a clock instead of the
-  process.** ShipIt re-checks its instance count *after* copying the update bundle, so a profile
-  reopened mid-install makes it abort with `App Still Running Error` — the wait meant to protect
-  the install is what destroys it, and each destroyed attempt costs a fresh ~800 MB download. The
-  swap has no knowable upper bound (3–5 s normally; 28 s and 57 s measured on the same bundle
-  under disk contention), so `ShipItProbe.isRunning` is the gate and the poll budget is only a
-  backstop; when it elapses with the installer still working, the profile set stays **closed**
-  and is reported that way. Four things that gate needs to stay true: **"can't tell" is its own
-  answer** — `pgrep` exit 1 alone means gone, exit 0 means running even without a readable pid,
-  and 2/3/failed-spawn are unknown, which `isRunning()` (a *wait*) reads as running and
-  `isConfirmedRunning()` (a *guard*, with no budget to run out) reads as not; the **version is
-  re-read after the installer disappears**, or a swap landing between the version read and the
-  `pgrep` is reported as a failure; a **new version on disk is not the end of the install**, so
-  success drains until the process exits — on its **own** budget, since a swap first seen on the
-  final poll would otherwise skip the drain entirely; and the **launch guards ask
-  `ProfileStore.isClaudeInstallerRunning()`** (`async`, off the main actor — the runner blocks
-  on `waitUntilExit`), not `isApplyingStagedUpdate`, because a `swapStillInstalling` hands
-  control back while ShipIt is still copying and our own flag is false from then on. Equally: **do not add a busy-detector.** A profile with a working
-  session refuses `SIGTERM` on its own (`vetoed by before-quit interceptor` → "Claude is still
-  working"), while an idle-but-open session quits cleanly — Claude knows, and everything visible
-  from outside was measured and does not: power assertions don't track agent work, tree CPU
-  measures UI rendering, and the session process idles near 1% while it waits on the network.
+- **Claude Manager updates Claude; Squirrel is switched off.** `disableAutoUpdates` goes into
+  the **default profile's** overlay as well as every clone's, and `ClaudeUpdateService` fetches
+  each build, proves it is Anthropic's, and installs it on a press. That key is the whole
+  lever: `autoUpdaterEnforcementHours` validates as `>0 && <=72`, so Claude's forced restart
+  can only be *shortened*, never disabled — and with clones open, Squirrel's installer aborts
+  every attempt anyway (`App Still Running Error`), so the old arrangement force-restarted the
+  default profile every ~72 h and never finished. The cost is stated in
+  [docs/DECISIONS.md](docs/DECISIONS.md): remove Claude Manager without switching the feature
+  off and the key is orphaned, so uninstalling starts with turning it off, and Doctor warns
+  when the release feed has not answered in a week.
+- **Nothing may replace `/Applications/Claude.app` while anything runs out of it.** The
+  default profile and every clone `exec` the same binary, and Electron loads resources lazily,
+  so a swap under a live instance surfaces minutes later as something inexplicable. The
+  installer closes every profile, re-checks with a probe that **fails closed** (an unreadable
+  `ps` is "someone is running", never "nobody is"), swaps with `replaceItemAt` — atomic only
+  within a volume, which is why staging shares one with `/Applications` — and reopens exactly
+  the set it closed. `ShipItProbe` survives for one question only: Squirrel is disabled, not
+  absent, so an armed job can outlive the switch and must not be raced.
+- **A downloaded build is not trusted because of where it came from.** The feed hands out a
+  version and a URL over TLS and that is all it can vouch for. Authenticity comes from the
+  bundle: `codesign --verify --strict --deep`, the same check against a Developer ID
+  requirement naming team `Q6L2SF6YDW`, `spctl --assess`, and the bundle's own identifier and
+  version. It must also be a **real directory** — an archive can ship `Claude.app` as a
+  symlink, and every one of those checks would then pass by resolving to the installed app
+  while the "verified" bundle is a link that the swap would put into `/Applications`.
 - **`LSArchitecturePriority = [arm64, x86_64]`** keeps profiles native instead of
   running the launcher (and thus Claude) translated under Rosetta.
 - **Process detection filters on ppid == 1** to find main Claude processes and skip

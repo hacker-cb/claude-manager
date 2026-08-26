@@ -251,15 +251,6 @@ extension AppModel {
     /// reason to.
     func installClaudeUpdate() async {
         guard case let .ready(verified) = claudeUpdateState else { return }
-        // Both paths close every profile and write the same bundle. Until the legacy one is
-        // gone, whichever starts first owns the machine.
-        guard !isApplyingStagedUpdate else {
-            presentInfo(
-                title: "Update in progress",
-                message: "A staged Claude update is being applied. Wait for it to finish, then try again."
-            )
-            return
-        }
         // Asked again at the moment of the press, not only when the build was fetched: the
         // banner may have been sitting there while Claude updated itself underneath it, and
         // swapping in an equal-or-older bundle is a downgrade wearing an update's clothes.
@@ -348,6 +339,48 @@ extension AppModel {
         let service = claudeUpdateService
         Task.detached(priority: .utility) { service.discardEverything() }
         setClaudeUpdateState(.idle)
+    }
+
+    // MARK: - Launch guard
+
+    /// Whether starting a profile right now would collide with an install, and say so.
+    ///
+    /// Two installers can be mid-swap on the shared bundle. **This app's**, during which a
+    /// launch either trips its final no-instance check or leaves a process running out of a
+    /// bundle that is about to be unlinked. And **Claude's own**, which re-counts instances
+    /// while it copies and aborts with `App Still Running Error` if one appears — the
+    /// failure that made a stuck update cost a fresh download every time. Squirrel is only
+    /// disabled, not absent, so the second case is still real: updating can be handed back,
+    /// and a job armed before the switch outlives it.
+    func launchBlockedByUpdate() async -> Bool {
+        if case .installing = claudeUpdateState {
+            currentError = AppError(
+                title: "Update in progress",
+                message: "Claude is being updated. Wait for it to finish, then try again."
+            )
+            return true
+        }
+        guard await isClaudeInstallerRunning() else { return false }
+        currentError = AppError(
+            title: "Claude is being updated",
+            message: "Claude's own installer is swapping Claude.app. Starting a profile now would "
+                + "make it abort and start over — wait for it to finish, then try again."
+        )
+        return true
+    }
+
+    /// Off-actor probe for a live installer.
+    ///
+    /// Deliberately not routed through `perform`: that surfaces an alert when Claude cannot
+    /// be located, and a *guard* must stay silent about anything but its own reason to refuse.
+    /// `async` because the probe shells out and blocks on `waitUntilExit`.
+    private func isClaudeInstallerRunning() async -> Bool {
+        guard let configuration = currentConfiguration(), let real = realClaude else { return false }
+        return await Task.detached {
+            ProfileStore(realClaude: real, configuration: configuration)
+                .shipItProbe()
+                .isConfirmedRunning()
+        }.value
     }
 
     // MARK: - Presentation helpers

@@ -142,226 +142,49 @@ through `AppDelegate.shared` (set in its `init`), retrying on the main queue unt
 adaptor has created it — otherwise the inbound-link sink is never wired and every link is
 buffered and silently dropped.
 
-## Applying a staged Claude update
+## Updating Claude
 
-When the default profile downloads an update while any profile is open, ShipIt
-(Squirrel.Mac) can't swap `/Applications/Claude.app` and the update stalls ("Update
-didn't complete"). Claude Manager clears this — it never swaps the app itself;
-**ShipIt does, and only with zero running real-Claude instances.**
+Claude Manager does the updating, and Claude's own Squirrel updater is switched off on
+every profile — the default included.
 
-`StagedUpdateProbe` reads ShipIt's per-bundle `ShipItState.plist` (**JSON despite the
-extension**, under `~/Library/Caches/<bundleid>.ShipIt/`, keyed by the *installed*
-app's real bundle id so a legacy-id install is found too). An armed job names an
-`updateBundleURL`; the probe reads that bundle's version and surfaces a `StagedUpdate`
-only when it's a genuine upgrade over the installed one.
+That is not a preference; it is the only arrangement that terminates. Squirrel's installer
+aborts unless **zero** real-Claude instances are running, and clones are instances, so a
+machine with profiles open accumulates a downloaded-but-unapplied build. Claude then
+force-restarts the default profile roughly every 72 h trying to install it, each destroyed
+attempt costing a fresh ~335 MB download. `autoUpdaterEnforcementHours` cannot be
+disabled — the policy validates as `>0 && <=72` — so the timer can only be shortened.
+`disableAutoUpdates` is the one key that keeps it from arming.
 
-`applyStagedUpdateToAll` snapshots the running set, then: **Gate 1** gracefully quits
-every profile (SIGTERM only — never SIGKILL a possibly-active conversation) and waits
-until nothing blocks the swap; **Gate 2** waits out the swap by watching ShipIt's
-process, then reads the on-disk version (`>=`, since ShipIt may land a build newer than
-the one staged). It then relaunches exactly the snapshotted set. If a profile won't quit
-it **aborts before the swap** and reopens what it stopped; on every path it restores the
-set, so you never end with fewer profiles than you had. Two sharp edges: the gate counts
-**only processes at the real Claude binary path** (`ProcessProbe` matches CM's own "Claude
-Manager" too — ppid 1, "Claude" in the path — so `blockingInstances` filters to
-`realClaude.binaryURL.path` or the gate never passes); and every relaunch is guarded on
-the profile being **currently down** (a second `open -n` on a live default duplicates
-it on one user-data-dir and corrupts LevelDB — and ShipIt often relaunches the default
-itself after a swap).
+The replacement is four steps, each a separate type:
 
-### Gate 2 watches the installer, never a clock
+1. **Ask.** `UpdateFeed` reads `…/desktop/darwin/universal/zip/latest` — two fields, no
+   identifier attached. Claude's own updater calls a sibling keyed on a per-profile
+   `device_id`; this app replaces one shared bundle on request, so "what is the latest
+   release" is the whole question.
+2. **Fetch.** `UpdateDownloader` streams the archive to a cache, keeps exactly one, and
+   resumes an interrupted transfer rather than re-fetching a third of a gigabyte.
+3. **Prove.** `UpdateVerifier` refuses anything that is not a real directory holding one
+   `Claude.app`, whose signature verifies strictly and deeply, satisfies a Developer ID
+   requirement naming team `Q6L2SF6YDW`, carries Apple's notarization ticket, and whose own
+   identifier and version match what was offered. The feed's word is worth nothing here: it
+   travels the same channel as the download.
+4. **Install.** `ProfileStore.installUpdate` closes every profile, confirms nothing is
+   running with a probe that fails closed, swaps the bundle with `replaceItemAt` — atomic
+   within a volume, which is why staging shares one with `/Applications` — and reopens the
+   set it closed.
 
-The swap has **no upper bound knowable in advance**. Measured over a month of real
-installs, `Beginning installation` → `Moving bundle` takes 3–5 s; under disk contention
-the same 800 MB bundle has taken 28 s and 57 s. So a timeout cannot separate "still
-copying" from "gave up" — and being wrong is *destructive*, not merely unhelpful: ShipIt
-re-checks its instance count after copying, so relaunching profiles mid-install makes it
-abort with `App Still Running Error` and destroys an install that was going through.
-That is precisely how a 30-second Gate 2 turned a working install into a loop of failed
-ones, each costing a fresh ~800 MB download.
+Only the last step needs a press. The first three run on a timer because they change
+nothing the user can see.
 
-`ShipItProbe` therefore answers "is the installer alive?" (`pgrep` on the Squirrel binary
-plus **our** job label — VS Code and GitKraken ship the same updater) and "what did it log
-for *this* attempt?" (ShipIt's `stderr`, read only past an offset recorded before the
-apply — the log is append-only and never rotated, so its tail is full of failures from
-days ago). While ShipIt lives, nothing is relaunched. The poll budget is a **backstop**
-(ten minutes), and if it elapses with the installer still working, profiles are
-deliberately left **closed** and reported as such — reopening them is the harm.
+**What this costs.** Writing `disableAutoUpdates` into the default profile means removing
+Claude Manager without switching the feature off leaves the key orphaned and Claude frozen
+on its build. `docs/DECISIONS.md` states that outright; the uninstall instructions start
+with turning it off; and Doctor warns when the feed has not answered in a week, which is
+the only signal for the quiet version of that failure.
 
-Four details that keep that invariant honest:
-
-- **"Can't tell" is a third answer, and the two callers need opposite readings of it.**
-  `ShipItProbe.liveness()` keeps `running` / `gone` / `unknown` apart: only `pgrep` exit 1
-  means nothing matched, exit 0 means something did (so it counts as running even when the
-  captured pid is unreadable — the exit status is the answer), and 2, 3 or a failed spawn
-  say nothing at all. `isRunning()` folds unknown to **running** — the reading a *wait*
-  needs, since a wrong "gone" destroys the swap while a wrong "running" only spends a
-  budget. `isConfirmedRunning()` folds it to **not running** — the reading a *guard* needs,
-  since a guard has no budget to run out: refusing on a guess would disable every Open,
-  Restart and deep link for as long as the probe stays unhealthy.
-- **The version is re-read after the installer disappears.** Each pass reads the version
-  *before* running `pgrep`, so an installer that swaps and exits between those two reads
-  would otherwise be recorded as a failure for an update that had in fact succeeded.
-- **A new version on disk is not the end of the install.** ShipIt swaps, then cleans up and
-  hands off (~280 ms measured from `Moving bundle` to `ShipIt quitting`). Success therefore
-  *drains* until the installer is actually gone, bounded by `swapDrainPolls` — the bundle is
-  already in place by then, so a lingering installer is no reason to keep profiles closed.
-  That drain runs on its **own** budget, after the wait loop: folded into it, a swap first
-  seen on the final poll skipped the drain entirely and relaunched into a live installer —
-  the original bug, back at the edge of the budget.
-- **The launch guards ask the machine, not our flag.** `swapStillInstalling` hands control
-  back with ShipIt still copying, and `isApplyingStagedUpdate` is false from that moment —
-  so every launch path additionally consults `ProfileStore.isClaudeInstallerRunning()`.
-  Without it the app itself would offer the one action that aborts the install it just
-  protected. The guard is `async` and probes off the main actor: `SystemCommandRunner` blocks
-  on `Process.waitUntilExit()`, so asking inline would stall the UI on every launch.
-
-**Doctor reports the same machine state standing still.** The failure this whole section
-exists for ran for nine days with nothing saying anything was wrong — ShipIt waits for zero
-instances indefinitely and writes only to its own log, so the first hint the user got was
-the default profile restarting itself at 4 am. So Doctor surfaces two facts: an installer
-that has been alive past `CoreConstants.shipItStuckSeconds` (ten minutes — two orders of
-magnitude past a 3–5 s swap, so it can only be waiting on profiles), read via
-`ShipItProbe.runningFor()`; and the reason the last attempt failed, but **only while an
-update is still armed** — the log is append-only and never rotated, so without that
-condition it would keep reporting failures from days ago as though they mattered now.
-
-Two traps in reading those, both of which shipped broken first: the elapsed time comes from
-`ps -o etime=` and is parsed from `[[dd-]hh:]mm:ss`, because the seconds-only `etimes`
-keyword is a GNU extension that **Darwin rejects outright** (`keyword not found`, exit 1 —
-the diagnostic silently never fired, and a mocked test could not see it, so a live check
-against the real `ps` now guards it); and the log scan stops at
-`Installation completed successfully`, since a failure followed by a completed install is
-history — without that boundary Doctor reports a superseded failure as the current one.
-
-### The 4 am restart, predicted instead of mysterious
-
-Claude force-restarts the default profile once an update has been pending for
-`autoUpdaterEnforcementHours` — 72 h by default, and the policy validates as
-`int().gt(0).lte(72)`, so a deployment can only **shorten** that window, never disable it.
-Only `disableAutoUpdates` stops the timer arming at all, and the default profile is
-deliberately the one clone-free profile that keeps its updater. The restart also defers
-while the machine has been used in the last 10 minutes and while any session is running —
-so by design it lands when nobody is watching, which is exactly why it reads as the app
-acting on its own.
-
-CM cannot stop it, so it predicts it. `StagedUpdateDeadline` measures the wait from the
-moment **we** first saw the staged version, because Claude's own counter lives in its
-updater's memory and nothing on disk survives a re-arm (`ShipItState.plist`'s mtime is
-rewritten on every retry — observed three times in one afternoon). That makes every number
-an estimate, and the type says so: it predicts *no earlier than*, and both surfaces word it
-with "about". Two ways it can be wrong — the wait may have started before CM was looking,
-and a deferred restart can land much later.
-
-The first sighting, and the two notification ledgers keyed beside it, live in the injected
-`UserDefaults`. Persisting them fixed a quieter bug: both ledgers were in-memory `Set`s, so
-"notify once per version" was renewed on every app launch and the same version nagged again.
-`StagedUpdateDeadline.recordSighting` owns the rules — a known version keeps its original
-date (re-stamping would hold the wait at zero and the warning would never fire), only the
-current version is kept (or the record grows a row per Claude release), and nothing staged
-clears everything (so a re-staged version is a genuinely fresh wait).
-
-The outcomes are kept distinct because their advice differs: `noStagedUpdate` is the only
-one that should say "click Restart to update to arm it", and saying that to someone whose
-armed install merely failed sends them to re-download the bundle for nothing.
-
-### Applying it unattended, inside a window you chose
-
-The deadline warning tells you the forced restart is coming; this stops it arriving. **Off by
-default, and offered rather than assumed**: once an update has been stuck past
-`AutoApplyDecision.stuckThreshold`, the staged-update banner grows a line suggesting it. That
-timing is the design — most updates are applied within minutes of the banner appearing, so
-offering at download time would prompt everyone about a problem almost nobody has yet, while
-offering after a night puts the suggestion next to its own evidence.
-
-Turning it on from that offer makes consent and the action it licenses **one event**. The
-alternative — on by default with a one-time announcement — was written and rejected; see
-`DECISIONS.md` for why four separate props were needed to make one flag safe.
-
-Three details the offer needs to stay honest. It is **confirmed**, with the same disclosure
-the Settings toggle carries — accepting licenses unattended profile-quitting, and a one-click
-yes must not be the least-informed path to that. It **names the window it would use**, since a
-window stored in an earlier session is reused as-is (only an *empty* one, which admits no time
-at all, is replaced with the suggested night). And it **takes no for an answer**: the
-population it targets is precisely the one whose update never applies, so "it disappears when
-the update installs" would mean a prompt at every launch for days.
-
-The threshold is a **full day**, not a night: twelve hours from a 07:00 sighting is 19:00, with
-no night-time window having come round at all, so the offer's premise ("this could already have
-been installed for you") would not yet be true.
-
-**Notifications are presented while the app is frontmost.** `AppDelegate` conforms to
-`UNUserNotificationCenterDelegate` and returns `[.banner, .list, .sound]` from `willPresent`.
-Without it UserNotifications drops every notification an *active* app posts — which silently
-covered all four this app has (the staged-update nag, the forced-restart warning, the
-profiles-left-closed notice and the usage-limit warnings), each of them posted from a refresh
-the user often triggers themselves with the app in front. `.sound` is in the list because
-`AppModel+UsageNotifications` sets a sound only for a *critical* limit, and dropping it would
-mute that escalation exactly when the user is looking at the app.
-
-`AutoApplyDecision` is the whole of the logic, in Core and under test, because the pass runs
-while nobody is watching — "it silently did nothing" is the hardest failure to diagnose
-afterwards, so the verdict is a value that can be logged and asserted on. Five conditions,
-ordered so the reason reported is the most informative one: enabled, no apply already in
-flight, something staged, inside the window, and the Mac idle for ten minutes.
-
-Two things that ordering deliberately does *not* include. The idle check is a **courtesy** —
-it keeps windows from being yanked away mid-click, and says nothing about an autonomous
-session; that remains Claude's veto's job (above), and conflating the two would be the
-busy-detector this design refuses to grow. And `AutoApplyWindow.contains` is start-inclusive,
-end-exclusive, supports a window crossing midnight (22:00–02:00 is the natural shape of a
-night window, and the case a naive `start...end` gets wrong), and treats an **empty** window
-as admitting nothing — the alternative reading would turn a mis-set window into "apply at any
-moment".
-
-The pass runs from the monitor's tick **regardless of `NSApp.isActive`**, and that is a
-correction worth recording: gating it on being backgrounded looks right — the window is a
-time the user is away — but "away" and "our window isn't frontmost" are different things.
-Leave the manager or Settings in front and walk off, and the whole nominated window passes
-with nothing attempted. Presence is the idle check's job, and that lives inside the pass.
-What *is* branch-specific is the re-probe: while backgrounded the tick skips its usual sweep,
-so the staged update is re-read on its own (one file read) rather than through the full
-process-and-launcher scan a backgrounded menu-bar app has no business doing every minute.
-
-**One quiet failure still speaks.** `swapStillInstalling` leaves every profile closed on
-purpose — reopening would abort the install — and nothing reopens them afterwards. Unattended
-that means waking to an empty desk with no explanation, while the setting promised the
-profiles would come back, so this one outcome posts a notification: heavy enough not to
-vanish, light enough not to seize the screen at 04:30. The settings text says the same thing
-up front rather than promising a return it can't always make.
-
-**It fails quietly.** The apply is invoked with `surfacingFailures: false`. The interactive
-path deliberately fights for attention on failure — it reopens the window and activates the
-app, because a report nobody sees is no report — and that is exactly wrong at 04:30: a
-profile vetoing its quit would foreground Claude Manager with a modal alert while the user is
-asleep, which is the same class of surprise this section exists to remove. Unattended
-failures go to the log and to Doctor, both of which wait to be read.
-
-**A vetoed attempt backs off.** A refusal leaves the update staged and the in-flight flag
-clear, so without this the tick would retry every minute for the rest of the window — closing
-and reopening every *other* profile each time, and re-prompting the one that is busy. An
-attempt that leaves the same version staged is recorded, and the next attempt on it waits
-`AutoApplyDecision.retryBackoff` (six hours — the following night's window). A newly staged
-version clears the record; a recorded time in the *future* (a clock moved back) counts as no
-record at all, since a bad clock should cost one extra attempt rather than silently disable
-the feature.
-
-### Claude protects its own working sessions
-
-A profile with a **running session** refuses to quit: Claude's own before-quit interceptor
-vetoes it (`beforeQuit: vetoed by before-quit interceptor`) and shows "Claude is still
-working — Quit anyway / Wait for Claude / Cancel". Verified by experiment: `SIGTERM` to a
-busy profile leaves it alive and the work intact, while `SIGTERM` to a profile whose
-session is merely *open but idle* quits cleanly. The count behind it is `countRunningSessions`,
-so it means working, not open.
-
-This is why CM has **no busy-detector of its own, and must not grow one**. Everything
-observable from outside was measured and none of it separates a working session from an
-idle one: power assertions do not appear during agent work (they flicker for unrelated
-reasons), CPU over the process tree measures UI rendering, and the session process itself
-sits near 1% either way because an agent spends its time waiting on the network. Claude
-answers the question correctly; CM asks by trying to stop, and treats the refusal as the
-answer (`instancesStillRunning`).
+`ShipItProbe` survives for one question: Squirrel is *disabled*, not absent. Updating can
+be handed back at any time, and a job armed before the switch outlives it — so the
+installer and the residue sweep both check before touching the bundle.
 
 ## Plan-usage statistics
 

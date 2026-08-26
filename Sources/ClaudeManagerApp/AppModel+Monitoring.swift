@@ -24,9 +24,9 @@ extension AppModel {
                 // A cheap guaranteed re-check on top of the Darwin observer: if Claude
                 // grabbed the handler while we were away, take it back.
                 self.deepLinkService.reassertIfNeeded()
-                // Skip the rescan while a staged-update apply is in flight (same reason as
-                // the poll loop: avoid a relaunch during ShipIt's swap window).
-                guard !self.isApplyingStagedUpdate else { return }
+                // Skip the rescan while an install is in flight: the sweep can relaunch a
+                // profile, and doing that mid-swap is the collision this app exists to avoid.
+                guard !self.claudeUpdateState.isBusy else { return }
                 await self.reconcile()
                 self.refreshClaudeUpdateIfDue()
             }
@@ -38,27 +38,14 @@ extension AppModel {
                 guard let self else { return }
                 // Poll only while frontmost — a backgrounded menu-bar app catches up
                 // via didBecomeActive instead of spawning `ps` every minute forever.
-                // @MainActor so NSApp.isActive is read on the main thread. Skip while a
-                // staged-update apply is in flight: re-probing is fine, but a relaunch it
-                // could trigger during the swap window would trip ShipIt's Gate 2.
-                guard !isApplyingStagedUpdate else { continue }
-                if NSApp.isActive {
-                    await reconcile()
-                } else if autoApplyEnabled {
-                    // Backgrounded: the sweep above is deliberately skipped, so re-probe just
-                    // the staged update — one file read — to have something to act on.
-                    await refreshStagedUpdateInBackground()
-                }
-                // Then attempt the apply *whichever branch ran*. Gating it on being
-                // backgrounded looked right — the window is a time the user is away — but
-                // "away" and "our window isn't frontmost" are different things: leaving the
-                // manager (or Settings) in front and walking off keeps `isActive` true, and
-                // the whole nominated window would pass with nothing attempted. Presence is
-                // the idle check's job, and it is inside the pass.
-                if autoApplyEnabled { await runAutoApplyPass() }
-                // Claude's own update, checked and fetched on its own. Unlike the staged
-                // path this never acts — it only leaves a build ready — so it is safe on a
-                // timer whether or not anyone is watching.
+                // @MainActor so NSApp.isActive is read on the main thread. Skipped while an
+                // install is in flight: re-probing is harmless, but a relaunch the sweep
+                // could trigger during a swap is not.
+                guard !claudeUpdateState.isBusy else { continue }
+                if NSApp.isActive { await reconcile() }
+                // Claude's own update, checked and fetched whether or not anyone is watching.
+                // Safe on a timer because it never *acts*: it leaves a verified build ready
+                // and stops. Installing needs a press.
                 refreshClaudeUpdateIfDue()
             }
         }

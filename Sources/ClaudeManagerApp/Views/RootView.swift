@@ -12,7 +12,6 @@ struct RootView: View {
     /// can toggle the binding while the dialog is up (a programmatic dismiss of a live
     /// `confirmationDialog` crashes AppKit's dialog bridge).
     @State private var confirmingStagedApply = false
-    @State private var confirmingAutoApplyOffer = false
     /// Measured height of the app-global banner strip, used to reserve matching top space in the
     /// sidebar's `List` (see `body`). Zero when no banner is showing.
     @State private var bannerHeight: CGFloat = 0
@@ -90,44 +89,6 @@ struct RootView: View {
         .onChange(of: model.currentError?.id, initial: true) {
             if let title = model.currentError?.title { alertTitle = title }
         }
-        .confirmationDialog(
-            model.stagedUpdate.map { "Apply Claude \($0.stagedVersion) to all profiles?" }
-                ?? "Apply the staged Claude update?",
-            isPresented: $confirmingStagedApply,
-            titleVisibility: .visible
-        ) {
-            Button("Quit & Update All Profiles") {
-                Task { await model.applyStagedUpdate() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Every open profile is quit and reopened to install the update — "
-                    + "any active session is interrupted, so save your work first."
-            )
-        }
-        .confirmationDialog(
-            "Install Claude updates automatically?",
-            isPresented: $confirmingAutoApplyOffer,
-            titleVisibility: .visible
-        ) {
-            Button("Turn On") { model.enableAutoApplyFromOffer() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            // The same disclosure the Settings toggle carries. Accepting from a banner must
-            // not be a way to license unattended profile-quitting on less information than
-            // the settings pane would have given.
-            Text(
-                // The offer can clear while this dialog is up (it is driven by separate view
-                // state), so the fallback must name the window an acceptance would install —
-                // not the suggested one, which may not be it.
-                "Between \(model.autoApplyOffer?.windowText ?? model.effectiveAutoApplyWindow.displayText), "
-                    + "when your Mac has been idle for 10 minutes, Claude Manager will quit every "
-                    + "profile, install the update, and reopen the ones that were running. A "
-                    + "profile that is still working refuses to quit and the attempt is called "
-                    + "off. Change the window or turn this off in Settings → Claude updates."
-            )
-        }
     }
 
     /// The full-width banner strip, with its height reported up via `BannerHeightKey` so the
@@ -137,9 +98,6 @@ struct RootView: View {
         VStack(spacing: 0) {
             if model.realClaude == nil {
                 missingClaudeBanner
-            }
-            if let staged = model.stagedUpdate {
-                stagedUpdateBanner(staged)
             }
             ClaudeUpdateBanner()
             if model.dockRefreshPending {
@@ -173,51 +131,6 @@ struct RootView: View {
             .buttonStyle(.borderless)
             .accessibilityLabel("Dismiss")
             .help("Dismiss — pinned tiles keep the old icon until you refresh the Dock")
-        }
-        .padding(8)
-        .background(.blue.opacity(0.12))
-    }
-
-    private func stagedUpdateBanner(_ staged: StagedUpdate) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
-                Text("Claude \(staged.stagedVersion) is downloaded but not applied — open profiles block it.")
-                    .font(.callout)
-                Spacer()
-                Button(model.isApplyingStagedUpdate ? "Applying…" : "Apply to all profiles") {
-                    confirmingStagedApply = true
-                }
-                .disabled(model.isApplyingStagedUpdate)
-            }
-            // Only once the update has demonstrably been stuck — see
-            // `AutoApplyDecision.shouldOfferEnabling`. Offering at download time would be
-            // noise for the majority of updates, which are applied within minutes of this
-            // banner appearing; offering now puts the suggestion next to its own evidence.
-            if let offer = model.autoApplyOffer {
-                HStack(spacing: 8) {
-                    Image(systemName: "moon.zzz").foregroundStyle(.secondary)
-                    Text("It's been waiting \(offer.waitDescription). Claude Manager can install "
-                        + "updates for you between \(offer.windowText), quitting your profiles "
-                        + "and reopening them.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    // Confirmed, like its sibling above: accepting licenses the app to close
-                    // every profile unattended, and a one-click yes is the *least* disclosed
-                    // path to that in the app — the Settings toggle spells it out in a
-                    // paragraph, and this must not be the shortcut around it.
-                    Button("Turn on…") { confirmingAutoApplyOffer = true }
-                    Button {
-                        model.dismissAutoApplyOffer(version: offer.stagedVersion)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Don't offer this again")
-                    .help("Don't offer this again for this update")
-                }
-            }
         }
         .padding(8)
         .background(.blue.opacity(0.12))
