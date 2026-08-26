@@ -81,6 +81,15 @@ public extension ProfileStore {
     /// nothing but disk. Deleting a bundle out from under a live ShipIt costs the user their
     /// install.
     func sweepSquirrelResidue() {
+        // An MDM-managed machine decides its own update policy through managed preferences,
+        // which outrank the local overlay — so this app is not actually in charge there,
+        // whatever its setting says, and clearing a job the MDM configuration armed would be
+        // interfering with somebody else's update flow. The overlay writer already stands
+        // down in that case; so does this.
+        guard !managedConfigWriter.mdmPresent else {
+            CoreLog.update.info("squirrel: MDM-managed, leaving its cache alone")
+            return
+        }
         guard !shipItProbe().isRunning() else {
             CoreLog.update.info("squirrel: an installer may be running, leaving its cache alone")
             return
