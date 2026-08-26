@@ -45,22 +45,31 @@ extension AppModel {
             if newValue {
                 startClaudeUpdateRefresh()
             } else {
-                // Stop the transfer, then wait for it to actually be over before deleting
-                // anything. Cancellation is a request, not a stop: a task part-way through
-                // unpacking would otherwise finish *after* the sweep and leave several
-                // hundred megabytes on disk for a feature that is off. Off the main actor,
-                // since this deletes an archive and an unpacked Electron bundle — tens of
-                // thousands of files.
-                let inFlight = claudeUpdateTask
-                claudeUpdateTask = nil
-                inFlight?.cancel()
-                let service = claudeUpdateService
-                Task.detached(priority: .utility) {
-                    await inFlight?.value
-                    service.discardEverything()
-                }
                 setClaudeUpdateState(.idle)
+                startClaudeUpdateCleanup()
             }
+        }
+    }
+
+    /// Stop any in-flight fetch and delete everything staged.
+    ///
+    /// Three things have to be true at once, which is why this is not two lines inline.
+    /// Cancellation is a request rather than a stop, so the sweep waits for the task to
+    /// actually finish — otherwise a task part-way through unpacking finishes *after* the
+    /// delete and leaves hundreds of megabytes staged for a feature that is off. The sweep
+    /// itself occupies the same single-flight slot, so a check cannot start beside it and
+    /// race on the same cache directory. And it re-reads the setting before deleting: off
+    /// and straight back on again is a real thing to do, and it must not cost the download
+    /// that the second toggle just started.
+    private func startClaudeUpdateCleanup() {
+        let inFlight = claudeUpdateTask
+        inFlight?.cancel()
+        let service = claudeUpdateService
+        claudeUpdateTask = Task { @MainActor [weak self] in
+            await inFlight?.value
+            defer { self?.claudeUpdateTask = nil }
+            guard self?.managesClaudeUpdates == false else { return }
+            await Task.detached(priority: .utility) { service.discardEverything() }.value
         }
     }
 
