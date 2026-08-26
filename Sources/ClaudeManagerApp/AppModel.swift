@@ -388,7 +388,9 @@ final class AppModel: ObservableObject {
     }
 
     func runDoctor() async {
-        guard var result = await perform({ store in store.doctor() }) else { return }
+        let managingUpdates = managesClaudeUpdates
+        guard var result = await perform({ store in store.doctor(managingUpdates: managingUpdates) })
+        else { return }
         if let usage = usageDoctorDiagnostic() { result.append(usage) }
         diagnostics = result
     }

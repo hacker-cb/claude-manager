@@ -31,15 +31,21 @@ public extension ProfileStore {
         try managedConfigWriter.reconcile(cloneOverlay, userDataPath: profile.profilePath)
     }
 
-    /// Keep the **default profile** free of any CM-written overlay: its `claude://` handler
-    /// is held by the guard, never by a written key. This reconciles the *empty*
-    /// default-profile overlay, which removes a `disableDeepLinkRegistration` left by an
-    /// earlier build without ever materializing a new file in the untouched profile.
-    /// Returns the outcome, or `nil` when there was nothing to clean up.
+    /// Bring the **default profile's** overlay in line with who is updating Claude.
+    ///
+    /// With `managingUpdates` true this switches the default profile's Squirrel updater off,
+    /// the same as every clone's — which is what stops Claude force-restarting it every
+    /// ~72 h to install a build of its own. With it false the overlay is empty again and
+    /// Claude resumes the job, which is also how the key gets *removed* rather than left
+    /// behind as a fossil.
+    ///
+    /// `claude://` is never written here either way; that handler belongs to the guard.
+    /// Returns the outcome, or `nil` when there was nothing to change.
     @discardableResult
-    func reconcileDefaultProfileConfig() throws -> ManagedConfigWriter.Outcome? {
+    func reconcileDefaultProfileConfig(managingUpdates: Bool) throws -> ManagedConfigWriter.Outcome? {
         try managedConfigWriter.reconcilePreservingUntouched(
-            .defaultProfile, userDataPath: configuration.defaultProfileUserDataPath
+            .defaultProfile(managingUpdates: managingUpdates),
+            userDataPath: configuration.defaultProfileUserDataPath
         )
     }
 
@@ -49,7 +55,7 @@ public extension ProfileStore {
     /// profiles whose overlay could not be written are returned (`Doctor` independently
     /// surfaces a missing overlay, so callers may discard this).
     @discardableResult
-    func reconcileAllManagedConfigs() -> [Profile] {
+    func reconcileAllManagedConfigs(managingUpdates: Bool) -> [Profile] {
         var failed: [Profile] = []
         for managed in list() {
             do {
@@ -58,7 +64,32 @@ public extension ProfileStore {
                 failed.append(managed.profile)
             }
         }
-        try? reconcileDefaultProfileConfig()
+        try? reconcileDefaultProfileConfig(managingUpdates: managingUpdates)
+        if managingUpdates { sweepSquirrelResidue() }
         return failed
+    }
+
+    /// Clear what Claude's own updater left behind, now that it is switched off.
+    ///
+    /// Switching `disableAutoUpdates` on stops Squirrel arming again but tidies nothing: the
+    /// last armed job and the several hundred megabytes it points at both survive. Skipped
+    /// while an installer is actually running — removing a bundle out from under a live
+    /// ShipIt is precisely the failure this rewrite exists to stop causing — and skipped
+    /// silently, because a sweep that has to wait for the next reconcile has lost nothing.
+    func sweepSquirrelResidue() {
+        guard !shipItProbe().isConfirmedRunning() else {
+            CoreLog.update.info("squirrel: installer is running, leaving its cache alone")
+            return
+        }
+        let outcome = SquirrelResidue(
+            statePath: configuration.shipItStatePath, fileManager: fileManager
+        ).sweep()
+        guard outcome.changedAnything else { return }
+        CoreLog.update.info(
+            """
+            squirrel: swept \(outcome.removedStagedBundles.count, privacy: .public) staged bundle(s), \
+            \(outcome.reclaimedBytes, privacy: .public) bytes
+            """
+        )
     }
 }

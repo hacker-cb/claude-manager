@@ -11,7 +11,11 @@ public extension ProfileStore {
 
     /// Health check. Shares this store's `managedConfigWriter` so the overlay/MDM
     /// checks honor the same (injectable) managed-preferences paths.
-    func doctor() -> [Diagnostic] {
+    ///
+    /// - Parameter managingUpdates: whether this app is the one updating Claude. The
+    ///   default profile's expected overlay reverses with it, so a check that assumed one
+    ///   answer would report the working configuration as broken.
+    func doctor(managingUpdates: Bool) -> [Diagnostic] {
         Doctor(
             realClaude: realClaude,
             configuration: configuration,
@@ -20,6 +24,6 @@ public extension ProfileStore {
             processProbe: processProbe,
             fileManager: fileManager,
             managedConfigWriter: managedConfigWriter
-        ).run()
+        ).run(managingUpdates: managingUpdates)
     }
 }

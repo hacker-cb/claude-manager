@@ -32,7 +32,12 @@ public struct Doctor {
         self.managedConfigWriter = managedConfigWriter ?? ManagedConfigWriter(fileManager: fileManager)
     }
 
-    public func run() -> [Diagnostic] {
+    /// - Parameter managingUpdates: whether Claude Manager is the one updating Claude. It
+    ///   decides what the default profile's overlay *should* say, and the check reverses with
+    ///   it: with this app in charge the updater must be off, and with Claude in charge it
+    ///   must be on. A check that only ever expected one of the two would report the working
+    ///   configuration as broken.
+    public func run(managingUpdates: Bool) -> [Diagnostic] {
         var diagnostics: [Diagnostic] = []
         diagnostics.append(realClaudeDiagnostic())
 
@@ -47,7 +52,7 @@ public struct Doctor {
         diagnostics.append(contentsOf: signatureDiagnostics(discovered))
         diagnostics.append(contentsOf: staleLauncherDiagnostics(discovered))
         diagnostics.append(contentsOf: claudeVersionSkewDiagnostics(discovered))
-        diagnostics.append(contentsOf: managedConfigDiagnostics(discovered))
+        diagnostics.append(contentsOf: managedConfigDiagnostics(discovered, managingUpdates: managingUpdates))
         diagnostics.append(contentsOf: stagedUpdateDiagnostics())
         diagnostics.append(
             contentsOf: orphanProfileDiagnostics(known: knownProfiles, scan: scan)
@@ -200,13 +205,20 @@ public struct Doctor {
     /// Otherwise, warn once per distinct user-data-dir whose overlay does not disable
     /// the updater — a best-effort write that silently failed, or a profile predating
     /// this feature that has not yet been reconciled (reopening Claude Manager fixes it).
-    private func managedConfigDiagnostics(_ discovered: [LauncherBundle.Discovered]) -> [Diagnostic] {
-        // Nothing on disk to manage: no clones and no default-profile overlay to check.
-        // Keyed on actual state, not the broker flag — the default profile is never
-        // written, so an on-by-default broker alone is not something to report.
+    private func managedConfigDiagnostics(
+        _ discovered: [LauncherBundle.Discovered], managingUpdates: Bool
+    ) -> [Diagnostic] {
+        // Nothing on disk to manage, and nothing this app is *supposed* to have written.
+        //
+        // The last clause is the one that changed with managed updates: an absent overlay
+        // used to mean "nothing to check", because the default profile was deliberately left
+        // untouched. Now, when this app is in charge of updating, an absent overlay is
+        // exactly the state worth reporting — Claude's own updater is still on, and it will
+        // force-restart the default profile to install a build of its own.
         let defaultPath = configuration.defaultProfileUserDataPath
         guard !discovered.isEmpty
-            || managedConfigWriter.overlayExists(userDataPath: defaultPath) else { return [] }
+            || managedConfigWriter.overlayExists(userDataPath: defaultPath)
+            || managingUpdates else { return [] }
 
         if managedConfigWriter.mdmPresent {
             let path = managedConfigWriter.presentManagedPreferencesURL?.path
@@ -217,7 +229,8 @@ public struct Doctor {
                 detail: PathUtils.abbreviatingHome(path)
             )]
         }
-        return cloneOverlayDiagnostics(discovered) + defaultProfileOverlayDiagnostics(defaultPath)
+        return cloneOverlayDiagnostics(discovered)
+            + defaultProfileOverlayDiagnostics(defaultPath, managingUpdates: managingUpdates)
     }
 
     /// Warn once per distinct clone user-data-dir whose overlay is wrong: the updater not
@@ -253,17 +266,32 @@ public struct Doctor {
         }
     }
 
-    /// The default profile's overlay should be **empty**: it's the update leader (auto-update
-    /// stays on) and its `claude://` handler is held by the event-driven guard, never by a
-    /// written key. Warn if either CM-owned key is present anyway (left by an earlier build or
-    /// a manual edit) — a stray `disableAutoUpdates` silently breaks the update model for every
-    /// profile, and a stray `disableDeepLinkRegistration` drops the default's non-auth deep
-    /// links. A reconcile (reopening Claude Manager) removes them.
-    private func defaultProfileOverlayDiagnostics(_ defaultPath: String) -> [Diagnostic] {
+    /// What the default profile's overlay should say depends on who is updating Claude, and
+    /// the check reverses with it.
+    ///
+    /// With Claude Manager in charge the updater must be **off**: left on, Claude downloads
+    /// and stages builds of its own and force-restarts the default profile every ~72 h to
+    /// install one — `autoUpdaterEnforcementHours` cannot be disabled, only shortened, and
+    /// nothing but `disableAutoUpdates` keeps that timer from arming. With Claude in charge
+    /// it must be **on**, or nothing updates the app at all.
+    ///
+    /// `disableDeepLinkRegistration` is wrong either way: the `claude://` handler is held by
+    /// the event-driven guard, and that key makes Claude drop forwarded links.
+    private func defaultProfileOverlayDiagnostics(
+        _ defaultPath: String, managingUpdates: Bool
+    ) -> [Diagnostic] {
         var diagnostics: [Diagnostic] = []
-        if managedConfigWriter.isSatisfied(
+        let updaterDisabled = managedConfigWriter.isSatisfied(
             ProfileManagedConfig(disableAutoUpdates: true), userDataPath: defaultPath
-        ) {
+        )
+        if managingUpdates, !updaterDisabled {
+            diagnostics.append(Diagnostic(
+                severity: .warning,
+                title: "Default profile: Claude's own updater is still on — reopen Claude Manager to switch it off",
+                detail: PathUtils.abbreviatingHome(defaultPath)
+            ))
+        }
+        if !managingUpdates, updaterDisabled {
             diagnostics.append(Diagnostic(
                 severity: .warning,
                 title: "Default profile: auto-updates are disabled — reopen Claude Manager to restore them",

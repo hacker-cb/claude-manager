@@ -239,7 +239,7 @@ struct ManagedConfigWriterTests {
         #expect(writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))
         // ...an empty overlay still runs on it, dropping our keys (the restore).
         let outcome = try writer.reconcilePreservingUntouched(
-            .defaultProfile, userDataPath: scene.userDataPath
+            .defaultProfile(managingUpdates: false), userDataPath: scene.userDataPath
         )
         #expect(outcome != nil)
         #expect(!writer.isSatisfied(priorOverlay, userDataPath: scene.userDataPath))
