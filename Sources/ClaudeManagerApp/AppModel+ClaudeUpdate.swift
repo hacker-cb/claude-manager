@@ -174,6 +174,17 @@ extension AppModel {
     }
 
     /// Download and verify, reporting progress as it goes.
+    ///
+    /// Awaited directly rather than pushed onto a detached task, and that is deliberate.
+    /// `ClaudeUpdateService.prepare` is `nonisolated async`, so its body — including the
+    /// verification that unpacks 800 MB and blocks on `codesign` and `spctl` — does **not**
+    /// run on the main actor even when awaited from one. Measured: synchronous work inside a
+    /// `nonisolated async` method called from a `@MainActor` context reports
+    /// `pthread_main_np() == 0`.
+    ///
+    /// Detaching would also break cancellation, which matters more: a detached task does not
+    /// inherit it, so switching the feature off would stop watching the download without
+    /// stopping the download.
     private func prepareClaudeUpdate(_ update: AvailableUpdate) async {
         publishClaudeUpdateState(.downloading(version: update.version, received: 0, total: nil))
         do {
