@@ -40,12 +40,25 @@ public struct ProfileManagedConfig: Equatable, Sendable {
         ProfileManagedConfig(disableAutoUpdates: true)
     }
 
-    /// The overlay the **default profile** gets: **always empty**. The default is the
-    /// update leader (auto-update stays on), and Claude Manager holds `claude://` for it
-    /// via the event-driven handler guard — never by writing `disableDeepLinkRegistration`
-    /// into the default profile. This empty overlay still drives a reconcile that
-    /// *removes* any such key left by an earlier build.
-    public static let defaultProfile = ProfileManagedConfig()
+    /// The overlay the **default profile** gets, which now depends on who is doing the
+    /// updating.
+    ///
+    /// When Claude Manager manages updates, the default profile's Squirrel updater is
+    /// switched off like every clone's. That is the whole point of the arrangement: with it
+    /// on, Claude checks, downloads and stages builds on its own, and — because
+    /// `autoUpdaterEnforcementHours` cannot be disabled, only shortened — force-restarts the
+    /// default profile every ~72 h to install one. Nothing short of `disableAutoUpdates`
+    /// stops that timer arming.
+    ///
+    /// When it does not manage them, the overlay is **empty** and Claude is the update leader
+    /// again. Empty rather than `false`: omission and `false` mean the same to Claude, and a
+    /// reconcile then *removes* the key rather than leaving a fossil behind.
+    ///
+    /// Either way `claude://` stays out of it — that handler is held by the event-driven
+    /// guard, never by writing `disableDeepLinkRegistration` into the default profile.
+    public static func defaultProfile(managingUpdates: Bool) -> ProfileManagedConfig {
+        ProfileManagedConfig(disableAutoUpdates: managingUpdates)
+    }
 
     /// Flat enterprise-policy keys this overlay currently wants *present* → their
     /// JSON values. A disabled/`false` flag is omitted, so the reconcile deletes a
@@ -68,17 +81,6 @@ public struct ProfileManagedConfig: Equatable, Sendable {
     /// — the guard owns the handler — but expose the name so a reconcile/Doctor can detect
     /// and strip one an earlier build left behind (it makes Claude drop forwarded links).
     public static let disableDeepLinkRegistrationKey = Key.disableDeepLinkRegistration
-
-    /// Claude's flat key for how many hours a pending update may sit before its updater
-    /// restarts the default profile by itself. **Read, never written** — Claude Manager does
-    /// not set enforcement policy; it reads the value only so its own estimate of that
-    /// restart matches a deployment that shortened the window. Absent means Claude's own
-    /// default (`StagedUpdateDeadline.defaultEnforcementHours`).
-    ///
-    /// Deliberately *not* in ``managedKeys``: that set is what a reconcile is allowed to
-    /// strip, and removing someone else's policy would change the behaviour we are only
-    /// trying to describe.
-    public static let autoUpdaterEnforcementHoursKey = "autoUpdaterEnforcementHours"
 
     /// Flat key names, pinned to the validated Claude schema. Kept private so the
     /// literal strings have a single definition shared by ``flatEntries`` and

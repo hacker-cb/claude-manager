@@ -73,6 +73,20 @@ public struct ProcessProbe {
         return Self.parseMains(psOutput: output.standardOutput)
     }
 
+    /// All running Claude main processes, or **nil when `ps` could not be read**.
+    ///
+    /// ``allClaudeMains()`` folds that failure into "none running", which is right for
+    /// display — an empty list shows nothing rather than inventing processes. It is wrong for
+    /// anything destructive: "I could not look" and "nobody is there" are the same answer
+    /// there only if you are willing to replace `/Applications/Claude.app` underneath a live
+    /// Electron process. Gates ask this one and fail closed.
+    public func claudeMainsIfReadable() -> [ClaudeInstance]? {
+        guard let output = try? runner.run(CoreConstants.psPath, ["axww", "-o", "pid=,ppid=,command="]),
+              output.succeeded
+        else { return nil }
+        return Self.parseMains(psOutput: output.standardOutput)
+    }
+
     /// Profile dir → the version its live instance is running, from an already-fetched sweep.
     /// Only mains that reported a version and carry a `--user-data-dir` are included. If
     /// duplicate instances share one profile, keeps the OLDEST version, so a lagging instance

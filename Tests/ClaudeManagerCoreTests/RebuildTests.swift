@@ -259,7 +259,7 @@ struct LauncherRebuildTests {
         let profile = try env.store.add(AddProfileRequest(name: env.name("work"))).profile
         try setWrapperVersion(1, atAppPath: profile.appPath)
 
-        let diagnostics = env.store.doctor()
+        let diagnostics = env.store.doctor(managingUpdates: false)
 
         #expect(!diagnostics.contains { $0.title.contains("older launcher format") })
         #expect(diagnostics.contains { $0.severity == .error && $0.title.contains("macOS will not run it") })

@@ -99,47 +99,25 @@ struct SettingsView: View {
     /// which is Claude Manager updating itself.
     private var claudeUpdateSection: some View {
         Section("Claude updates") {
-            Toggle("Apply staged Claude updates automatically", isOn: $model.autoApplyEnabled)
-            // Say plainly what it does. A user who reads "automatically" and finds their
-            // windows closed at 4 am has met the same surprise this feature exists to
-            // prevent — only with our name on it.
-            Text("Inside the window below, and only when the Mac has been idle for 10 minutes, "
-                + "Claude Manager quits every profile, lets the update install, and reopens the "
-                + "ones that were running. A profile that is still working refuses to quit and "
-                + "the whole attempt is called off. If the install runs unusually long your "
-                + "profiles stay closed until it finishes — reopening would abort it — and you "
-                + "get a notification saying so.")
+            Toggle("Let Claude Manager update Claude", isOn: $model.managesClaudeUpdates)
+            Text("Claude Manager fetches each new Claude build in the background, checks it is "
+                + "signed and notarized by Anthropic, and offers to install it. Installing "
+                + "closes every open profile and reopens the same set, so it only ever happens "
+                + "when you press the button.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if model.autoApplyEnabled {
-                LabeledContent("Window") {
-                    HStack(spacing: 6) {
-                        // Both pickers hide their labels for layout, which leaves VoiceOver
-                        // announcing two identical time fields — these say which is which.
-                        TimeOfDayPicker(minutes: $model.autoApplyWindowStart)
-                            .accessibilityLabel("Window start time")
-                        Text("to").foregroundStyle(.secondary)
-                        TimeOfDayPicker(minutes: $model.autoApplyWindowEnd)
-                            .accessibilityLabel("Window end time")
-                    }
-                }
-                if model.autoApplyWindow.isEmpty {
-                    // Both ends bind independently, so this is a couple of clicks away — and
-                    // the result is a feature that is switched on and can never run. Saying
-                    // so beats quietly substituting a window the user didn't choose.
-                    Label(
-                        "This window is empty, so no update will ever be applied. "
-                            + "Set two different times — a window may cross midnight.",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-                Text("Claude restarts the default profile by itself once an update has waited "
-                    + "about 72 hours, at a moment you're away. Applying inside a window you "
-                    + "chose is what keeps that from being a surprise.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if !model.managesClaudeUpdates {
+                // The honest version of what switching this off means. Claude's own updater
+                // decides when to restart the default profile, and no setting here changes
+                // that — saying so is better than letting it come as a surprise.
+                Label(
+                    "Claude updates itself instead. Claude Manager cannot control when that "
+                        + "happens, and Claude may close your default profile on its own to "
+                        + "install one.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
             }
         }
     }

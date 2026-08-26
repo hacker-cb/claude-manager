@@ -103,7 +103,10 @@ re-grabbing it had two options:
 
 The overlay key is a footgun in two ways. For the **default profile**: if Claude Manager
 is removed (or crashes) **without first disabling the broker**, the key persists with
-nothing to take over, silently breaking the default's deep links. For **clones**: the
+nothing to take over, silently breaking the default's deep links. (That reasoning still
+holds for `disableDeepLinkRegistration`, which is never written. It is *knowingly*
+accepted for `disableAutoUpdates` — see "Taking Claude's updates off Squirrel" below,
+which explains what is done about the orphan it can leave.) For **clones**: the
 same key makes Claude *drop* every forwarded non-auth link
 (`dropping deep link (disableDeepLinkRegistration)`) — defeating the very hand-off the
 broker exists to perform. So **no profile carries it**: `ProfileManagedConfig` writes only
@@ -173,21 +176,11 @@ indistinguishable from "saw it and chose not to". Making the default safe needed
 banner, a gate on delivery, a re-check inside the session and a migration — four props holding
 up one flag, each of them new code on a path that runs at night with nobody watching.
 
-So the default stays off, and the app **offers** instead — in the banner the user is already
-looking at, once the update has been stuck past `AutoApplyDecision.stuckThreshold`. Consent and
-the action it licenses become one event: there is no announcement that can fail to arrive, and
-if the offer is never shown then nothing was ever enabled — the failure mode is the safe one.
-
-It does persist an answered-offer set, which the first sketch of this section claimed it would
-not need. The offer targets updates that may never apply, so "it disappears when the update
-installs" is no answer for the very people it is aimed at; without a remembered answer it would
-reappear at every launch for days. It records an answer rather than a refusal because touching
-the Settings toggle answers the same question — enabling *and* disabling — and recording only
-refusals is how turning the feature on and then changing your mind re-raised the banner
-instantly, under the cursor that had just dismissed the idea. That set is pruned alongside the notification ledgers, so a
-**different** version staged later asks again. The same version re-staged after a rollback does
-not: the prune only runs when the recorded sighting changes, and a nil probe deliberately
-preserves it (`StagedUpdateDeadline.recordSighting`). It errs toward asking too little.
+This whole section is now history: the release that took updating over removed the staged-apply
+path, the nightly window and the offer along with it. Kept because the reasoning still applies
+to anything unattended that closes the user's windows — consent and the action it licenses have
+to be one event, and an announcement the user may never see is not consent. Installing is a
+press, and only a press.
 
 **Deciding whether a profile is busy is Claude's job — rejected: a busy-detector in CM.**
 An auto-apply wants to know "is this profile actually working?", and nothing observable
@@ -198,3 +191,50 @@ answers it correctly — a profile with a running session vetoes its own quit an
 "Quit anyway / Wait for Claude / Cancel", while an idle-but-open session quits cleanly.
 So CM asks by attempting a graceful stop and reads the refusal as the answer, which also
 means the protection holds even for cases CM never modelled.
+
+## Taking Claude's updates off Squirrel — and what that costs
+
+Claude Manager now switches `disableAutoUpdates` on for the **default profile** as well
+as for clones, and fetches, verifies and installs Claude itself.
+
+The reason is that the old arrangement had no stable state. Clones block Squirrel's
+installer (it aborts unless *zero* instances are running), so a machine with profiles open
+accumulates a downloaded-but-unapplied build; Claude then force-restarts the default
+profile roughly every 72 h trying to install it, and each destroyed attempt costs a fresh
+download. `autoUpdaterEnforcementHours` cannot be disabled — the policy validates as
+`>0 && <=72`, so it can only be shortened — and nothing but `disableAutoUpdates` stops
+that timer arming at all.
+
+**The cost, stated plainly.** Writing that key into the default profile is exactly what
+the deep-link decision above refuses to do, for exactly the reason given there: if Claude
+Manager is removed without first switching the feature off, the key persists with nothing
+to take over, and Claude stays on its current build forever. That is a real hole and it is
+accepted knowingly, because the alternative — leaving Squirrel armed — is a machine that
+force-restarts a working profile every three days and never finishes the install anyway.
+
+Three things narrow it:
+
+- The setting is a plain toggle, and turning it off *removes* the key rather than writing
+  `false`, so handing the job back is one click and leaves no fossil.
+- `README.md` § Uninstall makes switching it off step one, and says where the file is for
+  anyone who has already removed the app.
+- Doctor warns when this app is in charge and the release feed has not answered
+  successfully in a week. That is the only signal for the quiet version of this failure —
+  a blocked feed, with Claude's updater off and a healthy-looking machine — and without it
+  the situation is invisible.
+
+**Doctor's Squirrel diagnostics went with it.** The old health check reported a staged
+update blocked by open profiles, an installer that had been waiting for minutes, and what
+the last failed attempt said. Those describe a world where Squirrel is in charge, and with
+managed updates on it no longer is. They are *not* restored for the hand-back case, and that
+is a knowing gap: switch the feature off and you are back in the original situation —
+Squirrel stages a build, cannot apply it while clones are open, and waits indefinitely and
+silently — with nothing pointing at it. The reasoning is that the setting exists as an escape
+hatch, its own Settings text says plainly that this app cannot control what happens next, and
+carrying a whole diagnostic subsystem for a mode nobody is expected to sit in permanently is
+worse than saying so. If people do sit in it, the check to restore is
+`stagedUpdateDiagnostics` in the history of `Doctor+StagedUpdate.swift`.
+
+What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
+closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
+restart cycle this exists to remove.
