@@ -245,6 +245,23 @@ public enum CoreConstants {
     /// reshaped payload surfaces as a failing opt-in test rather than a silent no-op.
     public static let claudeReleaseFeedValidatedVersion = "1.37937.1"
 
+    /// Anthropic's Apple Developer team identifier, as it appears in Claude's signature
+    /// (`TeamIdentifier=Q6L2SF6YDW`).
+    public static let anthropicTeamIdentifier = "Q6L2SF6YDW"
+
+    /// The requirement a downloaded bundle must satisfy to be Anthropic's build.
+    ///
+    /// `anchor apple generic` pins the chain to Apple's Developer ID roots, and the leaf's
+    /// OU is the team identifier — together they say "Apple issued this to Anthropic".
+    /// Handed to `codesign -R`, so it is evaluated by the same code that validates the
+    /// signature rather than by parsing `codesign -dv` output, where a locale or a format
+    /// change is a silent misread.
+    public static let anthropicDesignatedRequirement =
+        "=anchor apple generic and certificate leaf[subject.OU] = \"\(anthropicTeamIdentifier)\""
+
+    /// The bundle name inside a release archive, and the name it is installed under.
+    public static let claudeAppName = "Claude.app"
+
     /// Timeout for the feed request. Short on purpose: this runs on a background check
     /// whose failure is simply "ask again later", so waiting out a hung connection buys
     /// nothing.
@@ -264,4 +281,9 @@ public enum CoreConstants {
     public static let touchPath = "/usr/bin/touch"
     public static let killallPath = "/usr/bin/killall"
     public static let duPath = "/usr/bin/du"
+    /// Apple's archive tool. Used instead of `unzip` to unpack a signed bundle: it preserves
+    /// extended attributes and symlinks, which a signature covers and `unzip` need not keep.
+    public static let dittoPath = "/usr/bin/ditto"
+    /// Gatekeeper assessment — the notarization ticket check.
+    public static let spctlPath = "/usr/sbin/spctl"
 }
