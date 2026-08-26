@@ -221,11 +221,15 @@ extension AppModel {
     /// Attempt the apply if every precondition holds; otherwise return the condition that
     /// stopped it. The decision itself lives in Core (`AutoApplyDecision`) under test — this
     /// only gathers the inputs and acts on the verdict.
+    /// The unattended legacy apply, which must not start while this app's own installer is
+    /// mid-swap: both close every profile and write the same bundle.
     @discardableResult
     func runAutoApplyPass(now: Date = Date(), idleSeconds: TimeInterval? = nil) async -> AutoApplyDecision {
         let decision = AutoApplyDecision.decide(AutoApplyDecision.Inputs(
             enabled: autoApplyEnabled,
-            applyInFlight: isApplyingStagedUpdate,
+            // Either installer counts as in-flight: both close every profile and write the
+            // same bundle, so the second one to start is the one that corrupts the first.
+            applyInFlight: isApplyingStagedUpdate || claudeUpdateState.isBusy,
             hasStagedUpdate: stagedUpdate != nil,
             window: autoApplyWindow,
             now: now,

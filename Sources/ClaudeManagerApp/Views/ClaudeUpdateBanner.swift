@@ -16,10 +16,14 @@ struct ClaudeUpdateBanner: View {
         case .idle:
             EmptyView()
         case let .available(update):
-            // Between "found it" and "fetched it" — brief, and worth showing rather than
-            // leaving the window blank while several hundred megabytes arrive.
+            // Reached both before a download starts *and* after one is interrupted — a slept
+            // laptop, a dropped connection — so it must not claim to be downloading. It is
+            // not necessarily brief either: the resume waits for the next scheduled check,
+            // which is why there is a button to ask for it now.
             banner(icon: "arrow.down.circle") {
-                Text("Claude \(update.version) is available. Downloading…")
+                Text("Claude \(update.version) is available.")
+            } trailing: {
+                Button("Download") { model.startClaudeUpdateRefresh() }
             }
         case let .downloading(version, received, total):
             banner(icon: "arrow.down.circle") {
@@ -53,9 +57,9 @@ struct ClaudeUpdateBanner: View {
                         Button("Not now", role: .cancel) {}
                     } message: {
                         Text(
-                            "Every open profile will be closed and reopened. "
-                                + "A profile with a session still working will refuse, and nothing "
-                                + "will be changed."
+                            "Every open profile will be closed and reopened. A profile with a "
+                                + "session still working will refuse to close, and the installed "
+                                + "app will be left as it is."
                         )
                     }
             }
@@ -95,9 +99,17 @@ struct ClaudeUpdateBanner: View {
     }
 
     /// `142 MB of 335 MB`, formatted the way the Finder would.
-    static func progressText(received: Int64, total: Int64) -> String {
+    ///
+    /// The formatter is built once: progress arrives many times a second during a 335 MB
+    /// transfer, and each one re-renders this view.
+    private static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
-        return "\(formatter.string(fromByteCount: received)) of \(formatter.string(fromByteCount: total))"
+        return formatter
+    }()
+
+    static func progressText(received: Int64, total: Int64) -> String {
+        let format = byteFormatter
+        return "\(format.string(fromByteCount: received)) of \(format.string(fromByteCount: total))"
     }
 }

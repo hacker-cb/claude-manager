@@ -143,6 +143,9 @@ final class AppModel: ObservableObject {
     }
 
     var monitorTask: Task<Void, Never>?
+    /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
+    /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
+    var claudeUpdateTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two

@@ -61,7 +61,48 @@ public struct ClaudeUpdateService: Sendable {
         progress: @Sendable @escaping (_ received: Int64, _ total: Int64?) -> Void = { _, _ in }
     ) async throws -> VerifiedUpdate {
         let downloaded = try await downloader.fetch(update, progress: progress)
-        return try verifier.verify(downloaded, unpackingInto: stagingDirectory)
+        do {
+            return try verifier.verify(downloaded, unpackingInto: stagingDirectory)
+        } catch {
+            // The archive goes with the failure. `fetch` returns a cached archive of the same
+            // version without re-downloading, so keeping a corrupt one means every retry
+            // repeats the identical failure — a "try again" button that cannot ever succeed,
+            // until a different release happens to come along.
+            CoreLog.update.error("prepare: discarding the archive that failed verification")
+            downloader.discardAll()
+            throw error
+        }
+    }
+
+    /// Re-establish a build prepared before the app was last quit.
+    ///
+    /// The state lives in memory, so without this a build downloaded and verified at 10:00
+    /// is invisible after a relaunch at 10:05 — and the schedule would not look again for
+    /// hours, with several hundred verified megabytes sitting on disk.
+    ///
+    /// Verified again rather than trusted: the archive has been on disk across a quit, and
+    /// re-proving it costs seconds against the one thing that licenses replacing the user's
+    /// app. `nil` when nothing is staged, or when what is staged no longer passes.
+    public func restorePrepared(newerThan installedVersion: String?) -> VerifiedUpdate? {
+        guard let staged = downloader.prepared() else { return nil }
+        guard AvailableUpdate.isUpgrade(staged.version, over: installedVersion) else {
+            CoreLog.update.info(
+                "restore: staged \(staged.version, privacy: .public) is not newer than what is installed"
+            )
+            discardEverything()
+            return nil
+        }
+        do {
+            let verified = try verifier.verify(staged, unpackingInto: stagingDirectory)
+            CoreLog.update.info("restore: \(verified.version, privacy: .public) is ready")
+            return verified
+        } catch {
+            CoreLog.update.error(
+                "restore: staged archive no longer verifies — \(String(describing: error), privacy: .public)"
+            )
+            discardEverything()
+            return nil
+        }
     }
 
     /// Forget everything staged — the archive, any partial transfer, and the unpacked bundle.

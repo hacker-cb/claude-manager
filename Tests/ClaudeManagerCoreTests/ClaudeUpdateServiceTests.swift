@@ -51,22 +51,27 @@ struct ClaudeUpdateServiceTests {
     }
 
     /// A runner whose `ditto` plants a plausible bundle and whose signing tools approve.
+    ///
+    /// Setup failures crash rather than being swallowed: a silently missing `Info.plist` here
+    /// surfaces later as a version mismatch, which reads as a defect in the code under test.
     private func runner(version: String) -> RecordingCommandRunner {
         RecordingCommandRunner { executable, arguments in
             if executable == CoreConstants.dittoPath, let destination = arguments.last {
                 let app = URL(fileURLWithPath: destination).appendingPathComponent("Claude.app")
                 let contents = app.appendingPathComponent("Contents")
-                try? FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+                // swiftlint:disable force_try
+                try! FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
                 let plist: [String: Any] = [
                     "CFBundleShortVersionString": version,
                     "CFBundleIdentifier": "com.anthropic.claudefordesktop"
                 ]
-                let data = try? PropertyListSerialization.data(
+                let data = try! PropertyListSerialization.data(
                     fromPropertyList: plist,
                     format: .xml,
                     options: 0
                 )
-                try? data?.write(to: contents.appendingPathComponent("Info.plist"))
+                try! data.write(to: contents.appendingPathComponent("Info.plist"))
+                // swiftlint:enable force_try
             }
             return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
         }
@@ -205,6 +210,86 @@ struct ClaudeUpdateServiceTests {
 
         await #expect(throws: UpdateVerifier.Failure.self) { _ = try await service.prepare(update) }
         #expect(!fm.fileExists(atPath: staging.path))
+    }
+
+    /// A cached archive that fails verification must not survive the failure: `fetch`
+    /// returns a same-version archive without re-downloading, so keeping a corrupt one turns
+    /// "Try again" into a button that repeats the identical failure forever.
+    @Test
+    func discardsAnArchiveThatFailedVerification() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("cm-service-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let stub = StubDownloader()
+        let service = ClaudeUpdateService(
+            feed: feed(payload("1.37937.1")),
+            downloader: UpdateDownloader(downloader: stub, cacheDirectory: root),
+            verifier: UpdateVerifier(runner: RecordingCommandRunner { executable, arguments in
+                if executable == CoreConstants.dittoPath, let destination = arguments.last {
+                    try? FileManager.default.createDirectory(
+                        at: URL(fileURLWithPath: destination).appendingPathComponent("Claude.app"),
+                        withIntermediateDirectories: true
+                    )
+                }
+                if executable == CoreConstants.codesignPath {
+                    return CommandOutput(exitCode: 1, standardOutput: "", standardError: "bad")
+                }
+                return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+            }),
+            stagingDirectory: root.appendingPathComponent("staged")
+        )
+        let update = try #require(try await service.checkForUpdate(installedVersion: "1.30096.5"))
+
+        await #expect(throws: UpdateVerifier.Failure.self) { _ = try await service.prepare(update) }
+        await #expect(throws: UpdateVerifier.Failure.self) { _ = try await service.prepare(update) }
+
+        // Fetched twice, not served from a cache holding the archive that already failed.
+        #expect(stub.calls == 2)
+    }
+
+    // MARK: - Restoring across a relaunch
+
+    /// The state lives in memory, so without this a build verified minutes before a relaunch
+    /// is invisible — with several hundred megabytes already on disk.
+    @Test
+    func restoresABuildPreparedBeforeTheLastQuit() async throws {
+        let (service, root) = try makeService(feedBody: payload("1.37937.1"), version: "1.37937.1")
+        defer { try? fm.removeItem(at: root) }
+        let update = try #require(try await service.checkForUpdate(installedVersion: "1.30096.5"))
+        _ = try await service.prepare(update)
+
+        let restored = service.restorePrepared(newerThan: "1.30096.5")
+
+        #expect(restored?.version == "1.37937.1")
+    }
+
+    /// Claude may have been updated while the app was not running — by its own updater, or by
+    /// hand. What is staged is then a downgrade, and it goes.
+    @Test
+    func discardsARestoredBuildTheInstalledAppHasCaughtUpWith() async throws {
+        let (service, root) = try makeService(feedBody: payload("1.37937.1"), version: "1.37937.1")
+        defer { try? fm.removeItem(at: root) }
+        let update = try #require(try await service.checkForUpdate(installedVersion: "1.30096.5"))
+        _ = try await service.prepare(update)
+
+        #expect(service.restorePrepared(newerThan: "1.37937.1") == nil)
+        // And it is gone, not merely unreported.
+        #expect(service.restorePrepared(newerThan: "1.30096.5") == nil)
+    }
+
+    @Test
+    func restoresNothingWhenNothingIsStaged() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("cm-service-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let service = ClaudeUpdateService(
+            feed: feed(payload("1.37937.1")),
+            downloader: UpdateDownloader(downloader: StubDownloader(), cacheDirectory: root),
+            verifier: UpdateVerifier(runner: runner(version: "1.37937.1")),
+            stagingDirectory: root.appendingPathComponent("staged")
+        )
+
+        #expect(service.restorePrepared(newerThan: "1.30096.5") == nil)
     }
 
     // MARK: - Discarding

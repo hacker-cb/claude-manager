@@ -112,6 +112,16 @@ extension AppModel {
     /// Open, Restart and deep-link forward; every caller here is already `async`, so the probe
     /// goes off-actor and the UI keeps moving.
     func launchBlockedByStagedApply() async -> Bool {
+        // This app's own swap counts too. It closes every profile and replaces the shared
+        // bundle; a launch started in the middle either aborts the install at its final
+        // check or leaves a process running out of a bundle that has just been unlinked.
+        if case .installing = claudeUpdateState {
+            currentError = AppError(
+                title: "Update in progress",
+                message: "Claude is being updated. Wait for it to finish, then try again."
+            )
+            return true
+        }
         if isApplyingStagedUpdate {
             currentError = AppError(
                 title: "Update in progress",

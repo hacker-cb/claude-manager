@@ -191,6 +191,8 @@ struct MenuBarContent: View {
     private var claudeUpdateItems: some View {
         switch model.claudeUpdateState {
         case .idle, .available, .failed:
+            // No divider either: an unconditional one opens the menu with a stray separator
+            // above the first real item.
             EmptyView()
         case let .downloading(version, _, _):
             // Disabled Button, not a bare Label: an item with no action still looks
@@ -199,11 +201,13 @@ struct MenuBarContent: View {
                 Label("Downloading Claude \(version)…", systemImage: "arrow.down.circle")
             }
             .disabled(true)
+            Divider()
         case let .installing(version):
             Button {} label: {
                 Label("Installing Claude \(version)…", systemImage: "arrow.down.circle.fill")
             }
             .disabled(true)
+            Divider()
         case let .ready(verified):
             Menu {
                 Button("Close profiles and install") {
@@ -212,8 +216,8 @@ struct MenuBarContent: View {
             } label: {
                 Label("Update Claude to \(verified.version)…", systemImage: "arrow.down.circle.fill")
             }
+            Divider()
         }
-        Divider()
     }
 }
 
