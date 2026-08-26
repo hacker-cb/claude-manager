@@ -13,6 +13,28 @@ import UserNotifications
 /// Everything else in that file existed to wait on Squirrel; this describes a fact about
 /// processes.
 extension AppModel {
+    /// Withdraw notifications scheduled by a previous release whose controls no longer exist.
+    ///
+    /// The staged-update path scheduled two kinds — "Claude X is ready to install" and the
+    /// forced-restart deadline warning — and the deadline one was a *timed* request, so an
+    /// upgrade can carry a pending notification that fires days later telling the user to
+    /// press "Apply to all profiles". That button is gone. Cheap, idempotent, and run once at
+    /// startup: identifiers are matched by prefix because they carried the version.
+    func withdrawRetiredUpdateNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { pending in
+            let retired = pending
+                .map(\.identifier)
+                .filter { $0.hasPrefix("claude-staged-") }
+            guard !retired.isEmpty else { return }
+            center.removePendingNotificationRequests(withIdentifiers: retired)
+            center.removeDeliveredNotifications(withIdentifiers: retired)
+            Log.claudeUpdate.info(
+                "withdrew \(retired.count, privacy: .public) notification(s) from the retired update path"
+            )
+        }
+    }
+
     /// Post a local notification for each running launcher newly found to be behind the
     /// on-disk Claude — once per pending version, and only once notifications are actually
     /// authorized, so a permission prompt answered later still fires.
@@ -45,9 +67,8 @@ extension AppModel {
                     identifier: "claude-update-\(managed.id)", content: content, trigger: nil
                 ))
             } catch {
-                // Now that this ledger is persisted, marking a failed post as delivered would
-                // silence that profile's "restart to update" for good — the same reason the
-                // two ledgers above record only after a successful `add`.
+                // This ledger is persisted, so marking a failed post as delivered would silence
+                // that profile's "restart to update" for good.
                 continue
             }
             delivered.insert(Self.claudeUpdateKey(managed))

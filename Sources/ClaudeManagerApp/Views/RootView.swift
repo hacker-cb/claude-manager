@@ -10,8 +10,6 @@ struct RootView: View {
     /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
     /// banner button sets it and only SwiftUI resets it (on dismiss), so nothing external
     /// can toggle the binding while the dialog is up (a programmatic dismiss of a live
-    /// `confirmationDialog` crashes AppKit's dialog bridge).
-    @State private var confirmingStagedApply = false
     /// Measured height of the app-global banner strip, used to reserve matching top space in the
     /// sidebar's `List` (see `body`). Zero when no banner is showing.
     @State private var bannerHeight: CGFloat = 0

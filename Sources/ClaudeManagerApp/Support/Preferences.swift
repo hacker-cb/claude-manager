@@ -23,9 +23,9 @@ enum PreferenceKeys {
     static let usageNotificationsEnabled = "usageNotificationsEnabled"
 
     /// Launcher+version keys whose "restart to update" notification has been posted. Persisted
-    /// for the same reason as the two above — and it started mattering the moment notifications
-    /// became visible while the app is frontmost: in memory, every launch re-notified about
-    /// every profile still running an older Claude.
+    /// because it started mattering the moment notifications became visible while the app is
+    /// frontmost: in memory, every launch re-notified about every profile still running an
+    /// older Claude.
     static let notifiedClaudeUpdates = "notifiedClaudeUpdates"
 
     /// Whether Claude Manager fetches and installs Claude's updates itself, rather than

@@ -8,7 +8,7 @@ design. For the rejected alternatives that led here, see [DECISIONS.md](DECISION
 ```
 ClaudeManagerCore (Swift package — headless, fully tested)
 ├─ Models        Profile, BadgeColor, BadgeStyle, LauncherMarker, ManagedProfile, Diagnostic,
-│                ProfileManagedConfig (overlay desired-state), StagedUpdate
+│                ProfileManagedConfig (overlay desired-state), AvailableUpdate
 ├─ RealClaude    locate the real app (LaunchServices + fallbacks), version, icon
 ├─ Launcher      LauncherBundle (build/scan/remove) + LauncherScript (bash launcher, duplicate guard)
 │                + CodeSigner (ad-hoc signing — macOS refuses to run an unsigned launcher)
@@ -16,7 +16,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 ├─ Process       ProcessProbe — pgrep/ps main-process detection (ppid==1 filter)
 ├─ ManagedConfig ManagedConfigWriter — the per-clone `-3p` overlay (disable update / deep-link reg)
 ├─ DeepLink      LaunchServicesHandlerGuard (hold claude://) + ProfileStore forwarding (open -n --args)
-├─ Update        StagedUpdateProbe (read ShipItState.plist) + ProfileStore apply-to-all (quiesce/swap/relaunch)
+├─ Update        UpdateFeed → UpdateDownloader → UpdateVerifier → ProfileStore.installUpdate (quiesce/swap/relaunch)
 ├─ ProfileStore  the façade: add / remove / open / stop / update / rebuild / doctor
 └─ CommandRunner injected process runner (mocked in tests)
 
@@ -382,7 +382,7 @@ rebuilt each tick (resolve → dedup → fetch-with-backoff → persist → retu
 state lives in two actors the model holds — `UsageHistoryStore` (SQLite) and
 `SafeStorageKeyStore`. The poll loop mirrors `monitorTask`: default 30 min (presets
 15/30/60/manual), an opt-in adaptive 5-min lane while any account is running, gated on
-`!isApplyingStagedUpdate`. **The master switch is the choke point** — with tracking off,
+`!claudeUpdateState.blocksProfileActivity`. **The master switch is the choke point** — with tracking off,
 `refreshUsage` returns before any keychain read, network call, or storage, so the
 README/SECURITY promise holds literally. A rotated safeStorage key self-heals at the
 **fleet** level: if *every* binding fails to decrypt (with at least one real

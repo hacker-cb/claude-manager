@@ -26,11 +26,12 @@ extension AppModel {
                 self.deepLinkService.reassertIfNeeded()
                 // Skip the rescan while an install is in flight: the sweep can relaunch a
                 // profile, and doing that mid-swap is the collision this app exists to avoid.
-                guard !self.claudeUpdateState.isBusy else { return }
+                guard !self.claudeUpdateState.blocksProfileActivity else { return }
                 await self.reconcile()
                 self.refreshClaudeUpdateIfDue()
             }
         }
+        withdrawRetiredUpdateNotifications()
         restoreClaudeUpdateState()
         monitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -41,7 +42,7 @@ extension AppModel {
                 // @MainActor so NSApp.isActive is read on the main thread. Skipped while an
                 // install is in flight: re-probing is harmless, but a relaunch the sweep
                 // could trigger during a swap is not.
-                guard !claudeUpdateState.isBusy else { continue }
+                guard !claudeUpdateState.blocksProfileActivity else { continue }
                 if NSApp.isActive { await reconcile() }
                 // Claude's own update, checked and fetched whether or not anyone is watching.
                 // Safe on a timer because it never *acts*: it leaves a verified build ready

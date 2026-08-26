@@ -223,6 +223,18 @@ Three things narrow it:
   a blocked feed, with Claude's updater off and a healthy-looking machine — and without it
   the situation is invisible.
 
+**Doctor's Squirrel diagnostics went with it.** The old health check reported a staged
+update blocked by open profiles, an installer that had been waiting for minutes, and what
+the last failed attempt said. Those describe a world where Squirrel is in charge, and with
+managed updates on it no longer is. They are *not* restored for the hand-back case, and that
+is a knowing gap: switch the feature off and you are back in the original situation —
+Squirrel stages a build, cannot apply it while clones are open, and waits indefinitely and
+silently — with nothing pointing at it. The reasoning is that the setting exists as an escape
+hatch, its own Settings text says plainly that this app cannot control what happens next, and
+carrying a whole diagnostic subsystem for a mode nobody is expected to sit in permanently is
+worse than saying so. If people do sit in it, the check to restore is
+`stagedUpdateDiagnostics` in the history of `Doctor+StagedUpdate.swift`.
+
 What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
 closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
 restart cycle this exists to remove.

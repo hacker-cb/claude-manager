@@ -34,7 +34,7 @@ struct MenuBarContent: View {
                     bindingID: TokenBinding.defaultID
                 ))
             }
-            .disabled(model.claudeUpdateState.isBusy)
+            .disabled(model.claudeUpdateState.blocksProfileActivity)
 
             if model.profiles.isEmpty {
                 Text("No launchers yet")
@@ -53,7 +53,7 @@ struct MenuBarContent: View {
                             bindingID: managed.profile.id
                         ))
                     }
-                    .disabled(model.claudeUpdateState.isBusy)
+                    .disabled(model.claudeUpdateState.blocksProfileActivity)
                 }
             }
 
@@ -87,7 +87,7 @@ struct MenuBarContent: View {
                         }
                     }
                 }
-                .disabled(model.claudeUpdateState.isBusy)
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
             }
         }
 

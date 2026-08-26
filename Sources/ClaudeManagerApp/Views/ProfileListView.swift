@@ -185,7 +185,7 @@ struct PrimaryProfileRow: View {
         }
         .contextMenu {
             Button(status.isRunning ? "Activate" : "Open") { Task { await model.openReal() } }
-                .disabled(model.claudeUpdateState.isBusy)
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
             if status.isRunning {
                 Button("Stop") { Task { await model.stopDefaultProfile(force: false) } }
             }

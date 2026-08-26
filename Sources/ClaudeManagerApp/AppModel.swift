@@ -37,7 +37,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dockRefreshPending = false
 
     /// Flip the Dock-refresh banner (`private(set)`, so the extensions drive it via this —
-    /// the same shape `setApplyingStagedUpdate` uses).
+    /// the same shape the other setters use).
     func setDockRefreshPending(_ value: Bool) {
         dockRefreshPending = value
     }
@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    /// Non-private for the `AppModel+StagedUpdate` extension, which owns the update
+    /// Non-private for the `AppModel+ClaudeUpdate` extension, which owns the update
     /// notifications.
     var notifiedClaudeUpdates: Set<String> {
         get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
@@ -224,7 +224,7 @@ final class AppModel: ObservableObject {
     var brokerApplyTask: Task<Void, Never>?
     private var didFinishInit = false
 
-    /// Non-private: `AppModel+StagedUpdate` persists the staged-update ledgers through it,
+    /// Non-private: `AppModel+ClaudeUpdate` persists the staged-update ledgers through it,
     /// and injecting the store is what keeps those tests off the host's real preferences.
     let defaults: UserDefaults
 

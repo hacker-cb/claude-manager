@@ -130,9 +130,8 @@ extension AppModel {
     /// Start a check-and-fetch, unless one is already running.
     ///
     /// Returns immediately. Fetching a build takes minutes on a slow line, and the monitor
-    /// loop that calls this also drives the profile sweep and the legacy auto-apply window —
-    /// awaiting a download inside it would stop the clock on both, so a slow connection would
-    /// silently eat the nightly apply window.
+    /// loop that calls this also drives the profile sweep, and awaiting a download inside it
+    /// would stop that clock for the whole transfer.
     ///
     /// The task handle is what makes this single-flight. `UpdateDownloader` states plainly
     /// that overlapping fetches are the caller's to prevent, and two of them would write the

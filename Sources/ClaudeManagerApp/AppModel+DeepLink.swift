@@ -257,7 +257,9 @@ extension AppModel {
     private func forwardToProfile(_ profile: Profile, url: URL) async {
         guard await !launchBlockedByUpdate() else {
             Log.deepLink
-                .error("forwardToProfile(\(profile.displayName, privacy: .public)): blocked by staged apply")
+                .error(
+                    "forwardToProfile(\(profile.displayName, privacy: .public)): blocked by an update in progress"
+                )
             return
         }
         // Clones are `shlock`-guarded, so a not-running clone is safe to just cold-launch —
