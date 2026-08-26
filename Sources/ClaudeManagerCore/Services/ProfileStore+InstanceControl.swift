@@ -75,7 +75,7 @@ extension ProfileStore {
     /// `--user-data-dir` instance is running, since there a plain `open` would merely activate
     /// *that* instance (all share the one bundle id) instead of starting the default. The
     /// default's own instance carries no `--user-data-dir`, so it has a `nil` profile path.
-    func relaunchDefaultProfile() -> Bool {
+    private func relaunchDefaultProfile() -> Bool {
         let nonDefaultRunning = blockingInstances().contains { $0.profilePath != nil }
         if nonDefaultRunning {
             return (try? openReal()) != nil
