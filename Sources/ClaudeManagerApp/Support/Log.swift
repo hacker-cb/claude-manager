@@ -1,3 +1,4 @@
+import ClaudeManagerCore
 import Foundation
 import OSLog
 
@@ -23,19 +24,4 @@ enum Log {
     /// it runs while nobody is watching, so "it didn't happen" needs a paper trail to be
     /// diagnosable at all.
     static let autoApply = Logger(subsystem: subsystem, category: "autoapply")
-}
-
-extension URL {
-    /// A privacy-safe rendering for logs: `scheme://host/path` with the query dropped.
-    /// A `claude://` deep link's query can carry secrets (e.g. an OAuth `code` on an
-    /// `mcp-auth-callback`), so the value is never logged — only whether one was present,
-    /// which is enough to diagnose routing without leaking the token.
-    var logDescription: String {
-        let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
-        let scheme = components?.scheme ?? "?"
-        let host = components?.host ?? ""
-        let path = components?.path ?? ""
-        let querySuffix = (components?.query?.isEmpty == false) ? "?…" : ""
-        return "\(scheme)://\(host)\(path)\(querySuffix)"
-    }
 }

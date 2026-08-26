@@ -14,6 +14,21 @@ enum VersionOrder {
         compare(candidate, baseline) == .orderedDescending
     }
 
+    /// Whether `version` is made of dot-separated ASCII numbers — the form this type can
+    /// meaningfully order. A single component (`"1"`) qualifies: it orders fine, and
+    /// demanding a dot would refuse a baseline that is merely unusual rather than unreadable.
+    ///
+    /// ``compare(_:_:)`` reads a non-numeric component as `0`, which is the right call for
+    /// *ordering* — garbage then never sorts above a real version. As an acceptance test it
+    /// is backwards, though: garbage on the **baseline** side compares as all-zeroes, so
+    /// everything looks newer than it. Callers deciding whether a baseline is usable at all
+    /// ask this first.
+    static func isComparable(_ version: String) -> Bool {
+        !version.isEmpty
+            && version.split(separator: ".", omittingEmptySubsequences: false)
+            .allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }
+    }
+
     static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
         let a = components(lhs)
         let b = components(rhs)

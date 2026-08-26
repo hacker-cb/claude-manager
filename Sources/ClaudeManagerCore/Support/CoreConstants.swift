@@ -225,6 +225,31 @@ public enum CoreConstants {
     public static let oauthInferenceScope = "user:inference"
     public static let oauthProfileScope = "user:profile"
 
+    // MARK: - Claude Desktop releases
+
+    /// Anthropic's desktop release API: the newest published build and its `.zip`, as
+    /// `{"version": "1.37937.1", "url": "https://…/Claude-<id>.zip"}`.
+    ///
+    /// `universal` matches how Claude Desktop ships on macOS — the same slice its own
+    /// updater requests — so the download is the very bundle Anthropic distributes rather
+    /// than a per-architecture variant this app would have to choose between.
+    ///
+    /// The API is not publicly documented, which is why every field is parsed defensively
+    /// and ``claudeReleaseFeedValidatedVersion`` records what it was last checked against.
+    public static let latestReleaseFeedURL = URL(
+        string: "https://api.anthropic.com/api/desktop/darwin/universal/zip/latest"
+    )! // swiftlint:disable:this force_unwrapping
+
+    /// Release whose feed contract — the two-field payload above — was verified by hand.
+    /// A `LiveUpdateFeedTests` case re-checks it against the real endpoint on demand, so a
+    /// reshaped payload surfaces as a failing opt-in test rather than a silent no-op.
+    public static let claudeReleaseFeedValidatedVersion = "1.37937.1"
+
+    /// Timeout for the feed request. Short on purpose: this runs on a background check
+    /// whose failure is simply "ask again later", so waiting out a hung connection buys
+    /// nothing.
+    public static let updateFeedTimeout: TimeInterval = 20
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =
