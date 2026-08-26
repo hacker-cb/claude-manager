@@ -57,15 +57,22 @@ public struct UpdateDownloader {
     public func prepared() -> PreparedDownload? {
         guard let names = try? fileManager.contentsOfDirectory(atPath: cacheDirectory.path)
         else { return nil }
-        for name in names.sorted() where name.hasPrefix(Self.archivePrefix) && name.hasSuffix(".zip") {
+        var newest: PreparedDownload?
+        for name in names where name.hasPrefix(Self.archivePrefix) && name.hasSuffix(".zip") {
             let version = String(name.dropFirst(Self.archivePrefix.count).dropLast(4))
             guard VersionOrder.isComparable(version) else { continue }
             let url = cacheDirectory.appendingPathComponent(name)
             let size = try? fileManager.attributesOfItem(atPath: url.path)[.size] as? Int64
             guard let size, size > 0 else { continue }
-            return PreparedDownload(version: version, archiveURL: url, byteSize: size)
+            // Ordered by version, never by filename: sorted lexicographically `1.10` comes
+            // before `1.2`, so the first match can be the *older* build. The one-at-a-time
+            // policy should keep this to a single candidate, but a crash between the discard
+            // and the rename can leave two, and picking the older one to install is exactly
+            // the wrong recovery.
+            if let current = newest, !VersionOrder.isNewer(version, than: current.version) { continue }
+            newest = PreparedDownload(version: version, archiveURL: url, byteSize: size)
         }
-        return nil
+        return newest
     }
 
     /// Fetch `update` into the cache, resuming an earlier attempt at the same version when
@@ -161,8 +168,13 @@ public struct UpdateDownloader {
     /// Remove staged archives, partial transfers and resume tokens other than `version`'s.
     private func discardStaged(except version: String?) {
         guard let names = try? fileManager.contentsOfDirectory(atPath: cacheDirectory.path) else { return }
+        // The exact three names this type gives one version, never a prefix of them: the
+        // prefix `Claude-1.2` also matches `Claude-1.20.0.zip`, so keeping "this version's
+        // files" by prefix would silently keep a second build and break the one-at-a-time
+        // policy the whole cache rests on.
+        let keep = version.map(Self.ownedNames(for:)) ?? []
         for name in names where name.hasPrefix(Self.archivePrefix) {
-            if let version, name.hasPrefix(Self.archivePrefix + version) { continue }
+            if keep.contains(name) { continue }
             let url = cacheDirectory.appendingPathComponent(name)
             do {
                 try fileManager.removeItem(at: url)
@@ -178,6 +190,12 @@ public struct UpdateDownloader {
                 )
             }
         }
+    }
+
+    /// Every file this type may create for one version.
+    static func ownedNames(for version: String) -> Set<String> {
+        let stem = "\(archivePrefix)\(version)"
+        return ["\(stem).zip", "\(stem).zip.partial", "\(stem).resume"]
     }
 
     private func archiveURL(for version: String) -> URL {

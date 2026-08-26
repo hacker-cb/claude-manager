@@ -18,8 +18,10 @@ public protocol FileDownloader: Sendable {
     ///   - progress: called as bytes arrive. Never assume a total: a server may answer
     ///     without a length, in which case `totalBytes` is nil.
     /// - Returns: how many bytes landed.
-    /// - Throws: ``DownloadInterrupted`` carrying resume data when the transfer failed part
-    ///   way and can be picked up later; any other error is terminal for this attempt.
+    /// - Throws: ``DownloadInterrupted`` for **any** transport-level failure. Whether it can
+    ///   be picked up later is told by its `resumeData`: non-nil means the next attempt can
+    ///   continue, nil means it starts over. Other errors — ``DownloadFailure`` and
+    ///   filesystem errors — are terminal for this attempt.
     @discardableResult
     func download(
         from url: URL,
@@ -90,8 +92,12 @@ public struct URLSessionFileDownloader: FileDownloader {
         // directory, which is not necessarily the same volume as the destination, and
         // `replaceItemAt` is only atomic within one.
         try fileManager.moveItem(at: temporaryURL, to: destination)
-        let size = try? fileManager.attributesOfItem(atPath: destination.path)[.size] as? Int64
-        return size ?? 0
+        // Deliberately not `try?`: a failure to stat a file that was just written is a real
+        // error, and reporting it as `0` would make the caller destroy a good download and
+        // report it as empty — a confusing lie about what happened.
+        let size = try fileManager.attributesOfItem(atPath: destination.path)[.size] as? Int64
+        guard let size else { throw DownloadFailure.noFileProduced }
+        return size
     }
 
     /// Bridge `URLSessionDownloadTask` — whose progress and completion arrive through KVO

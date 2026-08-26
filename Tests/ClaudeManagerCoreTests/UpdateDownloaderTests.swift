@@ -195,6 +195,35 @@ struct UpdateDownloaderTests {
         #expect(downloader.prepared() == nil)
     }
 
+    /// Two archives should not coexist, but a crash between the discard and the rename can
+    /// leave them — and sorted by *filename* `1.10` comes before `1.2`, so the naive pick is
+    /// the older build. Installing the older one is the wrong recovery.
+    @Test
+    func picksTheNewestStagedBuildNotTheFirstAlphabetically() throws {
+        let cache = try makeCache()
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try Data("older".utf8).write(to: cache.appendingPathComponent("Claude-1.10.0.zip"))
+        try Data("newer".utf8).write(to: cache.appendingPathComponent("Claude-1.9.0.zip"))
+        let downloader = UpdateDownloader(downloader: StubDownloader(.writes("x")), cacheDirectory: cache)
+
+        #expect(downloader.prepared()?.version == "1.10.0")
+    }
+
+    /// `Claude-1.2` is a prefix of `Claude-1.20.0.zip`. Keeping "this version's files" by
+    /// prefix would leave a second build staged and quietly break the one-at-a-time policy.
+    @Test
+    func doesNotMistakeAVersionForOneItIsAPrefixOf() async throws {
+        let cache = try makeCache()
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try Data("other".utf8).write(to: cache.appendingPathComponent("Claude-1.20.0.zip"))
+        let stub = StubDownloader(.writes("zip-bytes"))
+        let downloader = UpdateDownloader(downloader: stub, cacheDirectory: cache)
+
+        _ = try await downloader.fetch(update("1.2"))
+
+        #expect(names(in: cache) == ["Claude-1.2.zip"])
+    }
+
     @Test
     func reportsNothingWhenTheCacheDoesNotExist() {
         let missing = FileManager.default.temporaryDirectory
