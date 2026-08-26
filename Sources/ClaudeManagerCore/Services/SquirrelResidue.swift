@@ -48,6 +48,26 @@ public struct SquirrelResidue {
         var reclaimed: Int64 = 0
         var removed: [String] = []
 
+        // The armed job goes **first**, and the order is the point. ShipIt can start between
+        // the caller's liveness check and this line; disarmed, it finds no job and does
+        // nothing, whereas the other order would hand a live installer a job whose source
+        // tree is disappearing underneath it.
+        var clearedJob = false
+        if fileManager.fileExists(atPath: statePath) {
+            do {
+                try fileManager.removeItem(atPath: statePath)
+                clearedJob = true
+                CoreLog.update.info("squirrel: cleared the armed install job")
+            } catch {
+                CoreLog.update.error(
+                    "squirrel: could not clear the armed job — \(error.localizedDescription, privacy: .public)"
+                )
+                // Leaving the bundles alone: with the job still armed, deleting what it
+                // points at is the one combination worth avoiding.
+                return Outcome(clearedArmedJob: false, removedStagedBundles: [], reclaimedBytes: 0)
+            }
+        }
+
         let names = (try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []
         for name in names where name.hasPrefix(Self.stagingPrefix) {
             let url = directory.appendingPathComponent(name)
@@ -67,18 +87,6 @@ public struct SquirrelResidue {
             }
         }
 
-        var clearedJob = false
-        if fileManager.fileExists(atPath: statePath) {
-            do {
-                try fileManager.removeItem(atPath: statePath)
-                clearedJob = true
-                CoreLog.update.info("squirrel: cleared the armed install job")
-            } catch {
-                CoreLog.update.error(
-                    "squirrel: could not clear the armed job — \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        }
         return Outcome(clearedArmedJob: clearedJob, removedStagedBundles: removed, reclaimedBytes: reclaimed)
     }
 

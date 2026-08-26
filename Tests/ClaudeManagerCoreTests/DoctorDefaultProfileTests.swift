@@ -140,4 +140,39 @@ struct DoctorDefaultProfileTests {
             managedConfigWriter: ManagedConfigWriter(fileManager: fm, managedPreferencesURLs: scene.noMDM)
         ).run(managingUpdates: managingUpdates)
     }
+
+    // MARK: - The failure the switch-over creates
+
+    /// With Claude's updater off, a feed that has been failing for weeks means *nothing* is
+    /// updating Claude — and every other signal says the machine is healthy.
+    @Test
+    func warnsWhenNothingHasSuccessfullyCheckedInAWhile() {
+        let now = Date(timeIntervalSince1970: 1_000_000_000)
+        let diagnostic = Doctor.staleUpdateCheckDiagnostic(
+            managingUpdates: true, lastSuccess: now.addingTimeInterval(-14 * 86400), now: now
+        )
+        #expect(diagnostic?.severity == .warning)
+        #expect(diagnostic?.detail?.contains("14 days ago") == true)
+    }
+
+    @Test
+    func warnsWhenNoCheckHasEverSucceeded() {
+        let diagnostic = Doctor.staleUpdateCheckDiagnostic(managingUpdates: true, lastSuccess: nil)
+        #expect(diagnostic?.severity == .warning)
+    }
+
+    @Test
+    func staysQuietWhenTheFeedAnsweredRecently() {
+        let now = Date(timeIntervalSince1970: 1_000_000_000)
+        #expect(Doctor.staleUpdateCheckDiagnostic(
+            managingUpdates: true, lastSuccess: now.addingTimeInterval(-3600), now: now
+        ) == nil)
+    }
+
+    /// Not this app's problem when Claude is updating itself — that is what its own updater
+    /// is for, and warning about our schedule would be noise.
+    @Test
+    func staysQuietWhenClaudeUpdatesItself() {
+        #expect(Doctor.staleUpdateCheckDiagnostic(managingUpdates: false, lastSuccess: nil) == nil)
+    }
 }

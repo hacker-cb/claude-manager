@@ -103,7 +103,10 @@ re-grabbing it had two options:
 
 The overlay key is a footgun in two ways. For the **default profile**: if Claude Manager
 is removed (or crashes) **without first disabling the broker**, the key persists with
-nothing to take over, silently breaking the default's deep links. For **clones**: the
+nothing to take over, silently breaking the default's deep links. (That reasoning still
+holds for `disableDeepLinkRegistration`, which is never written. It is *knowingly*
+accepted for `disableAutoUpdates` — see "Taking Claude's updates off Squirrel" below,
+which explains what is done about the orphan it can leave.) For **clones**: the
 same key makes Claude *drop* every forwarded non-auth link
 (`dropping deep link (disableDeepLinkRegistration)`) — defeating the very hand-off the
 broker exists to perform. So **no profile carries it**: `ProfileManagedConfig` writes only
@@ -198,3 +201,38 @@ answers it correctly — a profile with a running session vetoes its own quit an
 "Quit anyway / Wait for Claude / Cancel", while an idle-but-open session quits cleanly.
 So CM asks by attempting a graceful stop and reads the refusal as the answer, which also
 means the protection holds even for cases CM never modelled.
+
+## Taking Claude's updates off Squirrel — and what that costs
+
+Claude Manager now switches `disableAutoUpdates` on for the **default profile** as well
+as for clones, and fetches, verifies and installs Claude itself.
+
+The reason is that the old arrangement had no stable state. Clones block Squirrel's
+installer (it aborts unless *zero* instances are running), so a machine with profiles open
+accumulates a downloaded-but-unapplied build; Claude then force-restarts the default
+profile roughly every 72 h trying to install it, and each destroyed attempt costs a fresh
+download. `autoUpdaterEnforcementHours` cannot be disabled — the policy validates as
+`>0 && <=72`, so it can only be shortened — and nothing but `disableAutoUpdates` stops
+that timer arming at all.
+
+**The cost, stated plainly.** Writing that key into the default profile is exactly what
+the deep-link decision above refuses to do, for exactly the reason given there: if Claude
+Manager is removed without first switching the feature off, the key persists with nothing
+to take over, and Claude stays on its current build forever. That is a real hole and it is
+accepted knowingly, because the alternative — leaving Squirrel armed — is a machine that
+force-restarts a working profile every three days and never finishes the install anyway.
+
+Three things narrow it:
+
+- The setting is a plain toggle, and turning it off *removes* the key rather than writing
+  `false`, so handing the job back is one click and leaves no fossil.
+- `README.md` § Uninstall makes switching it off step one, and says where the file is for
+  anyone who has already removed the app.
+- Doctor warns when this app is in charge and the release feed has not answered
+  successfully in a week. That is the only signal for the quiet version of this failure —
+  a blocked feed, with Claude's updater off and a healthy-looking machine — and without it
+  the situation is invisible.
+
+What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
+closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
+restart cycle this exists to remove.

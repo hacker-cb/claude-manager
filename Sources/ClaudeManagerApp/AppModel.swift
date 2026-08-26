@@ -392,6 +392,11 @@ final class AppModel: ObservableObject {
         guard var result = await perform({ store in store.doctor(managingUpdates: managingUpdates) })
         else { return }
         if let usage = usageDoctorDiagnostic() { result.append(usage) }
+        if let stale = Doctor.staleUpdateCheckDiagnostic(
+            managingUpdates: managesClaudeUpdates,
+            lastSuccess: (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
+                .map(Date.init(timeIntervalSince1970:))
+        ) { result.append(stale) }
         diagnostics = result
     }
 

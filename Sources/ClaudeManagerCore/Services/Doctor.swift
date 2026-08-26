@@ -61,6 +61,45 @@ public struct Doctor {
         return diagnostics
     }
 
+    /// How long a run of failed checks is worth reporting. Claude ships every few days, so a
+    /// week of silence is well past "the feed happened to be down".
+    public static let staleUpdateCheckThreshold: TimeInterval = 7 * 24 * 3600
+
+    /// A warning the **app** appends when this app owns Claude's updates and has not managed
+    /// to ask about one in a long time.
+    ///
+    /// This is the failure the switch-over creates and nothing else would catch. Claude's own
+    /// updater is off, so it will not step in; a failed check is deliberately silent (a laptop
+    /// is offline constantly, and a banner for that would be noise); and the healthy state —
+    /// updater off, this app in charge — is exactly what Doctor now reports as fine. A
+    /// corporate proxy blocking the release feed, or a feed that changed shape, would
+    /// therefore leave Claude frozen on an old build indefinitely with nothing saying so.
+    ///
+    /// `nil` when this app is not managing updates, or when the feed answered recently.
+    public static func staleUpdateCheckDiagnostic(
+        managingUpdates: Bool,
+        lastSuccess: Date?,
+        now: Date = Date(),
+        threshold: TimeInterval = staleUpdateCheckThreshold
+    ) -> Diagnostic? {
+        guard managingUpdates else { return nil }
+        if let lastSuccess, now.timeIntervalSince(lastSuccess) < threshold { return nil }
+        let detail = lastSuccess.map {
+            "Last successful check: \(Self.dayCount(from: $0, to: now)) days ago."
+        } ?? "No successful check has been recorded."
+        return Diagnostic(
+            severity: .warning,
+            title: "Claude has not been checked for updates in a while — and its own updater is off",
+            detail: detail + " Claude Manager is responsible for updating Claude, so if this "
+                + "persists Claude will stay on its current build. Check the network, or turn "
+                + "off \"Let Claude Manager update Claude\" in Settings to hand the job back."
+        )
+    }
+
+    private static func dayCount(from start: Date, to end: Date) -> Int {
+        max(0, Int(end.timeIntervalSince(start) / 86400))
+    }
+
     /// A warning the **app** appends when the deep-link broker is on but the app isn't set to
     /// launch at login. It can't live in `run()` — both inputs are app-layer, not core state.
     /// The broker's `claude://` hold is held only while Claude Manager runs, so with it closed
