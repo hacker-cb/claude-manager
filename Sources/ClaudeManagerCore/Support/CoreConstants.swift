@@ -116,8 +116,9 @@ public enum CoreConstants {
 
     /// ShipIt (Squirrel.Mac) per-bundle state file — `ShipItState.plist` under Caches,
     /// which is **JSON** despite the extension. When a job is armed it names the staged
-    /// `updateBundleURL`; reading it is how we detect a staged-but-unapplied update that
-    /// running clones are blocking. Keyed by the app's bundle id.
+    /// `updateBundleURL`. Nothing reads it for a staged update any more — Claude's updater
+    /// is switched off — but its presence still means a job is armed, and its directory is
+    /// what `SquirrelResidue` sweeps. Keyed by the app's bundle id.
     public static func shipItStatePath(
         forBundleID bundleID: String,
         home: String = NSHomeDirectory()
@@ -125,10 +126,6 @@ public enum CoreConstants {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
 
-    // ShipIt's own `stderr` log, which sits beside the state file in the same per-bundle
-    // cache — the only place the *reason* an install failed is ever written (the state
-    // file records the job, never its outcome).
-    //
     // MARK: - Plan-usage statistics
 
     /// On-disk schema version for the usage-history SQLite store. **Bump when the stored
