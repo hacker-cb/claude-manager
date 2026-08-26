@@ -205,19 +205,77 @@ struct UpdateVerifierTests {
         }
     }
 
+    /// Pinned to the structural failure, not to "throws something": with a loose assertion
+    /// this test would still pass if the guard let two bundles through and the *signature*
+    /// check happened to refuse them — which is the regression it exists to catch.
     @Test(arguments: [
-        ["Claude.app", "Extra.app"], // more than one bundle
-        ["Something.app"], // wrong name
-        [] as [String] // nothing at all
+        (["Claude.app", "Extra.app"], "Claude.app, Extra.app"), // more than one bundle
+        (["Something.app"], "Something.app"), // wrong name
+        ([] as [String], "") // nothing at all
     ])
-    func refusesAnArchiveThatIsNotASingleClaudeApp(_ contents: [String]) throws {
+    func refusesAnArchiveThatIsNotASingleClaudeApp(_ contents: [String], _ reported: String) throws {
         let fake = try makeFake()
         defer { try? FileManager.default.removeItem(at: fake.root) }
         let verifier = UpdateVerifier(runner: makeRunner(contents: contents))
 
-        #expect(throws: (any Error).self) {
+        #expect(throws: UpdateVerifier.Failure.unexpectedArchiveContents(reported)) {
             try verifier.verify(fake.archive, unpackingInto: fake.staging)
         }
+    }
+
+    /// An archive may not hide anything behind a dotted name: the guard's claim is that it
+    /// unpacked to exactly one bundle, and `.payload/` of any size would make that false.
+    @Test
+    func refusesAnArchiveHidingContentBehindADottedName() throws {
+        let fake = try makeFake()
+        defer { try? FileManager.default.removeItem(at: fake.root) }
+        let verifier = UpdateVerifier(runner: makeRunner(contents: ["Claude.app", ".payload"]))
+
+        #expect(throws: UpdateVerifier.Failure.unexpectedArchiveContents(".payload, Claude.app")) {
+            try verifier.verify(fake.archive, unpackingInto: fake.staging)
+        }
+    }
+
+    /// `ditto` failing outright — a truncated or corrupt archive — is a refusal like any
+    /// other, and one no test covered.
+    @Test
+    func refusesAnArchiveDittoCannotUnpack() throws {
+        let fake = try makeFake()
+        defer { try? FileManager.default.removeItem(at: fake.root) }
+        let runner = RecordingCommandRunner { executable, _ in
+            executable == CoreConstants.dittoPath
+                ? CommandOutput(exitCode: 1, standardOutput: "", standardError: "corrupt archive")
+                : CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+        }
+
+        #expect(throws: (any Error).self) {
+            try UpdateVerifier(runner: runner).verify(fake.archive, unpackingInto: fake.staging)
+        }
+        #expect(!FileManager.default.fileExists(atPath: fake.staging.path))
+    }
+
+    /// The flags carry the meaning: `--strict` and `--deep` on the verify, `--type exec` on
+    /// the assessment. A regression that dropped one would pass every other test here.
+    @Test
+    func asksTheSigningToolsWithTheFlagsThatMatter() throws {
+        let fake = try makeFake()
+        defer { try? FileManager.default.removeItem(at: fake.root) }
+        let runner = makeRunner()
+
+        _ = try UpdateVerifier(runner: runner).verify(fake.archive, unpackingInto: fake.staging)
+
+        let verify = runner.invocations(of: CoreConstants.codesignPath)
+            .first { !$0.arguments.contains("-R") }
+        #expect(verify?.arguments.contains("--strict") == true)
+        #expect(verify?.arguments.contains("--deep") == true)
+        let assess = runner.invocations(of: CoreConstants.spctlPath).first
+        #expect(assess?.arguments == [
+            "--assess",
+            "--type",
+            "exec",
+            fake.staging
+                .appendingPathComponent("Claude.app").path
+        ])
     }
 
     /// Zip files made on macOS often carry these; they say nothing about whether the archive
@@ -246,6 +304,58 @@ struct UpdateVerifierTests {
         #expect(verified.version == "1.37937.1")
     }
 
+    /// The attack this whole check exists for.
+    ///
+    /// An archive may contain `Claude.app` as a **symlink**. Everything downstream resolves
+    /// it: `codesign` and `spctl` would assess whatever it points at — a real, installed,
+    /// genuinely signed Claude — and the version read through it matches too. Every check
+    /// passes, the verifier hands back a "verified bundle" that is a link, and the install
+    /// step swaps that link into `/Applications`, destroying the app it points at.
+    ///
+    /// Stubbed here rather than pointed at the real Claude, so it runs everywhere; the live
+    /// suite covers the genuine-signature half.
+    @Test
+    func refusesABundleThatIsASymlinkToSomewhereElse() throws {
+        let fake = try makeFake()
+        defer { try? FileManager.default.removeItem(at: fake.root) }
+        let target = fake.root.appendingPathComponent("Elsewhere.app")
+        writeBundle(at: target, version: "1.37937.1", bundleID: "com.anthropic.claudefordesktop")
+        let runner = RecordingCommandRunner { executable, arguments in
+            if executable == CoreConstants.dittoPath, let destination = arguments.last {
+                try? FileManager.default.createSymbolicLink(
+                    at: URL(fileURLWithPath: destination).appendingPathComponent("Claude.app"),
+                    withDestinationURL: target
+                )
+            }
+            return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+        }
+
+        #expect(throws: UpdateVerifier.Failure.bundleIsNotADirectory("NSFileTypeSymbolicLink")) {
+            try UpdateVerifier(runner: runner).verify(fake.archive, unpackingInto: fake.staging)
+        }
+        // Refused before anything follows the link — the tools are never even asked.
+        #expect(runner.invocations(of: CoreConstants.codesignPath).isEmpty)
+    }
+
+    /// The same trick with a plain file: `Claude.app` that is not a bundle at all.
+    @Test
+    func refusesABundleThatIsNotADirectory() throws {
+        let fake = try makeFake()
+        defer { try? FileManager.default.removeItem(at: fake.root) }
+        let runner = RecordingCommandRunner { executable, arguments in
+            if executable == CoreConstants.dittoPath, let destination = arguments.last {
+                try? Data("not a bundle".utf8).write(
+                    to: URL(fileURLWithPath: destination).appendingPathComponent("Claude.app")
+                )
+            }
+            return CommandOutput(exitCode: 0, standardOutput: "", standardError: "")
+        }
+
+        #expect(throws: UpdateVerifier.Failure.bundleIsNotADirectory("NSFileTypeRegular")) {
+            try UpdateVerifier(runner: runner).verify(fake.archive, unpackingInto: fake.staging)
+        }
+    }
+
     // MARK: - After a refusal
 
     /// A rejected bundle sitting next to `/Applications` is one a later step — or a person —
@@ -256,7 +366,7 @@ struct UpdateVerifierTests {
         defer { try? FileManager.default.removeItem(at: fake.root) }
         let verifier = UpdateVerifier(runner: makeRunner(requirement: 1))
 
-        #expect(throws: (any Error).self) {
+        #expect(throws: UpdateVerifier.Failure.notAnthropicSigned("refused")) {
             try verifier.verify(fake.archive, unpackingInto: fake.staging)
         }
         #expect(!FileManager.default.fileExists(atPath: fake.staging.path))
@@ -270,10 +380,14 @@ struct UpdateVerifierTests {
         defer { try? FileManager.default.removeItem(at: fake.root) }
         let runner = makeRunner(contents: ["Something.app"])
 
-        #expect(throws: (any Error).self) {
+        #expect(throws: UpdateVerifier.Failure.unexpectedArchiveContents("Something.app")) {
             try UpdateVerifier(runner: runner).verify(fake.archive, unpackingInto: fake.staging)
         }
         #expect(runner.invocations(of: CoreConstants.codesignPath).isEmpty)
         #expect(runner.invocations(of: CoreConstants.spctlPath).isEmpty)
+        // The messiest failure is also the one most likely to leave half an archive behind,
+        // so the "nothing survives a refusal" guarantee is asserted here too and not only on
+        // the paths that get as far as the signing tools.
+        #expect(!FileManager.default.fileExists(atPath: fake.staging.path))
     }
 }

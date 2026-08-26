@@ -43,6 +43,10 @@ public struct UpdateVerifier: Sendable {
     public enum Failure: Error, Equatable {
         /// The archive did not unpack to a single `Claude.app` at its top level.
         case unexpectedArchiveContents(String)
+        /// What unpacked is not a real directory — a symlink, or a plain file wearing the
+        /// name. Every check below this one follows the link and answers about whatever it
+        /// points at, so this has to be refused before any of them run.
+        case bundleIsNotADirectory(String)
         /// `codesign --verify` refused the bundle: the signature is missing, broken, or does
         /// not cover what is on disk.
         case signatureInvalid(String)
@@ -75,8 +79,11 @@ public struct UpdateVerifier: Sendable {
         unpackingInto stagingDirectory: URL
     ) throws -> VerifiedUpdate {
         CoreLog.update.info("verify: unpacking \(download.version, privacy: .public)")
-        let appURL = try unpack(download, into: stagingDirectory)
         do {
+            // `unpack` is inside the cleanup, not before it: it is the step most likely to
+            // leave half an archive on disk, and "any failure abandons the unpacked copy" is
+            // not a guarantee that can have an exception for the messiest case.
+            let appURL = try unpack(download, into: stagingDirectory)
             try checkSignature(appURL)
             try checkIsAnthropic(appURL)
             try checkNotarized(appURL)
@@ -107,13 +114,44 @@ public struct UpdateVerifier: Sendable {
             CoreConstants.dittoPath, ["-x", "-k", download.archiveURL.path, stagingDirectory.path]
         )
         let entries = (try? fileManager.contentsOfDirectory(atPath: stagingDirectory.path))?
-            // `ditto` writes no metadata files of its own, but an archive built elsewhere can
-            // carry `__MACOSX` or a stray `.DS_Store`; neither makes the contents unexpected.
-            .filter { !$0.hasPrefix(".") && $0 != "__MACOSX" } ?? []
+            // Two names, not "anything hidden". `ditto` writes no metadata of its own, but an
+            // archive built elsewhere can carry these two; ignoring every dotted name instead
+            // would let an archive smuggle a `.payload/` of any size past a guard whose whole
+            // claim is "this unpacked to exactly one Claude.app".
+            .filter { !CoreConstants.archiveMetadataNames.contains($0) } ?? []
         guard entries == [CoreConstants.claudeAppName] else {
             throw Failure.unexpectedArchiveContents(entries.sorted().joined(separator: ", "))
         }
-        return stagingDirectory.appendingPathComponent(CoreConstants.claudeAppName)
+        let appURL = stagingDirectory.appendingPathComponent(CoreConstants.claudeAppName)
+        try requireRealDirectory(appURL, within: stagingDirectory)
+        return appURL
+    }
+
+    /// Refuse anything that is not genuinely a directory sitting inside the staging area.
+    ///
+    /// **This is load-bearing, and it is not obvious.** An archive is free to contain
+    /// `Claude.app` as a *symlink*. Every check that follows resolves it: `codesign` and
+    /// `spctl` would assess whatever it points at — the real, installed, perfectly genuine
+    /// Claude — and the version read through it would match too. The verifier would then
+    /// hand back a "verified bundle" that is a symlink, and the install step would swap that
+    /// link into `/Applications`, destroying the app it points at. Every check passes and
+    /// the outcome is catastrophic, which is exactly the shape of failure worth being
+    /// paranoid about.
+    ///
+    /// `attributesOfItem` is used rather than `fileExists(isDirectory:)` because it reports
+    /// the link itself instead of following it, and the resolved path is required to stay
+    /// inside the staging directory so a link cannot point out of it either.
+    private func requireRealDirectory(_ appURL: URL, within stagingDirectory: URL) throws {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: appURL.path)
+        guard (attributes?[.type] as? FileAttributeType) == .typeDirectory else {
+            let kind = (attributes?[.type] as? FileAttributeType)?.rawValue ?? "unreadable"
+            throw Failure.bundleIsNotADirectory(kind)
+        }
+        let resolved = URL(fileURLWithPath: appURL.path).resolvingSymlinksInPath().path
+        let stagingResolved = stagingDirectory.resolvingSymlinksInPath().path
+        guard resolved == stagingResolved + "/" + CoreConstants.claudeAppName else {
+            throw Failure.bundleIsNotADirectory("resolves outside the staging directory")
+        }
     }
 
     func checkSignature(_ appURL: URL) throws {
@@ -157,8 +195,11 @@ public struct UpdateVerifier: Sendable {
         guard let bundleID, CoreConstants.realClaudeBundleIDs.contains(bundleID) else {
             throw Failure.unexpectedBundleIdentifier(bundleID)
         }
-        guard let found = real.version(), found == version else {
-            throw Failure.versionMismatch(expected: version, found: real.version())
+        // Read once and reused for both the comparison and the error: reading twice lets the
+        // value reported diverge from the value actually checked.
+        let found = real.version()
+        guard let found, found == version else {
+            throw Failure.versionMismatch(expected: version, found: found)
         }
         return found
     }

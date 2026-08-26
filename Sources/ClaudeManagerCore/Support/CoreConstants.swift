@@ -251,16 +251,37 @@ public enum CoreConstants {
 
     /// The requirement a downloaded bundle must satisfy to be Anthropic's build.
     ///
-    /// `anchor apple generic` pins the chain to Apple's Developer ID roots, and the leaf's
-    /// OU is the team identifier — together they say "Apple issued this to Anthropic".
+    /// This is the form Apple's own tooling prints for a Developer ID application, not a
+    /// hand-rolled shorthand: `anchor apple generic` pins the chain to Apple's roots, the
+    /// two marker OIDs pin it to the **Developer ID** CA and leaf specifically, and the
+    /// leaf's OU is the team. Together they say "Apple issued this, as a Developer ID
+    /// application, to Anthropic".
+    ///
+    /// The marker OIDs are not decoration. Without them the requirement admits any
+    /// Apple-anchored certificate whose OU happens to match — a Mac Developer or
+    /// installer-signing certificate, for instance. `spctl` would normally catch that, but
+    /// `spctl --assess` answers according to the machine's Gatekeeper state, and on a system
+    /// where assessments are disabled it stops asserting anything at all. This requirement
+    /// is then the only line left, so it is the one that must be exact.
+    ///
     /// Handed to `codesign -R`, so it is evaluated by the same code that validates the
     /// signature rather than by parsing `codesign -dv` output, where a locale or a format
-    /// change is a silent misread.
-    public static let anthropicDesignatedRequirement =
-        "=anchor apple generic and certificate leaf[subject.OU] = \"\(anthropicTeamIdentifier)\""
+    /// change is a silent misread. A malformed requirement fails closed: `codesign` exits
+    /// non-zero rather than skipping the check.
+    public static let anthropicDesignatedRequirement = """
+    =anchor apple generic \
+    and certificate 1[field.1.2.840.113635.100.6.2.6] \
+    and certificate leaf[field.1.2.840.113635.100.6.1.13] \
+    and certificate leaf[subject.OU] = "\(anthropicTeamIdentifier)"
+    """
 
     /// The bundle name inside a release archive, and the name it is installed under.
     public static let claudeAppName = "Claude.app"
+
+    /// Names a macOS-built zip may carry beside its payload. Enumerated deliberately: a
+    /// blanket "ignore hidden entries" rule would let an archive hide arbitrary content from
+    /// a check whose claim is that it unpacked to exactly one bundle.
+    public static let archiveMetadataNames: Set<String> = ["__MACOSX", ".DS_Store"]
 
     /// Timeout for the feed request. Short on purpose: this runs on a background check
     /// whose failure is simply "ask again later", so waiting out a hung connection buys
