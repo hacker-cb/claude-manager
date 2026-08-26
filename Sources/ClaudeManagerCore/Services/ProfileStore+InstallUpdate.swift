@@ -114,7 +114,10 @@ public extension ProfileStore {
             return InstallUpdateResult(outcome: .couldNotConfirmQuiet, relaunched: relaunched)
         }
         guard remaining.isEmpty else {
-            let names = blockingInstanceNames()
+            // Named from the set just read, not from a fresh sweep: re-reading here could
+            // come back empty and report "nothing is running" beside a refusal caused by
+            // something that was.
+            let names = names(for: remaining)
             let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
             CoreLog.update.error("install: an instance appeared after the quiesce")
             return InstallUpdateResult(outcome: .instancesStillRunning(names), relaunched: relaunched)

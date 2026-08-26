@@ -32,11 +32,19 @@ extension ProfileStore {
     /// Friendly names for the still-running blockers — a clone's display name where the
     /// user-data dir maps to a known launcher, else "default profile".
     func blockingInstanceNames() -> [String] {
+        names(for: blockingInstances())
+    }
+
+    /// Friendly names for instances **already read**, rather than for whatever a fresh sweep
+    /// finds. Naming a set that has been established means one process list, not two: a
+    /// second read can come back empty — or different — and report "nothing is running"
+    /// beside a refusal that exists precisely because something was.
+    func names(for instances: [ClaudeInstance]) -> [String] {
         let displayByProfile = Dictionary(
             list().map { ($0.profile.profilePath, $0.profile.displayName) },
             uniquingKeysWith: { first, _ in first }
         )
-        return blockingInstances().map { instance in
+        return instances.map { instance in
             guard let profile = instance.profilePath else { return "default profile" }
             return displayByProfile[profile] ?? profile
         }
