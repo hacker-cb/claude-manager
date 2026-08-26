@@ -239,7 +239,9 @@ public extension ProfileStore {
     /// ShipIt for the app this store manages. The bundle id is resolved the same way
     /// `ProfileStoreConfiguration.makeDefault` resolves the one behind `shipItStatePath`, so
     /// a legacy-id install is watched under the same id whose state file we read.
-    private func shipItProbe() -> ShipItProbe {
+    /// Also reached from the direct installer, which has to know whether Claude's own
+    /// installer is mid-swap before replacing the same bundle.
+    func shipItProbe() -> ShipItProbe {
         ShipItProbe(
             bundleID: realClaude.bundleIdentifier(fileManager: fileManager)
                 ?? CoreConstants.realClaudeBundleIDs[0],

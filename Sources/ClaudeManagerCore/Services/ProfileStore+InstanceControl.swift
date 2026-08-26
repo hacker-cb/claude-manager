@@ -2,16 +2,31 @@ import Foundation
 
 /// Stopping every Claude instance and putting the same set back afterwards.
 ///
+/// `internal`, not `public`. `relaunchDefaultProfile` in particular is safe only from inside
+/// `relaunchSnapshot`, which checks the default is actually down first: called directly while
+/// the default is up *and* a clone is running, it takes the `open -n` branch and starts a
+/// second instance on the same user-data dir — the LevelDB corruption `openReal` warns about.
+/// That contract is not readable from the signature, so the type does not offer it outside
+/// this module.
+///
 /// Lifted out of the staged-update path because it was never really about ShipIt: replacing
 /// `/Applications/Claude.app` requires that nothing is running out of it, whoever is doing
 /// the replacing. Squirrel's installer gated on the same set for the same reason, and when
 /// that path goes away this machinery stays.
-public extension ProfileStore {
+extension ProfileStore {
     /// Live instances of the **real Claude binary** — the default and clones both `exec` it,
     /// so this is exactly the set ShipIt gates on. Excludes Claude Manager's own process,
     /// whose path also contains "Claude" and would otherwise keep the gate from ever passing.
     func blockingInstances() -> [ClaudeInstance] {
         runningInstances().filter { $0.isRealClaudeBinary(realClaude) }
+    }
+
+    /// Live real-Claude instances, or **nil when the process list could not be read**.
+    ///
+    /// The distinction only matters to callers about to do something irreversible; see
+    /// ``ProcessProbe/claudeMainsIfReadable()``.
+    func blockingInstancesIfReadable() -> [ClaudeInstance]? {
+        processProbe.claudeMainsIfReadable()?.filter { $0.isRealClaudeBinary(realClaude) }
     }
 
     /// Friendly names for the still-running blockers — a clone's display name where the

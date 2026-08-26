@@ -12,10 +12,23 @@ public struct InstallUpdateResult: Equatable, Sendable {
         /// The swap itself failed. `/Applications/Claude.app` is untouched.
         case swapFailed(reason: String)
         /// The verified bundle is on a different volume from the installed app, so the swap
-        /// could not be the atomic rename this promises. Refused rather than attempted: a
-        /// cross-volume replace degrades into a copy, and a copy interrupted half way is
-        /// precisely the broken install this design exists to make impossible.
+        /// could not be the atomic rename this promises.
+        ///
+        /// Measured, since the reason matters: a cross-volume `replaceItemAt` throws
+        /// `NSCocoaErrorDomain 512` and leaves both sides untouched — it does *not* degrade
+        /// into a copy. So this check buys a clear reason instead of an opaque error, and
+        /// buys it **before** every profile is closed for a swap that was never going to
+        /// happen.
         case differentVolume
+        /// The process list could not be read, so "nothing is running" could not be
+        /// established. Refused: this gate protects a live Electron process from having its
+        /// bundle replaced underneath it, and a gate that cannot see is not a gate.
+        case couldNotConfirmQuiet
+        /// Claude's own Squirrel installer is running. Closing every profile is exactly what
+        /// releases it to start, so it has to be checked *after* the quiesce, not before —
+        /// and two installers writing the same bundle is how an install ends up as a mix of
+        /// two versions.
+        case claudeInstallerRunning
     }
 
     public let outcome: Outcome
@@ -51,6 +64,12 @@ public extension ProfileStore {
         stopPollInterval: TimeInterval = 0.5,
         stopMaxPolls: Int = 20
     ) async -> InstallUpdateResult {
+        // Asked before anything is closed: if the swap cannot work, closing every profile
+        // first would be a cost paid for nothing.
+        guard PathUtils.sameVolume(verified.appURL.path, realClaude.appURL.path) else {
+            CoreLog.update.error("install: refused — staged bundle is on a different volume")
+            return InstallUpdateResult(outcome: .differentVolume, relaunched: [])
+        }
         let previousVersion = realClaude.version(fileManager: fileManager)
         CoreLog.update.info(
             """
@@ -87,6 +106,30 @@ public extension ProfileStore {
             return InstallUpdateResult(outcome: .instancesStillRunning(stillRunning), relaunched: relaunched)
         }
 
+        // Everything above is a *wait*; this is the last look before the irreversible step,
+        // and unlike the wait it is not allowed to guess.
+        guard let remaining = blockingInstancesIfReadable() else {
+            CoreLog.update.error("install: refused — could not read the process list")
+            let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
+            return InstallUpdateResult(outcome: .couldNotConfirmQuiet, relaunched: relaunched)
+        }
+        guard remaining.isEmpty else {
+            let names = blockingInstanceNames()
+            let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
+            CoreLog.update.error("install: an instance appeared after the quiesce")
+            return InstallUpdateResult(outcome: .instancesStillRunning(names), relaunched: relaunched)
+        }
+        // Claude's own installer may have been armed and waiting for exactly what just
+        // happened — every instance quitting. Two writers on one bundle produce whichever
+        // half each one wins, so this steps aside rather than racing. Until the Squirrel
+        // updater is switched off for good, this is a real state and not a theoretical one.
+        if shipItProbe().isConfirmedRunning() {
+            CoreLog.update.error("install: refused — Claude's own installer is running")
+            // Deliberately no relaunch: reopening a profile now is what makes ShipIt abort
+            // mid-copy, which is the failure this whole rewrite exists to stop causing.
+            return InstallUpdateResult(outcome: .claudeInstallerRunning, relaunched: [])
+        }
+
         let outcome = swapInBundle(verified, previousVersion: previousVersion)
         let relaunched = relaunchSnapshot(clones: runningClones, defaultWasRunning: defaultWasRunning)
         CoreLog.update.info(
@@ -100,10 +143,6 @@ public extension ProfileStore {
         _ verified: VerifiedUpdate,
         previousVersion: String?
     ) -> InstallUpdateResult.Outcome {
-        guard PathUtils.sameVolume(verified.appURL.path, realClaude.appURL.path) else {
-            CoreLog.update.error("install: refused — staged bundle is on a different volume")
-            return .differentVolume
-        }
         do {
             _ = try fileManager.replaceItemAt(realClaude.appURL, withItemAt: verified.appURL)
         } catch {

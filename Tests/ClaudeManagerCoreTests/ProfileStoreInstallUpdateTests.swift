@@ -173,21 +173,145 @@ struct ProfileStoreInstallUpdateTests {
         #expect(env.real.version(fileManager: fm) == versionBefore)
     }
 
+    // MARK: - Gates that must not guess
+
+    /// `ps` failing folds into "no instances" everywhere else, which is right for display and
+    /// catastrophic here: it would replace the bundle underneath a live Electron process.
+    @Test
+    func refusesWhenTheProcessListCannotBeRead() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let versionBefore = env.real.version(fileManager: fm)
+        let incoming = try makeIncoming(env, version: "9.9.99")
+        // Quiesce passes (nothing reported running), then the final look cannot be taken.
+        env.runner.setHandler { executable, args in
+            executable == CoreConstants.psPath
+                ? CommandOutput(exitCode: 1, standardOutput: "", standardError: "ps: cannot read")
+                : idleStub(executable, args)
+        }
+
+        let result = await env.store.installUpdate(incoming, stopPollInterval: 0.01, stopMaxPolls: 2)
+
+        #expect(result.outcome == .couldNotConfirmQuiet)
+        #expect(env.real.version(fileManager: fm) == versionBefore)
+    }
+
+    /// Closing every profile is precisely what releases Claude's own armed installer. Two
+    /// writers on one bundle produce whichever half each wins.
+    @Test
+    func stepsAsideWhenClaudesOwnInstallerIsRunning() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let versionBefore = env.real.version(fileManager: fm)
+        let incoming = try makeIncoming(env, version: "9.9.99")
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains("/ShipIt ") == true {
+                return CommandOutput(exitCode: 0, standardOutput: "4242\n", standardError: "")
+            }
+            return idleStub(executable, args)
+        }
+
+        let result = await env.store.installUpdate(incoming, stopPollInterval: 0.01, stopMaxPolls: 2)
+
+        #expect(result.outcome == .claudeInstallerRunning)
+        #expect(env.real.version(fileManager: fm) == versionBefore)
+        // Nothing is reopened: relaunching now is what makes ShipIt abort mid-copy.
+        #expect(result.relaunched.isEmpty)
+    }
+
     // MARK: - Putting the set back
 
+    /// The user's open profiles are the thing an install must not cost them. Without this,
+    /// deleting both `relaunchSnapshot` calls left the whole suite green.
     @Test
     func reopensTheProfilesItClosed() async throws {
         let env = try makeStoreEnv()
         defer { try? fm.removeItem(at: env.root) }
-        _ = try env.store.add(AddProfileRequest(name: env.name("work")))
+        let added = try env.store.add(AddProfileRequest(name: env.name("work")))
         let installedBefore = env.real.version(fileManager: fm)
         let incoming = try makeIncoming(env, version: "9.9.99")
+        // Running when the install starts, gone once it has been asked to stop — the shape a
+        // profile that quits cleanly actually has.
+        let stopped = CallCounter()
+        let launcherPath = added.profile.appPath
+        let displayName = added.profile.displayName
+        let profilePath = added.profile.profilePath
+        // A clone is found by `pgrep` on its `--user-data-dir`, so the stub keys on the
+        // profile path, not the launcher's. Present on the first look, gone afterwards —
+        // the shape of a profile that quits when asked.
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains(profilePath) == true {
+                let running = stopped.next() == 1
+                return CommandOutput(
+                    exitCode: running ? 0 : 1,
+                    standardOutput: running ? "4242\n" : "",
+                    standardError: ""
+                )
+            }
+            return idleStub(executable, args)
+        }
 
-        let result = await env.store.installUpdate(incoming)
+        let result = await env.store.installUpdate(incoming, stopPollInterval: 0.01, stopMaxPolls: 2)
 
-        // Nothing was running in this fixture, so nothing is reopened — the interesting part
-        // is that the install still succeeded and reported an empty set rather than guessing.
-        #expect(result.relaunched.isEmpty)
         #expect(result.outcome == .installed(from: installedBefore, to: "9.9.99"))
+        #expect(result.relaunched == [displayName], "the profile that was open should be reopened")
+        // Reopened by launching its own launcher, not the shared bundle.
+        #expect(env.runner.invocations(of: CoreConstants.openPath)
+            .contains { $0.arguments.contains(launcherPath) })
+    }
+
+    /// A refused install must not cost the user their session either — whatever did stop is
+    /// put back.
+    @Test
+    func reopensTheProfilesEvenWhenTheInstallIsRefused() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let added = try env.store.add(AddProfileRequest(name: env.name("work")))
+        let versionBefore = env.real.version(fileManager: fm)
+        let realBinary = env.real.binaryURL.path
+        let displayName = added.profile.displayName
+        let profilePath = added.profile.profilePath
+        let looks = CallCounter()
+        // The clone quits after the first look; the default (reported through `ps`) never
+        // does, so the install is refused — and the clone still has to come back.
+        env.runner.setHandler { executable, args in
+            if executable == CoreConstants.pgrepPath, args.last?.contains(profilePath) == true {
+                let running = looks.next() == 1
+                return CommandOutput(
+                    exitCode: running ? 0 : 1,
+                    standardOutput: running ? "4242\n" : "",
+                    standardError: ""
+                )
+            }
+            if executable == CoreConstants.psPath {
+                return CommandOutput(
+                    exitCode: 0, standardOutput: "  501     1 \(realBinary)\n", standardError: ""
+                )
+            }
+            return idleStub(executable, args)
+        }
+        let incoming = try makeIncoming(env, version: "9.9.99")
+
+        let result = await env.store.installUpdate(incoming, stopPollInterval: 0.01, stopMaxPolls: 2)
+
+        guard case .instancesStillRunning = result.outcome else {
+            Issue.record("expected the install to be refused, got \(result.outcome)")
+            return
+        }
+        #expect(result.relaunched.contains(displayName), "a profile that did stop should be reopened")
+        #expect(env.real.version(fileManager: fm) == versionBefore)
+    }
+
+    /// The orchestrator in the next slice leans on this: after a successful install the
+    /// staged bundle is gone, because the swap moved it rather than copying it.
+    @Test
+    func consumesTheStagedBundle() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let incoming = try makeIncoming(env, version: "9.9.99")
+
+        _ = await env.store.installUpdate(incoming)
+
+        #expect(!fm.fileExists(atPath: incoming.appURL.path))
     }
 }
