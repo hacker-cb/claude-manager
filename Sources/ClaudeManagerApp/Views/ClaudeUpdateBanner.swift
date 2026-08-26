@@ -74,7 +74,9 @@ struct ClaudeUpdateBanner: View {
             banner(icon: "exclamationmark.triangle.fill", tint: .orange) {
                 Text(reason)
             } trailing: {
-                Button("Try again") { Task { await model.refreshClaudeUpdate() } }
+                // Through the same entry point as every other trigger, so repeated clicks
+                // cannot start a second check beside the first.
+                Button("Try again") { model.startClaudeUpdateRefresh() }
             }
         }
     }

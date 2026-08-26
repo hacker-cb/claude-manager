@@ -97,7 +97,9 @@ extension AppModel {
                 service.restorePrepared(newerThan: installed)
             }.value
             guard let self, case .idle = self.claudeUpdateState else { return }
-            if let restored { setClaudeUpdateState(.ready(restored)) }
+            // Through the gate: re-verifying takes seconds, and the toggle can go off inside
+            // them.
+            if let restored { publishClaudeUpdateState(.ready(restored)) }
             refreshClaudeUpdateIfDue()
         }
     }
@@ -151,7 +153,7 @@ extension AppModel {
             // Anything staged describes a build that is no longer newer — usually because it
             // has just been installed.
             if case .ready = claudeUpdateState { claudeUpdateService.discardEverything() }
-            setClaudeUpdateState(.idle)
+            publishClaudeUpdateState(.idle)
             return
         }
         if case let .ready(verified) = claudeUpdateState, verified.version == available.version {
@@ -160,9 +162,20 @@ extension AppModel {
         await prepareClaudeUpdate(available)
     }
 
+    /// Publish a state, unless the feature has been switched off in the meantime.
+    ///
+    /// Cancelling a task does not unwind the work already inside it: `prepare` can be most of
+    /// the way through a verification when the toggle goes off, finish a moment later, and
+    /// publish `.ready` for a feature that no longer exists. Every transition in this file
+    /// goes through here so that cannot happen.
+    private func publishClaudeUpdateState(_ state: ClaudeUpdateState) {
+        guard managesClaudeUpdates else { return }
+        setClaudeUpdateState(state)
+    }
+
     /// Download and verify, reporting progress as it goes.
     private func prepareClaudeUpdate(_ update: AvailableUpdate) async {
-        setClaudeUpdateState(.downloading(version: update.version, received: 0, total: nil))
+        publishClaudeUpdateState(.downloading(version: update.version, received: 0, total: nil))
         do {
             let verified = try await claudeUpdateService.prepare(update) { [weak self] received, total in
                 Task { @MainActor in
@@ -170,23 +183,23 @@ extension AppModel {
                     // Only while this download is still the thing happening: a cancelled or
                     // superseded transfer must not drag the UI backwards.
                     guard case .downloading = self.claudeUpdateState else { return }
-                    self.setClaudeUpdateState(
+                    self.publishClaudeUpdateState(
                         .downloading(version: update.version, received: received, total: total)
                     )
                 }
             }
-            setClaudeUpdateState(.ready(verified))
+            publishClaudeUpdateState(.ready(verified))
         } catch is CancellationError {
-            setClaudeUpdateState(.available(update))
+            publishClaudeUpdateState(.available(update))
         } catch let interrupted as DownloadInterrupted {
             // Resumable and expected on a laptop; the next tick continues where it stopped.
             Log.claudeUpdate.error(
                 "download interrupted — \(interrupted.underlying.localizedDescription, privacy: .public)"
             )
-            setClaudeUpdateState(.available(update))
+            publishClaudeUpdateState(.available(update))
         } catch {
             Log.claudeUpdate.error("prepare failed — \(String(describing: error), privacy: .public)")
-            setClaudeUpdateState(.failed(reason: Self.describeUpdateFailure(error)))
+            publishClaudeUpdateState(.failed(reason: Self.describeUpdateFailure(error)))
         }
     }
 
