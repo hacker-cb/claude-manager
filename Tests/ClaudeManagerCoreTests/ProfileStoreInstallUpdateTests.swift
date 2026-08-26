@@ -146,6 +146,33 @@ struct ProfileStoreInstallUpdateTests {
         #expect(env.real.version(fileManager: fm) == versionBefore)
     }
 
+    /// A cross-volume replace is a copy, and a copy interrupted half way is the broken
+    /// install this design exists to rule out — so it is refused rather than attempted.
+    @Test
+    func refusesToSwapAcrossVolumes() async throws {
+        let env = try makeStoreEnv()
+        defer { try? fm.removeItem(at: env.root) }
+        let versionBefore = env.real.version(fileManager: fm)
+
+        // A path on a genuinely different volume, discovered rather than assumed: on macOS
+        // firmlinks make `/` and the data volume share a device, so the usual guesses do not
+        // work. If this machine really has only one volume there is nothing to assert.
+        let candidates = ["/System/Volumes/Preboot", "/System/Volumes/VM", "/System/Volumes/Update"]
+        guard let other = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0)
+                && !PathUtils.sameVolume($0, env.real.appURL.path)
+        }) else { return }
+        let elsewhere = URL(fileURLWithPath: other)
+        let incoming = VerifiedUpdate(
+            version: "9.9.99", appURL: elsewhere.appendingPathComponent(CoreConstants.claudeAppName)
+        )
+
+        let result = await env.store.installUpdate(incoming)
+
+        #expect(result.outcome == .differentVolume)
+        #expect(env.real.version(fileManager: fm) == versionBefore)
+    }
+
     // MARK: - Putting the set back
 
     @Test

@@ -107,6 +107,27 @@ public enum PathUtils {
         return left == right
     }
 
+    /// Whether two paths live on the same volume — the condition `replaceItemAt` is atomic
+    /// under, and the difference between swapping a bundle in and copying it over.
+    ///
+    /// Compares the device number, and walks up to the nearest **existing** ancestor first,
+    /// since a path that has not been created yet has no device of its own. `nil` on either
+    /// side answers `true`: the caller then attempts the operation and gets a real error if
+    /// it cannot work, which beats refusing because a volume would not describe itself.
+    public static func sameVolume(_ lhs: String, _ rhs: String) -> Bool {
+        guard let left = deviceOfNearestExisting(lhs), let right = deviceOfNearestExisting(rhs)
+        else { return true }
+        return left == right
+    }
+
+    private static func deviceOfNearestExisting(_ path: String) -> dev_t? {
+        var url = URL(fileURLWithPath: path)
+        while !FileManager.default.fileExists(atPath: url.path), url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+        }
+        return fileIdentity(url.path)?.device
+    }
+
     /// What the file system calls the file at `path` — device and inode — or `nil` when it
     /// cannot be reached. Comparable across time, which is what `sameFile` cannot do: it answers
     /// about two paths *now*, and some questions are about whether the file at one path is still

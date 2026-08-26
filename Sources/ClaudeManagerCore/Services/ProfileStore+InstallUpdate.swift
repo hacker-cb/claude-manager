@@ -11,6 +11,11 @@ public struct InstallUpdateResult: Equatable, Sendable {
         case instancesStillRunning([String])
         /// The swap itself failed. `/Applications/Claude.app` is untouched.
         case swapFailed(reason: String)
+        /// The verified bundle is on a different volume from the installed app, so the swap
+        /// could not be the atomic rename this promises. Refused rather than attempted: a
+        /// cross-volume replace degrades into a copy, and a copy interrupted half way is
+        /// precisely the broken install this design exists to make impossible.
+        case differentVolume
     }
 
     public let outcome: Outcome
@@ -95,6 +100,10 @@ public extension ProfileStore {
         _ verified: VerifiedUpdate,
         previousVersion: String?
     ) -> InstallUpdateResult.Outcome {
+        guard PathUtils.sameVolume(verified.appURL.path, realClaude.appURL.path) else {
+            CoreLog.update.error("install: refused — staged bundle is on a different volume")
+            return .differentVolume
+        }
         do {
             _ = try fileManager.replaceItemAt(realClaude.appURL, withItemAt: verified.appURL)
         } catch {
