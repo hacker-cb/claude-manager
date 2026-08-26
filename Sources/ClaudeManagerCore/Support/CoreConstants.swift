@@ -116,27 +116,15 @@ public enum CoreConstants {
 
     /// ShipIt (Squirrel.Mac) per-bundle state file — `ShipItState.plist` under Caches,
     /// which is **JSON** despite the extension. When a job is armed it names the staged
-    /// `updateBundleURL`; reading it is how we detect a staged-but-unapplied update that
-    /// running clones are blocking. Keyed by the app's bundle id.
+    /// `updateBundleURL`. Nothing reads it for a staged update any more — Claude's updater
+    /// is switched off — but its presence still means a job is armed, and its directory is
+    /// what `SquirrelResidue` sweeps. Keyed by the app's bundle id.
     public static func shipItStatePath(
         forBundleID bundleID: String,
         home: String = NSHomeDirectory()
     ) -> String {
         "\(home)/Library/Caches/\(bundleID).ShipIt/ShipItState.plist"
     }
-
-    // ShipIt's own `stderr` log, which sits beside the state file in the same per-bundle
-    // cache — the only place the *reason* an install failed is ever written (the state
-    // file records the job, never its outcome).
-    //
-    // Derived from the state path rather than taking a second injectable path: Squirrel
-    // writes both into one directory it names itself, so a test that redirects the state
-
-    // How long Claude's installer has to be running before Doctor calls it stuck.
-    //
-    // A swap is 3–5 s, and the worst measured under disk contention was 57 s. Ten minutes
-    // is therefore two orders of magnitude past "installing" and can only mean ShipIt is
-    // waiting for every Claude instance to quit — which it does **indefinitely and
 
     // MARK: - Plan-usage statistics
 

@@ -91,17 +91,6 @@ public struct ManagedConfigWriter {
         return (current[key] as? Bool) == true
     }
 
-    // An integer flat key from the overlay, or `nil` when it isn't set.
-    //
-    // Used for `autoUpdaterEnforcementHours`, where the *value* matters and not merely its
-    // presence: it shortens the window after which Claude restarts the default profile by
-    // itself, so an estimate built on the 72 h default would stay silent long past the real
-    // deadline on a deployment that lowered it.
-    //
-    // `nil` under MDM for the same reason `hasFlag` returns false: the managed tier takes
-    // over there and this local overlay is not what Claude reads, so its value would be a
-    // guess. Callers fall back to the documented default and say so.
-
     /// Whether the on-disk overlay already satisfies `config` — every wanted flat key
     /// present with the wanted value. Used by `Doctor` to spot a clone whose overlay
     /// is missing (e.g. a best-effort write that silently failed). MDM presence counts

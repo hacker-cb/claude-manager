@@ -138,9 +138,12 @@ public struct UpdateVerifier: Sendable {
     /// the outcome is catastrophic, which is exactly the shape of failure worth being
     /// paranoid about.
     ///
-    /// `attributesOfItem` is used rather than `fileExists(isDirectory:)` because it reports
-    /// the link itself instead of following it, and the resolved path is required to stay
-    /// inside the staging directory so a link cannot point out of it either.
+    /// `attributesOfItem` rather than `fileExists(isDirectory:)`, and the difference is the
+    /// whole guard: measured, `attributesOfItem` on a symlink-to-a-directory reports
+    /// `NSFileTypeSymbolicLink`, while `fileExists(isDirectory:)` follows the link and
+    /// answers `isDirectory = true` — which would wave the substitution straight through.
+    /// The resolved path is then required to stay inside the staging directory, so a link
+    /// cannot point out of it either.
     private func requireRealDirectory(_ appURL: URL, within stagingDirectory: URL) throws {
         let attributes = try? FileManager.default.attributesOfItem(atPath: appURL.path)
         guard (attributes?[.type] as? FileAttributeType) == .typeDirectory else {
