@@ -119,6 +119,14 @@ struct UpdateVerifierTests {
         let requirement = requirementCalls.first?.arguments.first { $0.contains("certificate leaf") }
         #expect(requirement?.contains("Q6L2SF6YDW") == true)
         #expect(requirement?.contains("anchor apple generic") == true)
+        // The marker OIDs are what pin it to Developer ID specifically; without them the
+        // requirement admits any Apple-anchored certificate whose OU happens to match.
+        #expect(requirement?.contains("1.2.840.113635.100.6.2.6") == true)
+        #expect(requirement?.contains("1.2.840.113635.100.6.1.13") == true)
+        // No stray newline or continuation: this string is handed to `codesign` verbatim.
+        #expect(requirement?.contains("\n") == false)
+        // Same scope as the plain verify, so the two cannot drift apart.
+        #expect(requirementCalls.first?.arguments.contains("--deep") == true)
     }
 
     @Test

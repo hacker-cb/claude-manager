@@ -167,13 +167,20 @@ public struct UpdateVerifier: Sendable {
 
     /// The check that a substituted bundle fails.
     ///
+    /// Same verification scope as ``checkSignature`` — `--strict --deep` — with the
+    /// requirement added, so the two cannot drift into checking different amounts of the
+    /// bundle.
+    ///
     /// Expressed as a designated requirement rather than by parsing `codesign -dv` output:
     /// the requirement language is evaluated by the same code that validates the signature,
     /// so there is no text to misread and no locale to trip over.
     func checkIsAnthropic(_ appURL: URL) throws {
         let output = try runner.run(
             CoreConstants.codesignPath,
-            ["--verify", "--strict", "-R", CoreConstants.anthropicDesignatedRequirement, appURL.path]
+            [
+                "--verify", "--strict", "--deep",
+                "-R", CoreConstants.anthropicDesignatedRequirement, appURL.path
+            ]
         )
         guard output.succeeded else {
             throw Failure
