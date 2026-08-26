@@ -95,4 +95,30 @@ struct SquirrelResidueTests {
 
         #expect(!outcome.changedAnything)
     }
+
+    /// A public entry point that deletes directories recursively should not take the
+    /// caller's word for where it is pointed.
+    @Test(arguments: [
+        "ShipItState.plist", // no cache directory around it
+        "Caches/something-else/ShipItState.plist", // wrong directory
+        "Caches/com.anthropic.claudefordesktop.ShipIt/other.plist" // wrong file
+    ])
+    func refusesToSweepAPathThatIsNotAShipItCache(_ relative: String) throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("cm-squirrel-\(UUID().uuidString)")
+        let statePath = root.appendingPathComponent(relative)
+        try fm.createDirectory(
+            at: statePath.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        defer { try? fm.removeItem(at: root) }
+        // Something that *would* be swept if the guard were not there.
+        let staged = statePath.deletingLastPathComponent().appendingPathComponent("update.xyz")
+        try fm.createDirectory(at: staged, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: statePath)
+
+        let outcome = SquirrelResidue(statePath: statePath.path).sweep()
+
+        #expect(!outcome.changedAnything)
+        #expect(fm.fileExists(atPath: staged.path))
+        #expect(fm.fileExists(atPath: statePath.path))
+    }
 }

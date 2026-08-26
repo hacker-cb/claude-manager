@@ -45,6 +45,14 @@ public struct SquirrelResidue {
     @discardableResult
     public func sweep() -> Outcome {
         let directory = URL(fileURLWithPath: statePath).deletingLastPathComponent()
+        // A public entry point that deletes directories recursively should not take the
+        // caller's word for where it is pointed. Both halves of the shape ShipIt actually
+        // uses are required — the state file's name, and a `.ShipIt` cache directory around
+        // it — so a wrong path deletes nothing rather than something.
+        guard Self.looksLikeShipItCache(statePath) else {
+            CoreLog.update.error("squirrel: refusing to sweep a path that is not a ShipIt cache")
+            return Outcome(clearedArmedJob: false, removedStagedBundles: [], reclaimedBytes: 0)
+        }
         var reclaimed: Int64 = 0
         var removed: [String] = []
 
@@ -92,6 +100,17 @@ public struct SquirrelResidue {
 
     /// ShipIt names its staging directories `update.<random>`.
     static let stagingPrefix = "update."
+
+    /// Whether a path has the shape ShipIt's own state file has:
+    /// `…/<bundle-id>.ShipIt/ShipItState.plist`.
+    static func looksLikeShipItCache(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        guard url.lastPathComponent == stateFileName else { return false }
+        return url.deletingLastPathComponent().lastPathComponent.hasSuffix(cacheDirectorySuffix)
+    }
+
+    static let stateFileName = "ShipItState.plist"
+    static let cacheDirectorySuffix = ".ShipIt"
 
     /// Total size of a directory tree, best-effort — used only to report what was reclaimed.
     private static func directorySize(_ url: URL, fileManager: FileManager) -> Int64 {
