@@ -45,16 +45,20 @@ extension AppModel {
             if newValue {
                 startClaudeUpdateRefresh()
             } else {
-                // Stop the transfer *first*: a task already inside `prepare` would otherwise
-                // finish seconds later and re-stage the build, showing an install banner for
-                // a feature that is off.
-                claudeUpdateTask?.cancel()
+                // Stop the transfer, then wait for it to actually be over before deleting
+                // anything. Cancellation is a request, not a stop: a task part-way through
+                // unpacking would otherwise finish *after* the sweep and leave several
+                // hundred megabytes on disk for a feature that is off. Off the main actor,
+                // since this deletes an archive and an unpacked Electron bundle — tens of
+                // thousands of files.
+                let inFlight = claudeUpdateTask
                 claudeUpdateTask = nil
-                // Then drop several hundred megabytes nothing will ever install. Off the
-                // main actor: this deletes an archive and an unpacked Electron bundle —
-                // tens of thousands of files — and doing it here would hang the toggle.
+                inFlight?.cancel()
                 let service = claudeUpdateService
-                Task.detached(priority: .utility) { service.discardEverything() }
+                Task.detached(priority: .utility) {
+                    await inFlight?.value
+                    service.discardEverything()
+                }
                 setClaudeUpdateState(.idle)
             }
         }
