@@ -48,4 +48,45 @@ struct LiveUpdateFeedTests {
             """
         )
     }
+
+    /// Exercises the real `URLSession` bridge — the continuation, the status check and the
+    /// staging move — which the unit tests cannot reach: they all run through a stub.
+    ///
+    /// Downloads the feed document itself (~150 bytes) rather than a build: this needs to
+    /// prove the plumbing works, not move a third of a gigabyte.
+    @Test(.enabled(if: LiveUpdateFeedTests.live))
+    func theRealDownloaderWritesWhatItFetched() async throws {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cm-live-download-\(UUID().uuidString)/feed.json")
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
+
+        let received = Mailbox<Int64>()
+        let size = try await URLSessionFileDownloader().download(
+            from: CoreConstants.latestReleaseFeedURL,
+            to: destination,
+            resumeData: nil,
+            progress: { bytes, _ in Task { await received.put(bytes) } }
+        )
+
+        #expect(size > 0)
+        // The progress callback is half of what this bridge is for; a download that reports
+        // nothing would still pass every other assertion here.
+        #expect(await received.take() ?? 0 > 0)
+        let written = try Data(contentsOf: destination)
+        #expect(Int64(written.count) == size)
+        // It fetched the thing it was pointed at, not an error page.
+        #expect((try? UpdateFeed.parse(written)) != nil)
+    }
+}
+
+/// One-slot async box, so the progress callback can be observed without shared mutable state.
+private actor Mailbox<Value: Sendable> {
+    private var value: Value?
+    func put(_ newValue: Value) {
+        value = newValue
+    }
+
+    func take() -> Value? {
+        value
+    }
 }
