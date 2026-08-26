@@ -123,33 +123,7 @@ public struct UpdateDownloader: Sendable {
                 from: update.downloadURL, to: partial, resumeData: resumeData, progress: progress
             )
         } catch let interrupted as DownloadInterrupted {
-            // Cancellation arrives here too, as `URLError.cancelled` with a resume token
-            // attached — deliberately not special-cased, because the handling is identical
-            // and the one thing that must not happen is throwing the token away. (An earlier
-            // `catch is CancellationError` branch was dead code that would have done exactly
-            // that the day an implementation started throwing one.)
-            //
-            // Keep the token so the next attempt continues; without it the retry starts from
-            // zero. A `nil` token means the failure was not resumable, and any stale token
-            // from a previous attempt has to go with it.
-            if let token = interrupted.resumeData {
-                try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-                try? token.write(to: resume, options: .atomic)
-                CoreLog.update.error(
-                    """
-                    download: interrupted, \(token.count, privacy: .public) bytes of resume state kept \
-                    — \(interrupted.underlying.localizedDescription, privacy: .public)
-                    """
-                )
-            } else {
-                try? fileManager.removeItem(at: resume)
-                CoreLog.update.error(
-                    """
-                    download: interrupted with no resume state \
-                    — \(interrupted.underlying.localizedDescription, privacy: .public)
-                    """
-                )
-            }
+            recordInterruption(interrupted, resumeURL: resume)
             throw interrupted
         } catch where resumeData != nil {
             // A resumed transfer that failed outright — the classic case is the server
@@ -195,6 +169,48 @@ public struct UpdateDownloader: Sendable {
             """
         )
         return PreparedDownload(version: update.version, archiveURL: destination, byteSize: byteSize)
+    }
+
+    /// Persist (or clear) the resume token an interrupted transfer left behind, and say in
+    /// the log which of the two actually happened.
+    ///
+    /// Cancellation arrives here too, as `URLError.cancelled` carrying a token —
+    /// deliberately not special-cased, because the handling is identical and the one thing
+    /// that must not happen is throwing the token away.
+    private func recordInterruption(_ interrupted: DownloadInterrupted, resumeURL resume: URL) {
+        let reason = interrupted.underlying.localizedDescription
+        guard let token = interrupted.resumeData else {
+            // Not resumable: a stale token from an earlier attempt would describe a transfer
+            // that no longer applies, so it goes with it.
+            try? fileManager.removeItem(at: resume)
+            CoreLog.update.error(
+                """
+                download: interrupted with no resume state — \(reason, privacy: .public)
+                """
+            )
+            return
+        }
+        // Reported from what actually happened, not from having attempted it: a full or
+        // unwritable cache silently drops the token, and a log claiming it was kept sends
+        // whoever is debugging the next full re-download looking in the wrong place.
+        do {
+            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            try token.write(to: resume, options: .atomic)
+            CoreLog.update.error(
+                """
+                download: interrupted, \(token.count, privacy: .public) bytes of resume state \
+                kept — \(reason, privacy: .public)
+                """
+            )
+        } catch {
+            CoreLog.update.error(
+                """
+                download: interrupted (\(reason, privacy: .public)) and the resume state could \
+                not be saved (\(error.localizedDescription, privacy: .public)) — the next \
+                attempt starts from scratch
+                """
+            )
+        }
     }
 
     /// Drop every staged archive, and every trace of a transfer in flight.
