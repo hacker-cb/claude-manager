@@ -85,10 +85,26 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
     /// Where this app is in fetching and installing Claude's own updates — see
-    /// `AppModel+ClaudeUpdate`.
+    /// `AppModel+ClaudeUpdateCheck` (fetching) and `AppModel+ClaudeUpdate` (installing).
     @Published private(set) var claudeUpdateState: ClaudeUpdateState = .idle
 
-    /// Set the update state (`private(set)`, driven from `AppModel+ClaudeUpdate`). Assigns
+    /// Why the last check could not be completed, or nil if the last one answered.
+    ///
+    /// Separate from `.failed` because a failure cannot always take the state: `.available` and
+    /// `.ready` carry a control of their own (Download, Install) that a build already on disk
+    /// keeps whether or not the feed can be reached. Without this the reason would have nowhere
+    /// to appear at all on the settings row, which is the only answer a check started there gets.
+    @Published private(set) var claudeUpdateCheckFailure: String?
+
+    /// Record — or clear — that reason. `private(set)` above, so the update extensions set it
+    /// through here.
+    func setClaudeUpdateCheckFailure(_ reason: String?) {
+        guard reason != claudeUpdateCheckFailure else { return }
+        claudeUpdateCheckFailure = reason
+    }
+
+    /// Set the update state (`private(set)`, driven from the two `ClaudeUpdate` extensions).
+    /// Assigns
     /// only on a change: `@Published` publishes on every assignment, and a background tick
     /// that recomputes the same value would re-run `RootView.body` for nothing.
     func setClaudeUpdateState(_ value: ClaudeUpdateState) {
@@ -99,7 +115,7 @@ final class AppModel: ObservableObject {
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    /// Non-private for the `AppModel+ClaudeUpdate` extension, which owns the update
+    /// Non-private for the `AppModel+VersionSkewNotice` extension, which owns the update
     /// notifications.
     var notifiedClaudeUpdates: Set<String> {
         get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
@@ -108,8 +124,28 @@ final class AppModel: ObservableObject {
 
     var monitorTask: Task<Void, Never>?
     /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
-    /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
-    var claudeUpdateTask: Task<Void, Never>?
+    /// the feature off can stop it — see `AppModel+ClaudeUpdateCheck`.
+    ///
+    /// `@Published` for the manual check's button: a check that has asked the feed but not
+    /// heard back leaves `claudeUpdateState` at `.idle`, so this handle is the only thing
+    /// that knows work is under way, and without the notification the button would stay
+    /// enabled through it.
+    @Published var claudeUpdateTask: Task<Void, Never>?
+    /// The launch-time re-verification of a build prepared before the last quit. Its own
+    /// handle, like the sweep's: it holds the same cache but it is not a check, and a status
+    /// row reading "Checking…" through seconds of `codesign` describes work nobody started.
+    @Published var claudeUpdateRestoreTask: Task<Void, Never>?
+    /// The sweep that follows switching managed updates off — kept apart from the handle above
+    /// because it *awaits* that task, which clears its own handle on the way out. Sharing one
+    /// slot meant the finishing check cleared the sweep's, so `isCheckingClaudeUpdate` read
+    /// free while hundreds of megabytes were still being deleted from the cache a new check
+    /// would fetch into.
+    @Published var claudeUpdateCleanupTask: Task<Void, Never>?
+    /// Which sweep owns that slot. A sweep chained behind another takes the slot while the
+    /// first is still finishing, and the first's exit would otherwise clear the handle of the
+    /// one that replaced it — the clobbering this pair of handles exists to prevent, one level
+    /// down. Incremented on every sweep; each clears the slot only while the count is its own.
+    var claudeUpdateCleanupGeneration = 0
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
@@ -350,9 +386,7 @@ final class AppModel: ObservableObject {
         // and a diagnostics set half-computed for "we update Claude" and half for "Claude
         // does" would contradict itself on screen.
         if let stale = Doctor.staleUpdateCheckDiagnostic(
-            managingUpdates: managingUpdates,
-            lastSuccess: (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
-                .map(Date.init(timeIntervalSince1970:))
+            managingUpdates: managingUpdates, lastSuccess: lastClaudeUpdateSuccess
         ) { result.append(stale) }
         diagnostics = result
     }

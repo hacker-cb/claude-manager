@@ -75,6 +75,10 @@ extension AppModel {
     func reconcile() async {
         await locateOffMain()
         guard realClaude != nil else { return }
+        // With a fresh reading of the installed version in hand: Claude can be replaced from
+        // outside this app, and a build prepared before that is no longer an update. Nothing
+        // else notices — `.ready` blocks every check by design — so it is checked here.
+        discardPreparedIfOvertaken(by: realClaudeVersion)
         await refresh()
     }
 }
