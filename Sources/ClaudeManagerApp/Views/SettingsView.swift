@@ -146,12 +146,26 @@ struct SettingsView: View {
     /// Where update work stands, in one line — spelled in the core beside the state machine
     /// it describes, so the menu can say the same thing without a second wording.
     private var claudeUpdateStatus: String {
-        // A check in flight is invisible in the state — it stays `.idle` until the feed
-        // answers, which can be the full 20-second timeout — so without this the row would
-        // show a stale "Last checked 4 h ago" beside a greyed-out button for the whole
-        // request: the "nothing happened" reading this button exists to remove.
-        if model.isCheckingClaudeUpdate, model.claudeUpdateState.allowsCheck { return "Checking…" }
-        return model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        // Work in flight is invisible in the state — it stays `.idle` until the feed answers,
+        // which can be the full 20-second timeout — so without this the row would show a stale
+        // "Last checked 4 h ago" beside a greyed-out button for the whole request: the "nothing
+        // happened" reading this button exists to remove. The sweep is named separately; it is
+        // not a check, and the button it disables is the one that would start one.
+        if model.claudeUpdateState.allowsCheck {
+            if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
+            if model.claudeUpdateTask != nil { return "Checking…" }
+        }
+        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        // A failure the state could not take — `.available` and `.ready` keep their own control
+        // — would otherwise leave a check started here with no answer at all.
+        guard let failure = model.claudeUpdateCheckFailure, !isFailureInState else { return line }
+        return line + " Last check failed: " + failure
+    }
+
+    /// Whether the state is already carrying the failure, so the row does not say it twice.
+    private var isFailureInState: Bool {
+        if case .failed = model.claudeUpdateState { return true }
+        return false
     }
 
     private var usageSection: some View {

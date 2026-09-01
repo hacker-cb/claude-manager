@@ -53,7 +53,14 @@ extension AppModel {
             // you would get there.
             scheduleBrokerApply()
             if newValue {
-                startClaudeUpdateRefresh()
+                startClaudeUpdateRefreshWhenIdle()
+            } else if claudeUpdateState.blocksProfileActivity {
+                // A swap is in flight. Dropping the state to `.idle` would re-enable profile
+                // launches into a bundle being replaced, and the sweep would delete the staged
+                // build out from under the copy — `installUpdate` does not hold the check's
+                // slot, so nothing would make the sweep wait. Both halves are deferred to the
+                // end of the install, which re-reads this setting (`sweepIfSwitchedOff`).
+                Log.claudeUpdate.info("managed updates off during an install; sweep deferred")
             } else {
                 setClaudeUpdateState(.idle)
                 startClaudeUpdateCleanup()
@@ -94,6 +101,16 @@ extension AppModel {
     /// race on the same cache directory. And it re-reads the setting before deleting: off
     /// and straight back on again is a real thing to do, and it must not cost the download
     /// that the second toggle just started.
+    /// The half of switching the feature off that an install in flight postponed.
+    ///
+    /// Called once the swap is over, from `installClaudeUpdate`. A no-op in the ordinary case
+    /// where the setting was never touched.
+    func sweepIfSwitchedOff() {
+        guard !managesClaudeUpdates else { return }
+        setClaudeUpdateState(.idle)
+        startClaudeUpdateCleanup()
+    }
+
     private func startClaudeUpdateCleanup() {
         // One sweep at a time. Off, on, off again is a real sequence, and without this the
         // second would overwrite the first's handle: two `discardEverything()` runs on one
@@ -125,6 +142,9 @@ extension AppModel {
     /// reason to.
     func installClaudeUpdate() async {
         guard case let .ready(verified) = claudeUpdateState else { return }
+        // Whatever this returns through, the toggle may have gone off while the swap ran — see
+        // `managesClaudeUpdates`, which defers its own teardown to exactly here.
+        defer { sweepIfSwitchedOff() }
         // Asked again at the moment of the press, not only when the build was fetched: the
         // banner may have been sitting there while Claude updated itself underneath it, and
         // swapping in an equal-or-older bundle is a downgrade wearing an update's clothes.

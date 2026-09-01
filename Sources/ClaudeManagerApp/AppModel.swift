@@ -88,6 +88,21 @@ final class AppModel: ObservableObject {
     /// `AppModel+ClaudeUpdateCheck` (fetching) and `AppModel+ClaudeUpdate` (installing).
     @Published private(set) var claudeUpdateState: ClaudeUpdateState = .idle
 
+    /// Why the last check could not be completed, or nil if the last one answered.
+    ///
+    /// Separate from `.failed` because a failure cannot always take the state: `.available` and
+    /// `.ready` carry a control of their own (Download, Install) that a build already on disk
+    /// keeps whether or not the feed can be reached. Without this the reason would have nowhere
+    /// to appear at all on the settings row, which is the only answer a check started there gets.
+    @Published private(set) var claudeUpdateCheckFailure: String?
+
+    /// Record — or clear — that reason. `private(set)` above, so the update extensions set it
+    /// through here.
+    func setClaudeUpdateCheckFailure(_ reason: String?) {
+        guard reason != claudeUpdateCheckFailure else { return }
+        claudeUpdateCheckFailure = reason
+    }
+
     /// Set the update state (`private(set)`, driven from the two `ClaudeUpdate` extensions).
     /// Assigns
     /// only on a change: `@Published` publishes on every assignment, and a background tick

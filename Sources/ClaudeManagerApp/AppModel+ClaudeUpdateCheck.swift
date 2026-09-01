@@ -110,6 +110,25 @@ extension AppModel {
         }
     }
 
+    /// Start a check as soon as the slot frees, rather than dropping it.
+    ///
+    /// Switching the feature back on is precisely when a check is wanted, and the sweep that
+    /// switching it *off* started can still hold the slot — deleting an unpacked Electron
+    /// bundle is tens of thousands of files. Dropped, that check is not retried by anything:
+    /// the attempt stamped before the toggle silences the schedule for up to four hours.
+    func startClaudeUpdateRefreshWhenIdle() {
+        guard let sweep = claudeUpdateCleanupTask else {
+            startClaudeUpdateRefresh()
+            return
+        }
+        Task { @MainActor [weak self] in
+            await sweep.value
+            // Re-read, because the toggle can go off again inside the wait.
+            guard self?.managesClaudeUpdates == true else { return }
+            self?.startClaudeUpdateRefresh()
+        }
+    }
+
     // MARK: - The button
 
     /// Check now because someone pressed a button, and say what came of it.
@@ -121,6 +140,19 @@ extension AppModel {
     /// from one that did nothing at all, which is what an unreachable feed looked like for a
     /// whole day before this existed.
     func checkForClaudeUpdateNow(announcing: ClaudeUpdateAnnouncement = .withAnAlert) {
+        // Nothing to compare a release against. `isUpgrade` answers `false` for an absent or
+        // unreadable installed version, so the feed's newest build reads as "no update" and the
+        // check would end by calling a machine that cannot be updated at all up to date — while
+        // stamping the success that keeps Doctor quiet about it.
+        guard realClaudeVersion != nil else {
+            announce(
+                announcing,
+                title: "Claude was not found",
+                message: "Claude Manager could not read a version from Claude.app, so there is "
+                    + "nothing to compare a release against. Try Re-detect in Settings."
+            )
+            return
+        }
         guard managesClaudeUpdates else {
             announce(
                 announcing,
@@ -147,14 +179,26 @@ extension AppModel {
                 // monitor tick, the activation observer, the restore that runs at launch. A
                 // promise none of them keeps is the same dead end as no answer at all, so this
                 // says what to do instead.
-                message: claudeUpdateState.allowsCheck
-                    ? "A check is already running. Give it a moment, and press again if nothing "
-                    + "appears."
-                    : claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
+                message: busyNote
             )
             return
         }
         startClaudeUpdateRefresh(announcing: announcing)
+    }
+
+    /// What is holding the slot, in a sentence. Three different things can, and calling any of
+    /// them "a check" is how the promise of a report gets made on behalf of work that never
+    /// agreed to give one.
+    private var busyNote: String {
+        guard claudeUpdateState.allowsCheck else {
+            // `.downloading`, `.installing`, `.ready` — the state says it better than this could.
+            return claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
+        }
+        if claudeUpdateCleanupTask != nil {
+            return "Claude Manager is still clearing the build it had downloaded. Try again in "
+                + "a moment."
+        }
+        return "A check is already running. Give it a moment, and press again if nothing appears."
     }
 
     /// Say something, if this check's voice carries that far — see `ClaudeUpdateAnnouncement`
@@ -175,12 +219,14 @@ extension AppModel {
     /// beside them until someone presses the button.
     func refreshClaudeUpdate(announcing: ClaudeUpdateAnnouncement = .silently) async {
         guard managesClaudeUpdates else { return }
-        // An install in flight owns the state; a background tick must not overwrite it with
-        // a stale reading of the same thing.
-        guard !claudeUpdateState.isBusy else { return }
+        // The same question every caller already asks, restated here because this is where it
+        // has teeth: an install owns the state and must not be overwritten by a tick reading
+        // stale news, and a prepared build must not be re-fetched over — `prepare` rewrites the
+        // staging directory the Install button points at. Stated as one guard so the body can
+        // be read as "the state is `.idle`, `.available` or `.failed`", which it is.
+        guard claudeUpdateState.allowsCheck else { return }
 
         let installed = realClaudeVersion
-        await discardPreparedIfOvertaken(by: installed)
         let available: AvailableUpdate?
         do {
             available = try await claudeUpdateService.checkForUpdate(installedVersion: installed)
@@ -194,6 +240,7 @@ extension AppModel {
             // else would tell SwiftUI to re-read it.
             objectWillChange.send()
             defaults.set(Date().timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateSuccess)
+            setClaudeUpdateCheckFailure(nil)
         } catch {
             // Unreachable is not "up to date", but for the schedule it is also not worth a
             // banner: a laptop is offline all the time. Logged, and left for the next tick.
@@ -217,18 +264,9 @@ extension AppModel {
                 announcing,
                 title: "Claude is up to date",
                 message: installed.map { "Claude \($0) is the latest release." }
-                    ?? "The installed build is the latest release."
+                    ?? "The feed offers nothing newer than what is installed."
             )
             return
-        }
-        if case let .ready(verified) = claudeUpdateState, verified.version == available.version {
-            announce(
-                announcing,
-                title: "Claude \(verified.version) is ready to install",
-                message: "It has already been downloaded and verified — press Install when "
-                    + "you are ready for your profiles to close."
-            )
-            return // already prepared, nothing to do
         }
         await prepareClaudeUpdate(available)
     }
@@ -249,18 +287,21 @@ extension AppModel {
         // release service is unreachable.
         guard !Task.isCancelled, managesClaudeUpdates else { return }
         let reason = Self.describeUpdateFailure(error)
+        // Recorded whatever the state is. `.available` and `.ready` keep their own control, so
+        // the failure cannot take the state from them — and from Settings, where there is no
+        // alert, it would then have nowhere at all to appear.
+        setClaudeUpdateCheckFailure(reason)
         // Over an earlier `.failed` as well as over `.idle`: a retry that fails for a new
-        // reason has to say the new one, and from Settings — where there is no alert — the
-        // status line is the only place it could.
+        // reason has to say the new one.
         switch claudeUpdateState {
         case .idle, .failed: publishClaudeUpdateState(.failed(reason: reason))
         case .available, .downloading, .installing, .ready: break
         }
-        announce(
-            announcing,
-            title: "Could not check for updates",
-            message: "Anthropic's release service could not be reached. " + reason
-        )
+        // No "could not be reached" prefix: `UpdateFeed.Failure` also covers a service that
+        // answered and was refused — an unexpected status, a payload this version cannot read,
+        // an insecure download URL — and prefixing those with a connectivity claim sends the
+        // reader to check their wifi over a sentence saying the server replied.
+        announce(announcing, title: "Could not check for updates", message: reason)
     }
 
     /// Publish a state, unless something else owns it.
@@ -317,27 +358,5 @@ extension AppModel {
             Log.claudeUpdate.error("prepare failed — \(String(describing: error), privacy: .public)")
             publishClaudeUpdateState(.failed(reason: Self.describeUpdateFailure(error)))
         }
-    }
-
-    /// Throw away a prepared build that the installed app has caught up with.
-    ///
-    /// A prepared build records a comparison made when it was fetched. Claude can be updated
-    /// after that — by its own updater, by the legacy staged path, or by hand — and then the
-    /// waiting build is no longer newer. Left alone, the banner offers it forever (a prepared
-    /// state blocks re-checks) and pressing Install closes every profile to swap in something
-    /// equal or older: a downgrade dressed as an update.
-    private func discardPreparedIfOvertaken(by installed: String?) async {
-        guard case let .ready(verified) = claudeUpdateState else { return }
-        guard !AvailableUpdate.isUpgrade(verified.version, over: installed) else { return }
-        Log.claudeUpdate.info(
-            "discarding prepared \(verified.version, privacy: .public); no longer newer than installed"
-        )
-        // Awaited, where `discardPreparedUpdate` fires and forgets. That one answers a press
-        // and has nothing following it; this one runs *inside* a check that goes straight on
-        // to fetch the newer build into the very directories being emptied, so a detached
-        // delete would race the download it precedes and could take its resume file with it.
-        let service = claudeUpdateService
-        setClaudeUpdateState(.idle)
-        await Task.detached(priority: .utility) { service.discardEverything() }.value
     }
 }
