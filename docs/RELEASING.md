@@ -141,8 +141,9 @@ git diff --stat origin/dev   # expect empty: the trees must already match
 git push origin -u chore/sync-master-into-dev-0.12.0
 ```
 
-**Suffix the branch with the version** (as every sync since v0.11.0 has, e.g. #147)
-rather than reusing a bare `chore/sync-master-into-dev`. The merge deletes the remote
+**Suffix the branch with the version** (as the v0.11.0 sync already did in practice —
+#147, `chore/sync-master-into-dev-0.11.0`) rather than reusing a bare
+`chore/sync-master-into-dev`. The merge deletes the remote
 ref but not the local branch, so the bare name survives in whichever checkout cut the
 previous release — v0.12.0 found exactly such a leftover, still pointing at the
 v0.11.0-era sync — and a later `git switch` to the bare name lands on that stale merge
