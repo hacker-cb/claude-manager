@@ -31,6 +31,13 @@ extension AppModel {
     /// fast (no prompt) rather than blocking; the prompt is deferred to an interactive Refresh.
     func startUsagePolling() {
         guard usagePollTask == nil, usageTrackingEnabled, usagePollIntervalMinutes > 0 else { return }
+        // "first tick now", because it is: the task below fetches immediately and only then
+        // settles into the interval — a schedule line that said otherwise would be the very
+        // thing a stuck-usage report gets mis-reconstructed from.
+        let interval = Int(usagePollSleepInterval())
+        Log.usage.notice(
+            "usage polling started (first tick now, then every \(interval, privacy: .public)s)"
+        )
         usagePollTask = Task { @MainActor [weak self] in
             if let self { await pollUsageOnce() } // immediate, so returning users see usage now
             while !Task.isCancelled {
@@ -46,8 +53,13 @@ extension AppModel {
     }
 
     private func pollUsageOnce() async {
-        guard usageTrackingEnabled, usagePollIntervalMinutes > 0,
-              !claudeUpdateState.blocksProfileActivity else { return }
+        guard usageTrackingEnabled, usagePollIntervalMinutes > 0 else { return }
+        guard !claudeUpdateState.blocksProfileActivity else {
+            // Worth a line: from the outside this tick is indistinguishable from a loop that
+            // silently died, which is exactly what a stuck-usage report accuses it of.
+            Log.usage.notice("usage poll tick skipped: a Claude update is installing")
+            return
+        }
         await refreshUsage(interactive: false)
         // The master switch can flip off during the refresh above; re-check before pruning so a
         // toggle-off never opens or mutates usage.db after it — "off stops all storage".
@@ -62,8 +74,10 @@ extension AppModel {
     }
 
     func stopUsagePolling() {
+        guard usagePollTask != nil else { return }
         usagePollTask?.cancel()
         usagePollTask = nil
+        Log.usage.notice("usage polling stopped")
     }
 
     func restartUsagePolling() {
@@ -150,13 +164,22 @@ extension AppModel {
     func refreshUsage(interactive: Bool) async {
         // Master switch is the choke point: off → read nothing, call nothing, store nothing.
         guard usageTrackingEnabled else { return }
-        guard realClaude != nil, let config = currentConfiguration() else { return }
+        guard realClaude != nil, let config = currentConfiguration() else {
+            // `.info`, not `.notice`: with no Claude installed this fires on every tick of the
+            // poll loop, and ~288 persisted lines a day about a standing configuration would
+            // drown the log this category exists for. Doctor already names the missing install.
+            Log.usage.info("usage refresh skipped: no Claude install / store configuration")
+            return
+        }
 
         // Single-flight — but an interactive request must never be silently dropped: it is the
         // only path that can raise the one-time keychain prompt. If a refresh is already running,
         // record that an interactive pass is still owed and let the current one finish first.
         if isRefreshingUsage {
-            if interactive { pendingInteractiveRefresh = true }
+            if interactive {
+                pendingInteractiveRefresh = true
+                Log.usage.notice("interactive refresh queued behind a pass in flight")
+            }
             return
         }
         isRefreshingUsage = true
