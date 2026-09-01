@@ -2,8 +2,9 @@ import Foundation
 
 /// Why an OAuth usage/profile call didn't yield data.
 public enum OAuthClientError: Error, Equatable, Sendable {
-    /// 401/403 — the token is rejected. **Terminal** for that account: stop polling and show
-    /// "login needed" until the token fingerprint changes or the user forces a refresh.
+    /// 401/403 — the token is rejected. **Terminal** for that account: show "login needed" and
+    /// stop polling until the finite park runs out (`UsageService.nextTerminalBackoff` sizes it),
+    /// the token fingerprint changes, or the user forces a refresh — whichever comes first.
     case unauthorized(status: Int)
     /// 429 — backed off. `retryAfter` is honored when the server sends it (seconds or an
     /// HTTP-date), else the caller applies its default.

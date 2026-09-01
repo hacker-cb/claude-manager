@@ -45,6 +45,15 @@ public struct UsageService: Sendable {
     public static let defaultBackoffSeconds: TimeInterval = 300
     /// Backoff ceiling — errors grow the window but never past this.
     public static let maxBackoffSeconds: TimeInterval = 1800
+    /// First terminal (401/403) park. Finite on purpose: a rejected token is *usually* a dead
+    /// login, but the same statuses arrive transiently — a proxy or WAF blip, a server-side
+    /// session invalidation moments before the client refreshes its token — and a permanent park
+    /// turned any of those into "login needed" until a manual Refresh, however long ago the
+    /// blip passed.
+    public static let terminalBackoffSeconds: TimeInterval = 15 * 60
+    /// Ceiling for repeated terminal parks: a genuinely dead login settles at one probe per
+    /// this many seconds, which is what keeping the account rediscoverable costs.
+    public static let maxTerminalBackoffSeconds: TimeInterval = 6 * 3600
     /// `Retry-After` is clamped into this range.
     public static let retryAfterRange: ClosedRange<TimeInterval> = 60 ... 3600
     /// The adaptive fast lane: while a profile is running, polls no slower than this.
@@ -262,10 +271,10 @@ public struct UsageService: Sendable {
     }
 
     /// The state to serve while a standing backoff holds, or nil when none holds — or when it is
-    /// a terminal park that a re-login or an explicit Refresh lifts.
+    /// a terminal park that a re-login or an explicit Refresh lifts early.
     private static func parkedState(_ context: PollContext) -> UsageState? {
         guard let stored = context.stored else { return nil }
-        guard let until = stored.backoffUntil, until > context.now else { return nil }
+        guard hasActivePark(stored, now: context.now) else { return nil }
         guard !clearsTerminal(stored, context.fingerprint, context.interactive) else { return nil }
         switch stored.backoffReason {
         case .terminal: return .loginNeeded
@@ -287,7 +296,8 @@ public struct UsageService: Sendable {
             context.latest
         )
         // How long to stay away is shared with the `/profile` path; only the state the UI shows
-        // is decided here. A terminal park stops polling until a re-login or an explicit Refresh.
+        // is decided here. A terminal park stops polling until it runs out, a re-login, or an
+        // explicit Refresh — whichever comes first.
         let (backoffUntil, reason) = Self.backoff(for: error, after: stored, now: now)
         let state: UsageState = switch error {
         case .unauthorized: .loginNeeded
@@ -350,7 +360,7 @@ public struct UsageService: Sendable {
         return false
     }
 
-    /// Exponential backoff off the previous window (doubling), capped. A terminal
+    /// Exponential backoff off the previous window (doubling), capped. A legacy-terminal
     /// (`distantFuture`) or absent window starts fresh at the default.
     static func nextBackoff(after stored: ThrottleState?, now _: Date) -> TimeInterval {
         guard let until = stored?.backoffUntil, let last = stored?.lastAttemptAt,
@@ -359,6 +369,21 @@ public struct UsageService: Sendable {
             return defaultBackoffSeconds
         }
         return min(maxBackoffSeconds, until.timeIntervalSince(last) * 2)
+    }
+
+    /// The terminal (401/403) sibling of `nextBackoff`: doubling off the previous window, but
+    /// starting wider and growing further — the account is parked, not merely backed off, so the
+    /// next probe is deliberately far away. Only a previous *terminal* window feeds the doubling;
+    /// anything else — no window, a rate-limit/offline one, or the permanent (`distantFuture`)
+    /// park older versions wrote — starts fresh.
+    static func nextTerminalBackoff(after stored: ThrottleState?) -> TimeInterval {
+        guard stored?.backoffReason == .terminal,
+              let until = stored?.backoffUntil, let last = stored?.lastAttemptAt,
+              until != .distantFuture, until > last
+        else {
+            return terminalBackoffSeconds
+        }
+        return min(maxTerminalBackoffSeconds, until.timeIntervalSince(last) * 2)
     }
 }
 

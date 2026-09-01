@@ -27,10 +27,15 @@ extension UsageServiceTests {
         #expect(result.accounts.first?.state == .fresh)
         #expect(result.accounts.first?.snapshot?.weeklyAll?.utilization == 0.5)
         #expect(http.usageCallCount == 1)
-        // And the rejection is remembered, so the next tick doesn't re-ask for the name.
-        let later = now.addingTimeInterval(6 * 3600)
-        _ = await service.refresh(bindings: [binding("p")], now: later)
+        // And the rejection is remembered for the length of its finite park, so the next tick
+        // doesn't re-ask for the name…
+        let inside = now.addingTimeInterval(UsageService.terminalBackoffSeconds - 60)
+        _ = await service.refresh(bindings: [binding("p")], now: inside)
         #expect(http.profileCallCount == 1)
+        // …while once it runs out the name is asked for again — a park is finite, not a verdict.
+        let after = now.addingTimeInterval(UsageService.terminalBackoffSeconds + 61)
+        _ = await service.refresh(bindings: [binding("p")], now: after)
+        #expect(http.profileCallCount == 2)
     }
 
     @Test
@@ -91,8 +96,8 @@ extension UsageServiceTests {
         )
         _ = await service.refresh(bindings: [binding("p")], now: now)
         #expect(http.profileCallCount == 1)
-        // Hours later, still parked — no second identity attempt, no usage attempt.
-        let later = now.addingTimeInterval(6 * 3600)
+        // Minutes later, inside the park — no second identity attempt, no usage attempt.
+        let later = now.addingTimeInterval(UsageService.terminalBackoffSeconds - 60)
         let second = await service.refresh(bindings: [binding("p")], now: later)
         #expect(http.profileCallCount == 1)
         #expect(second.accounts.first?.state == .loginNeeded)
@@ -131,11 +136,11 @@ extension UsageServiceTests {
         )
         _ = await service.refresh(bindings: [binding("p")], now: now)
         #expect(http.usageCallCount == 1)
-        // A later *background* pass stays parked…
-        let later = now.addingTimeInterval(6 * 3600)
+        // A later *background* pass inside the park stays parked…
+        let later = now.addingTimeInterval(UsageService.terminalBackoffSeconds - 60)
         _ = await service.refresh(bindings: [binding("p")], now: later)
         #expect(http.usageCallCount == 1)
-        // …an explicit Refresh tries again.
+        // …an explicit Refresh tries again without waiting the park out.
         _ = await service.refresh(bindings: [binding("p")], now: later, interactive: true)
         #expect(http.usageCallCount == 2)
     }

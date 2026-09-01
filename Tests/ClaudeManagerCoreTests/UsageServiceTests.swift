@@ -141,33 +141,6 @@ struct UsageServiceTests {
     }
 
     @Test
-    func unauthorizedIsTerminalUntilTokenChanges() async {
-        let history = UsageHistoryStore(path: ":memory:")
-        let http401 = ScriptedHTTP { _, _ in HTTPResponse(status: 401, body: Data()) }
-        let serviceA = makeService(
-            provider: StubProvider(results: ["p": .success(token("p"))]),
-            http: http401,
-            history: history
-        )
-        let first = await serviceA.refresh(bindings: [binding("p")], now: now)
-        #expect(first.accounts.first?.state == .loginNeeded)
-        #expect(http401.usageCallCount == 1)
-        // Same token much later → still parked, no new call.
-        _ = await serviceA.refresh(bindings: [binding("p")], now: now.addingTimeInterval(100_000))
-        #expect(http401.usageCallCount == 1)
-        // A different token value (fingerprint change = re-login) → retries.
-        let httpOK = ScriptedHTTP(usage: usageBody)
-        let serviceB = makeService(
-            provider: StubProvider(results: ["p": .success(token("p", value: "NEW"))]),
-            http: httpOK,
-            history: history
-        )
-        let retried = await serviceB.refresh(bindings: [binding("p")], now: now.addingTimeInterval(200_000))
-        #expect(httpOK.usageCallCount == 1)
-        #expect(retried.accounts.first?.state == .fresh)
-    }
-
-    @Test
     func transportFailureIsOffline() async {
         let http = ScriptedHTTP { _, _ in throw URLError(.notConnectedToInternet) }
         let history = UsageHistoryStore(path: ":memory:")

@@ -84,9 +84,13 @@ extension UsageService {
 
     /// The shared "don't call right now" rule.
     ///
-    /// A **terminal** park (401/403) is the only backoff anything lifts, and only through the two
-    /// exits the docs promise: a re-login (new token) or an explicit user Refresh. A rate-limit or
-    /// transport backoff belongs to the server or the network, never to us.
+    /// A **terminal** park (401/403) is the only backoff anything lifts **early**, and only
+    /// through the two exits the docs promise: a re-login (new token) or an explicit user
+    /// Refresh. It is finite either way — `nextTerminalBackoff` sizes it — so a background poll
+    /// re-probes a rejected account eventually even when neither exit happens: the same statuses
+    /// arrive on transient failures, and a permanent park turned one bad moment into "login
+    /// needed" until the user pressed Refresh by hand. A rate-limit or transport backoff belongs
+    /// to the server or the network, never to us.
     ///
     /// The 60s floor is never bypassed — not even by a changed fingerprint. Once sibling launchers
     /// share one account the elected token flips whenever any of them refreshes its own OAuth
@@ -99,8 +103,7 @@ extension UsageService {
         interactive: Bool
     ) -> Bool {
         guard let stored else { return false }
-        let parked = stored.backoffUntil.map { $0 > now } ?? false
-        if parked {
+        if hasActivePark(stored, now: now) {
             // Lifting the park has to lift the floor with it. The `lastAttemptAt` in the way was
             // written by the very rejection being cleared, so leaving the floor in force made the
             // documented exit a no-op for its first minute — the user pressed Refresh, nothing
@@ -111,7 +114,20 @@ extension UsageService {
         return false
     }
 
-    /// True when a standing **terminal** park should be lifted: the token changed (a real
+    /// Whether `stored` holds a backoff window still running at `now`.
+    ///
+    /// A **terminal** `.distantFuture` deliberately does not count. Terminal parks used to be
+    /// written that way — permanent, lifted only by a re-login or an explicit Refresh — and rows
+    /// like that survive in users' databases. Under the finite-park rule nothing would ever
+    /// rewrite them (a parked account is never called, so no new backoff lands), which would keep
+    /// exactly the accounts this change is for parked forever. Reading them as expired retires
+    /// them the first time they are consulted.
+    static func hasActivePark(_ stored: ThrottleState, now: Date) -> Bool {
+        guard let until = stored.backoffUntil, until > now else { return false }
+        return !(stored.backoffReason == .terminal && until == .distantFuture)
+    }
+
+    /// True when a standing **terminal** park should be lifted early: the token changed (a real
     /// re-login) or the user explicitly asked. Never applies to a non-terminal backoff.
     static func clearsTerminal(
         _ stored: ThrottleState,
@@ -186,7 +202,7 @@ extension UsageService {
     ) -> (until: Date, reason: BackoffReason) {
         switch error {
         case .unauthorized:
-            (.distantFuture, .terminal)
+            (now.addingTimeInterval(nextTerminalBackoff(after: stored)), .terminal)
         case let .rateLimited(retryAfter):
             (
                 now.addingTimeInterval(
