@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Working out **which account a token belongs to**, and naming it.
 ///
@@ -84,9 +85,13 @@ extension UsageService {
 
     /// The shared "don't call right now" rule.
     ///
-    /// A **terminal** park (401/403) is the only backoff anything lifts, and only through the two
-    /// exits the docs promise: a re-login (new token) or an explicit user Refresh. A rate-limit or
-    /// transport backoff belongs to the server or the network, never to us.
+    /// A **terminal** park (401/403) is the only backoff anything lifts **early**, and only
+    /// through the two exits the docs promise: a re-login (new token) or an explicit user
+    /// Refresh. It is finite either way — `nextTerminalBackoff` sizes it — so a background poll
+    /// re-probes a rejected account eventually even when neither exit happens: the same statuses
+    /// arrive on transient failures, and a permanent park turned one bad moment into "login
+    /// needed" until the user pressed Refresh by hand. A rate-limit or transport backoff belongs
+    /// to the server or the network, never to us.
     ///
     /// The 60s floor is never bypassed — not even by a changed fingerprint. Once sibling launchers
     /// share one account the elected token flips whenever any of them refreshes its own OAuth
@@ -99,8 +104,7 @@ extension UsageService {
         interactive: Bool
     ) -> Bool {
         guard let stored else { return false }
-        let parked = stored.backoffUntil.map { $0 > now } ?? false
-        if parked {
+        if hasActivePark(stored, now: now) {
             // Lifting the park has to lift the floor with it. The `lastAttemptAt` in the way was
             // written by the very rejection being cleared, so leaving the floor in force made the
             // documented exit a no-op for its first minute — the user pressed Refresh, nothing
@@ -111,7 +115,22 @@ extension UsageService {
         return false
     }
 
-    /// True when a standing **terminal** park should be lifted: the token changed (a real
+    /// Whether `stored` holds a backoff window still running at `now`.
+    ///
+    /// A **terminal** `.distantFuture` deliberately does not count. Terminal parks used to be
+    /// written that way — permanent, lifted only by a re-login or an explicit Refresh — and rows
+    /// like that survive in users' databases. Under the finite-park rule nothing would ever
+    /// rewrite them (a parked account is never called, so no new backoff lands), which would keep
+    /// exactly the accounts this change is for parked forever. Read as expired, a legacy row
+    /// simply stops gating: the usage-scope one is overwritten by the retry's own outcome, while
+    /// an identity-scope one can sit unrewritten indefinitely (a successful `/profile` writes no
+    /// throttle) — inert, re-read and re-ignored on every pass.
+    static func hasActivePark(_ stored: ThrottleState, now: Date) -> Bool {
+        guard let until = stored.backoffUntil, until > now else { return false }
+        return !(stored.backoffReason == .terminal && until == .distantFuture)
+    }
+
+    /// True when a standing **terminal** park should be lifted early: the token changed (a real
     /// re-login) or the user explicitly asked. Never applies to a non-terminal backoff.
     static func clearsTerminal(
         _ stored: ThrottleState,
@@ -165,7 +184,13 @@ extension UsageService {
             // a dead token would be re-offered on every tick forever.
             let scope = Self.identityScope(fingerprint)
             let stored = await history.throttle(scope: scope)
-            let (until, reason) = Self.backoff(for: error, after: stored, now: now)
+            let (until, reason) = Self.backoff(for: error, after: stored, fingerprint: fingerprint, now: now)
+            CoreLog.usage.notice("""
+            token \(fingerprint, privacy: .public): \
+            /profile failed (\(String(describing: error), privacy: .public)) → \
+            \(reason.rawValue, privacy: .public) backoff \
+            for \(Int(until.timeIntervalSince(now)), privacy: .public)s
+            """)
             await history.setThrottle(
                 ThrottleState(
                     lastAttemptAt: now, backoffUntil: until,
@@ -178,15 +203,24 @@ extension UsageService {
     }
 
     /// Error → how long to stay away, and why. Shared by the `/usage` and `/profile` paths so a
-    /// failing identity lookup is throttled exactly like a failing usage fetch.
+    /// failing identity lookup is throttled exactly like a failing usage fetch. `fingerprint` is
+    /// the token the failing call spent — the terminal ladder escalates only along one token.
     static func backoff(
         for error: OAuthClientError,
         after stored: ThrottleState?,
+        fingerprint: String,
         now: Date
     ) -> (until: Date, reason: BackoffReason) {
         switch error {
         case .unauthorized:
-            (.distantFuture, .terminal)
+            (
+                now.addingTimeInterval(nextTerminalBackoff(
+                    after: stored,
+                    fingerprint: fingerprint,
+                    now: now
+                )),
+                .terminal
+            )
         case let .rateLimited(retryAfter):
             (
                 now.addingTimeInterval(
