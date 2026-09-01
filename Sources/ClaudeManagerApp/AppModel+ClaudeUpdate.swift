@@ -95,6 +95,12 @@ extension AppModel {
     /// and straight back on again is a real thing to do, and it must not cost the download
     /// that the second toggle just started.
     private func startClaudeUpdateCleanup() {
+        // One sweep at a time. Off, on, off again is a real sequence, and without this the
+        // second would overwrite the first's handle: two `discardEverything()` runs on one
+        // directory, and the first to finish clearing the slot the other is still working in.
+        // Nothing is lost by returning — the sweep re-reads the setting after the wait, so the
+        // one already in flight acts on whatever the toggle finally says.
+        guard claudeUpdateCleanupTask == nil else { return }
         let inFlight = claudeUpdateTask
         inFlight?.cancel()
         let service = claudeUpdateService

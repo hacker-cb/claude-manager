@@ -146,7 +146,12 @@ struct SettingsView: View {
     /// Where update work stands, in one line — spelled in the core beside the state machine
     /// it describes, so the menu can say the same thing without a second wording.
     private var claudeUpdateStatus: String {
-        model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        // A check in flight is invisible in the state — it stays `.idle` until the feed
+        // answers, which can be the full 20-second timeout — so without this the row would
+        // show a stale "Last checked 4 h ago" beside a greyed-out button for the whole
+        // request: the "nothing happened" reading this button exists to remove.
+        if model.isCheckingClaudeUpdate, model.claudeUpdateState.allowsCheck { return "Checking…" }
+        return model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
     }
 
     private var usageSection: some View {

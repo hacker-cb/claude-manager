@@ -142,8 +142,14 @@ extension AppModel {
             announce(
                 announcing,
                 title: "Already working on it",
+                // Deliberately not "and it will tell you what it finds": the work in flight
+                // carries its own voice, and every non-manual starter passes `.silently` — the
+                // monitor tick, the activation observer, the restore that runs at launch. A
+                // promise none of them keeps is the same dead end as no answer at all, so this
+                // says what to do instead.
                 message: claudeUpdateState.allowsCheck
-                    ? "A check is already under way, and will say what it finds."
+                    ? "A check is already running. Give it a moment, and press again if nothing "
+                    + "appears."
                     : claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
             )
             return
@@ -174,7 +180,7 @@ extension AppModel {
         guard !claudeUpdateState.isBusy else { return }
 
         let installed = realClaudeVersion
-        discardPreparedIfOvertaken(by: installed)
+        await discardPreparedIfOvertaken(by: installed)
         let available: AvailableUpdate?
         do {
             available = try await claudeUpdateService.checkForUpdate(installedVersion: installed)
@@ -243,7 +249,13 @@ extension AppModel {
         // release service is unreachable.
         guard !Task.isCancelled, managesClaudeUpdates else { return }
         let reason = Self.describeUpdateFailure(error)
-        if case .idle = claudeUpdateState { publishClaudeUpdateState(.failed(reason: reason)) }
+        // Over an earlier `.failed` as well as over `.idle`: a retry that fails for a new
+        // reason has to say the new one, and from Settings — where there is no alert — the
+        // status line is the only place it could.
+        switch claudeUpdateState {
+        case .idle, .failed: publishClaudeUpdateState(.failed(reason: reason))
+        case .available, .downloading, .installing, .ready: break
+        }
         announce(
             announcing,
             title: "Could not check for updates",
@@ -314,12 +326,18 @@ extension AppModel {
     /// waiting build is no longer newer. Left alone, the banner offers it forever (a prepared
     /// state blocks re-checks) and pressing Install closes every profile to swap in something
     /// equal or older: a downgrade dressed as an update.
-    private func discardPreparedIfOvertaken(by installed: String?) {
+    private func discardPreparedIfOvertaken(by installed: String?) async {
         guard case let .ready(verified) = claudeUpdateState else { return }
         guard !AvailableUpdate.isUpgrade(verified.version, over: installed) else { return }
         Log.claudeUpdate.info(
             "discarding prepared \(verified.version, privacy: .public); no longer newer than installed"
         )
-        discardPreparedUpdate()
+        // Awaited, where `discardPreparedUpdate` fires and forgets. That one answers a press
+        // and has nothing following it; this one runs *inside* a check that goes straight on
+        // to fetch the newer build into the very directories being emptied, so a detached
+        // delete would race the download it precedes and could take its resume file with it.
+        let service = claudeUpdateService
+        setClaudeUpdateState(.idle)
+        await Task.detached(priority: .utility) { service.discardEverything() }.value
     }
 }
