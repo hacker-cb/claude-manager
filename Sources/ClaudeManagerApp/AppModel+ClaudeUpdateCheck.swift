@@ -68,8 +68,16 @@ extension AppModel {
             return
         }
         guard !isCheckingClaudeUpdate, case .idle = claudeUpdateState else { return }
+        // `restorePrepared` discards whatever it cannot call newer, and `isUpgrade` cannot
+        // call anything newer than a baseline it failed to read — so a launch that catches
+        // Claude.app mid-write would delete a verified build on the strength of a plist that
+        // was unreadable for a second. Left on disk for the next launch instead.
+        guard let installed = realClaudeVersion, AvailableUpdate.isComparableVersion(installed)
+        else {
+            Log.claudeUpdate.error("restore skipped; installed version unreadable")
+            return
+        }
         let service = claudeUpdateService
-        let installed = realClaudeVersion
         // In a slot of its own, and `isCheckingClaudeUpdate` counts it: re-verifying unpacks
         // into the same staging directory a fetch writes to, so nothing else may touch the
         // cache while it runs. The schedule used to be the only other caller and it waits for
@@ -153,12 +161,17 @@ extension AppModel {
     /// whole day before this existed.
     func checkForClaudeUpdateNow(announcing: ClaudeUpdateAnnouncement = .withAnAlert) {
         guard managesClaudeUpdates else {
-            announce(
-                announcing,
-                title: "Claude updates are switched off",
-                message: "Turn \u{201C}Let Claude Manager update Claude\u{201D} back on in Settings and "
-                    + "Claude Manager will fetch new builds again."
-            )
+            // Presented directly rather than through `announce`, whose gate exists for answers
+            // arriving *after* the feature was switched off — it would discard the one sentence
+            // whose whole subject is that state, leaving the menu item to open a window and say
+            // nothing.
+            if announcing.showsAnAlert {
+                presentInfo(
+                    title: "Claude updates are switched off",
+                    message: "Turn \u{201C}Let Claude Manager update Claude\u{201D} back on in Settings "
+                        + "and Claude Manager will fetch new builds again."
+                )
+            }
             return
         }
         // Nothing to compare a release against. `isUpgrade` answers `false` for an absent or
@@ -168,11 +181,19 @@ extension AppModel {
         //
         // Recorded as a failure, not only announced: `.inTheStatusLine` shows no alert, so a
         // press in Settings would otherwise be answered by nothing at all.
-        guard realClaudeVersion != nil else {
-            let reason = "Claude Manager could not read a version from Claude.app, so there is "
-                + "nothing to compare a release against. Try Re-detect in Settings."
-            setClaudeUpdateCheckFailure(reason)
-            announce(announcing, title: "Claude was not found", message: reason)
+        // Comparable, not merely present: `RealClaude.version()` hands back whatever the plist
+        // holds, and an empty or non-numeric string reaches `isUpgrade` as an unreadable
+        // baseline — false, the same answer it gives for "no newer build", which is how a
+        // machine that cannot be compared at all came to be told it was up to date.
+        guard let installed = realClaudeVersion,
+              AvailableUpdate.isComparableVersion(installed)
+        else {
+            recordCheckFailure(
+                "Claude Manager could not read a usable version from Claude.app, so there is "
+                    + "nothing to compare a release against. Try Re-detect in Settings.",
+                title: "Claude's version could not be read",
+                announcing: announcing
+            )
             return
         }
         // Both halves, and neither covers the other. `allowsCheck` is false for a build
@@ -245,7 +266,15 @@ extension AppModel {
         // be read as "the state is `.idle`, `.available` or `.failed`", which it is.
         guard claudeUpdateState.allowsCheck else { return }
 
-        let installed = realClaudeVersion
+        // The same refusal the press makes, for the same reason: with no comparable baseline
+        // the feed's answer cannot mean anything, `checkForUpdate` returns nil on every tick,
+        // and the success stamped below is what keeps Doctor quiet about a machine nothing is
+        // updating. The press explains itself; the schedule has only the log.
+        guard let installed = realClaudeVersion, AvailableUpdate.isComparableVersion(installed)
+        else {
+            Log.claudeUpdate.error("check skipped; installed version unreadable")
+            return
+        }
         let available: AvailableUpdate?
         do {
             available = try await claudeUpdateService.checkForUpdate(installedVersion: installed)
@@ -282,8 +311,7 @@ extension AppModel {
             announce(
                 announcing,
                 title: "Claude is up to date",
-                message: installed.map { "Claude \($0) is the latest release." }
-                    ?? "The feed offers nothing newer than what is installed."
+                message: "Claude \(installed) is the latest release."
             )
             return
         }
@@ -305,22 +333,34 @@ extension AppModel {
         // is off, an alert has no such gate — the user would turn the thing off and be told the
         // release service is unreachable.
         guard !Task.isCancelled, managesClaudeUpdates else { return }
-        let reason = Self.describeUpdateFailure(error)
-        // Recorded whatever the state is. `.available` and `.ready` keep their own control, so
-        // the failure cannot take the state from them — and from Settings, where there is no
-        // alert, it would then have nowhere at all to appear.
-        setClaudeUpdateCheckFailure(reason)
-        // Over an earlier `.failed` as well as over `.idle`: a retry that fails for a new
-        // reason has to say the new one.
-        switch claudeUpdateState {
-        case .idle, .failed: publishClaudeUpdateState(.failed(reason: reason))
-        case .available, .downloading, .installing, .ready: break
-        }
         // No "could not be reached" prefix: `UpdateFeed.Failure` also covers a service that
         // answered and was refused — an unexpected status, a payload this version cannot read,
         // an insecure download URL — and prefixing those with a connectivity claim sends the
         // reader to check their wifi over a sentence saying the server replied.
-        announce(announcing, title: "Could not check for updates", message: reason)
+        recordCheckFailure(
+            Self.describeUpdateFailure(error),
+            title: "Could not check for updates",
+            announcing: announcing
+        )
+    }
+
+    /// Put one failed check everywhere it has to be readable.
+    ///
+    /// Three surfaces, and each covers a case the others cannot. The **recorded reason** is the
+    /// only one that survives `.available` and `.ready`, which keep their own control (Download,
+    /// Install) and must not lose it to a feed that went quiet. The **state** is what the banner
+    /// and the menu render, so it takes the reason over `.idle` and over an earlier `.failed` —
+    /// a retry that fails differently has to say the new one, not leave the first standing. And
+    /// the **alert** is for the presses with no status line in view.
+    private func recordCheckFailure(
+        _ reason: String, title: String, announcing: ClaudeUpdateAnnouncement
+    ) {
+        setClaudeUpdateCheckFailure(reason)
+        switch claudeUpdateState {
+        case .idle, .failed: publishClaudeUpdateState(.failed(reason: reason))
+        case .available, .downloading, .installing, .ready: break
+        }
+        announce(announcing, title: title, message: reason)
     }
 
     /// Throw away a prepared build that the installed app has caught up with.
@@ -335,6 +375,11 @@ extension AppModel {
     /// older: a downgrade dressed as an update.
     func discardPreparedIfOvertaken(by installed: String?) {
         guard case let .ready(verified) = claudeUpdateState else { return }
+        // A baseline that cannot be read is not evidence the prepared build was overtaken:
+        // `isUpgrade` answers false for it exactly as it does for a genuinely older release, and
+        // acting on that would discard a verified build because a plist went unreadable for a
+        // moment.
+        guard let installed, AvailableUpdate.isComparableVersion(installed) else { return }
         guard !AvailableUpdate.isUpgrade(verified.version, over: installed) else { return }
         Log.claudeUpdate.info(
             "discarding prepared \(verified.version, privacy: .public); no longer newer than installed"

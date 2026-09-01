@@ -141,6 +141,11 @@ final class AppModel: ObservableObject {
     /// free while hundreds of megabytes were still being deleted from the cache a new check
     /// would fetch into.
     @Published var claudeUpdateCleanupTask: Task<Void, Never>?
+    /// Which sweep owns that slot. A sweep chained behind another takes the slot while the
+    /// first is still finishing, and the first's exit would otherwise clear the handle of the
+    /// one that replaced it — the clobbering this pair of handles exists to prevent, one level
+    /// down. Incremented on every sweep; each clears the slot only while the count is its own.
+    var claudeUpdateCleanupGeneration = 0
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two

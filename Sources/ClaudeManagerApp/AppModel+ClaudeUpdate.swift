@@ -114,6 +114,12 @@ extension AppModel {
     /// race on the same cache directory. And it re-reads the setting before deleting: off
     /// and straight back on again is a real thing to do, and it must not cost the download
     /// that the second toggle just started.
+    /// Clear the sweep slot, but only while it still belongs to that sweep.
+    private func releaseCleanupSlot(_ generation: Int) {
+        guard claudeUpdateCleanupGeneration == generation else { return }
+        claudeUpdateCleanupTask = nil
+    }
+
     private func startClaudeUpdateCleanup() {
         // One sweep at a time. Off, on, off again is a real sequence, and without this the
         // second would overwrite the first's handle: two `discardEverything()` runs on one
@@ -131,10 +137,12 @@ extension AppModel {
         // Its own handle rather than the check's: the task it awaits clears `claudeUpdateTask`
         // as it finishes, which — parked there — would clear *this* one instead, leaving the
         // sweep running with the slot reading free and the button that reads it saying idle.
+        claudeUpdateCleanupGeneration += 1
+        let generation = claudeUpdateCleanupGeneration
         claudeUpdateCleanupTask = Task { @MainActor [weak self] in
             await inFlight?.value
             await restore?.value
-            defer { self?.claudeUpdateCleanupTask = nil }
+            defer { self?.releaseCleanupSlot(generation) }
             guard self?.managesClaudeUpdates == false else { return }
             await Task.detached(priority: .utility) { service.discardEverything() }.value
         }
@@ -153,10 +161,25 @@ extension AppModel {
         // Whatever this returns through, the toggle may have gone off while the swap ran — see
         // `managesClaudeUpdates`, which defers its own teardown to exactly here.
         defer { sweepIfSwitchedOff() }
+        // Refused, but the build is kept. `isUpgrade` says `false` for a baseline it could not
+        // read exactly as it does for one that has caught up, and treating the two alike here
+        // deletes several hundred verified megabytes because a plist was caught mid-write — and
+        // explains it with "Claude has been updated since", which is not what happened.
+        guard let installed = realClaudeVersion, AvailableUpdate.isComparableVersion(installed)
+        else {
+            Log.claudeUpdate.error("install skipped; installed version unreadable")
+            presentInfo(
+                title: "Claude's version could not be read",
+                message: "Claude Manager could not read a usable version from Claude.app, so it "
+                    + "cannot tell whether this build is newer. The download was kept — try "
+                    + "Re-detect in Settings, then install again."
+            )
+            return
+        }
         // Asked again at the moment of the press, not only when the build was fetched: the
         // banner may have been sitting there while Claude updated itself underneath it, and
         // swapping in an equal-or-older bundle is a downgrade wearing an update's clothes.
-        guard AvailableUpdate.isUpgrade(verified.version, over: realClaudeVersion) else {
+        guard AvailableUpdate.isUpgrade(verified.version, over: installed) else {
             Log.claudeUpdate.info("install skipped; \(verified.version, privacy: .public) is not newer")
             discardPreparedUpdate()
             presentInfo(
@@ -223,8 +246,22 @@ extension AppModel {
     /// would hang the UI at exactly the moment the user pressed something.
     func discardPreparedUpdate() {
         let service = claudeUpdateService
-        Task.detached(priority: .utility) { service.discardEverything() }
         setClaudeUpdateState(.idle)
+        // In the sweep's slot, not detached and forgotten. `.idle` frees the schedule, the
+        // activation tick and both buttons to start a check the instant this returns, and that
+        // check fetches into the very directories being deleted.
+        //
+        // Chained behind a sweep already in the slot rather than skipped: that one re-reads the
+        // setting and exits *without deleting* if the feature was switched back on inside it,
+        // so skipping would leave the discarded build on disk with the state saying `.idle`.
+        let previous = claudeUpdateCleanupTask
+        claudeUpdateCleanupGeneration += 1
+        let generation = claudeUpdateCleanupGeneration
+        claudeUpdateCleanupTask = Task { @MainActor [weak self] in
+            defer { self?.releaseCleanupSlot(generation) }
+            await previous?.value
+            await Task.detached(priority: .utility) { service.discardEverything() }.value
+        }
     }
 
     // MARK: - Launch guard
