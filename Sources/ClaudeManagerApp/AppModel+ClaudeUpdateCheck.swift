@@ -117,7 +117,13 @@ extension AppModel {
         // with an install still in flight, and the stamp below would then silence the schedule
         // for four hours on behalf of a check that `refreshClaudeUpdate` drops on its own guard
         // without asking anybody anything.
-        guard managesClaudeUpdates, claudeUpdateState.allowsCheck, !isCheckingClaudeUpdate
+        // The baseline too, and *before* the stamp below. `refreshClaudeUpdate` refuses an
+        // unreadable installed version — rightly, its answer would mean nothing — but it does so
+        // after this line has recorded an attempt that never reached the network, which then
+        // silences the schedule for four hours. The usual cause is Claude's own installer
+        // swapping the bundle, i.e. a state that clears itself in seconds.
+        guard managesClaudeUpdates, claudeUpdateState.allowsCheck, !isCheckingClaudeUpdate,
+              let installed = realClaudeVersion, AvailableUpdate.isComparableVersion(installed)
         else { return }
         // Stamped when the attempt *starts*: this throttles asking Anthropic, and an attempt
         // that got as far as the network has asked. A failed download is retried by its own
