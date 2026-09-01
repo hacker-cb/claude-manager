@@ -132,13 +132,23 @@ Two things make that awkward to fix, and both are worth knowing before you hit t
 Merge the sync PR as a **merge commit**, not a squash: squashing flattens away the very
 commits `dev` needs in its history for the release PR to stop reading as behind.
 
-The whole dance, as commands. Run from a clean checkout with `origin` fetched:
+The whole dance, as commands. Run from a clean checkout with `origin` fetched, with
+the release version in the branch name (`0.12.0` below stands for it):
 
 ```bash
-git switch -c sync-master-into-dev origin/master && git merge --no-edit origin/dev
+git switch -c chore/sync-master-into-dev-0.12.0 origin/master && git merge --no-edit origin/dev
 git diff --stat origin/dev   # expect empty: the trees must already match
-git push origin HEAD:refs/heads/chore/sync-master-into-dev
+git push origin -u chore/sync-master-into-dev-0.12.0
 ```
+
+**Suffix the branch with the version** (as the v0.11.0 sync already did in practice —
+#147, `chore/sync-master-into-dev-0.11.0`) rather than reusing a bare
+`chore/sync-master-into-dev`. The merge deletes the remote
+ref but not the local branch, so the bare name survives in whichever checkout cut the
+previous release — v0.12.0 found exactly such a leftover, still pointing at the
+v0.11.0-era sync — and a later `git switch` to the bare name lands on that stale merge
+instead of a fresh one. A per-release name can't collide with its predecessors, and
+names the release it belonged to in history.
 
 Then open the PR against `dev`, give it something real to review (see below), merge it as
 a **merge commit**, and only then open the release PR.
