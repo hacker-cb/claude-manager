@@ -23,4 +23,7 @@ enum Log {
     /// Fetching, verifying and installing Claude itself — the app's half of the story the
     /// core logs under the same category name.
     static let claudeUpdate = Logger(subsystem: subsystem, category: "update")
+    /// The usage poll loop's lifecycle and its skip reasons — the core logs the passes
+    /// themselves under the same category name.
+    static let usage = Logger(subsystem: subsystem, category: "usage")
 }

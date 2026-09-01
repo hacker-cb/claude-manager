@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Result of one refresh pass: usage per resolved account, plus the bindings that couldn't
 /// produce a token at all (mapped by the app to a per-profile login-needed / no-source state).
@@ -45,6 +46,15 @@ public struct UsageService: Sendable {
     public static let defaultBackoffSeconds: TimeInterval = 300
     /// Backoff ceiling — errors grow the window but never past this.
     public static let maxBackoffSeconds: TimeInterval = 1800
+    /// First terminal (401/403) park. Finite on purpose: a rejected token is *usually* a dead
+    /// login, but the same statuses arrive transiently — a proxy or WAF blip, a server-side
+    /// session invalidation moments before the client refreshes its token — and a permanent park
+    /// turned any of those into "login needed" until a manual Refresh, however long ago the
+    /// blip passed.
+    public static let terminalBackoffSeconds: TimeInterval = 15 * 60
+    /// Ceiling for repeated terminal parks: a genuinely dead login settles at one probe per
+    /// this many seconds, which is what keeping the account rediscoverable costs.
+    public static let maxTerminalBackoffSeconds: TimeInterval = 6 * 3600
     /// `Retry-After` is clamped into this range.
     public static let retryAfterRange: ClosedRange<TimeInterval> = 60 ... 3600
     /// The adaptive fast lane: while a profile is running, polls no slower than this.
@@ -110,7 +120,10 @@ public struct UsageService: Sendable {
         // before `/usage`. Resolving already-past a check still reads tokens, but the pass then
         // fetches nothing and writes nothing, which is what "off stops all polling" (README /
         // SECURITY.md) promises for the work that has and hasn't happened yet.
-        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: [:]) }
+        if Task.isCancelled {
+            CoreLog.usage.notice("pass cancelled before resolving any binding")
+            return UsageRefreshResult(accounts: [], bindingFailures: [:])
+        }
         var resolved = await resolver.resolve(bindings: bindings, interactive: interactive, now: now)
 
         // Fleet-level key self-heal: if EVERY binding failed to *decrypt* (a rotated
@@ -127,7 +140,10 @@ public struct UsageService: Sendable {
         // account once `/profile` has answered, and folding after fetching would already have
         // spent N calls and stored N rows for it. Gated on cancellation so a toggle-off during
         // resolution stops before spending any `/profile` call.
-        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: resolved.failures) }
+        if Task.isCancelled {
+            CoreLog.usage.notice("pass cancelled after resolving, before any call")
+            return UsageRefreshResult(accounts: [], bindingFailures: resolved.failures)
+        }
         let named = await identified(resolved.accounts, now: now, interactive: interactive)
         let settled = resolver.regroup(named, now: now)
 
@@ -148,8 +164,14 @@ public struct UsageService: Sendable {
         // (README / SECURITY.md) covers reads as much as writes. Breaking out of the account loop
         // above used to fall straight into it.
         guard !Task.isCancelled else {
+            // The cancelled passes log too — a loop that "silently died" is the very report
+            // this category was added to answer, and these were its silent exits.
+            CoreLog.usage.notice(
+                "pass cancelled mid-fleet after \(accounts.count, privacy: .public) account(s)"
+            )
             return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
         }
+        Self.logPass(accounts, failures: resolved.failures, interactive: interactive)
         return await UsageRefreshResult(
             accounts: accounts,
             bindingFailures: resolved.failures,
@@ -164,6 +186,10 @@ public struct UsageService: Sendable {
         // Expired token → call nothing at all (not even `/profile`, which would 401); the account
         // needs a fresh login. Served from whatever key we have.
         if token.isExpired(now: now) {
+            CoreLog.usage.notice("""
+            account \(Self.logID(resolved.identity.uuid), privacy: .public): \
+            token expired → login needed, no call
+            """)
             let stale = await history.latest(accountUUID: resolved.identity.uuid)
             return resolved.usage(stale, state: .loginNeeded)
         }
@@ -187,6 +213,11 @@ public struct UsageService: Sendable {
         // Standing backoff still active → serve stale, rendering the *original* cause (a
         // transport backoff must not read back as a 429).
         if let parked = Self.parkedState(context) {
+            CoreLog.usage.info("""
+            account \(Self.logID(uuid), privacy: .public): \
+            parked (\(stored?.backoffReason?.rawValue ?? "?", privacy: .public)) — \
+            serving \(Self.stateLabel(parked), privacy: .public), no call
+            """)
             return account.usage(latest, state: parked)
         }
         // Inside the 60s floor: we already hold the newest values the API would hand back, and
@@ -262,10 +293,10 @@ public struct UsageService: Sendable {
     }
 
     /// The state to serve while a standing backoff holds, or nil when none holds — or when it is
-    /// a terminal park that a re-login or an explicit Refresh lifts.
+    /// a terminal park that a re-login or an explicit Refresh lifts early.
     private static func parkedState(_ context: PollContext) -> UsageState? {
         guard let stored = context.stored else { return nil }
-        guard let until = stored.backoffUntil, until > context.now else { return nil }
+        guard hasActivePark(stored, now: context.now) else { return nil }
         guard !clearsTerminal(stored, context.fingerprint, context.interactive) else { return nil }
         switch stored.backoffReason {
         case .terminal: return .loginNeeded
@@ -287,14 +318,28 @@ public struct UsageService: Sendable {
             context.latest
         )
         // How long to stay away is shared with the `/profile` path; only the state the UI shows
-        // is decided here. A terminal park stops polling until a re-login or an explicit Refresh.
-        let (backoffUntil, reason) = Self.backoff(for: error, after: stored, now: now)
+        // is decided here. A terminal park stops polling until it runs out, a re-login, or an
+        // explicit Refresh — whichever comes first.
+        let (backoffUntil, reason) = Self.backoff(
+            for: error,
+            after: stored,
+            fingerprint: fingerprint,
+            now: now
+        )
         let state: UsageState = switch error {
         case .unauthorized: .loginNeeded
         case .rateLimited: .rateLimited
         case .transport: .offline
         case .httpError, .malformedBody: latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
+        // The line a stuck-account report is diagnosed from: which status arrived, and what the
+        // service decided to do about it.
+        CoreLog.usage.notice("""
+        account \(Self.logID(uuid), privacy: .public): \
+        /usage failed (\(String(describing: error), privacy: .public)) → \
+        \(reason.rawValue, privacy: .public) backoff \
+        for \(Int(backoffUntil.timeIntervalSince(now)), privacy: .public)s
+        """)
 
         await history.setThrottle(
             ThrottleState(
@@ -350,7 +395,7 @@ public struct UsageService: Sendable {
         return false
     }
 
-    /// Exponential backoff off the previous window (doubling), capped. A terminal
+    /// Exponential backoff off the previous window (doubling), capped. A legacy-terminal
     /// (`distantFuture`) or absent window starts fresh at the default.
     static func nextBackoff(after stored: ThrottleState?, now _: Date) -> TimeInterval {
         guard let until = stored?.backoffUntil, let last = stored?.lastAttemptAt,
@@ -359,6 +404,37 @@ public struct UsageService: Sendable {
             return defaultBackoffSeconds
         }
         return min(maxBackoffSeconds, until.timeIntervalSince(last) * 2)
+    }
+
+    /// The terminal (401/403) sibling of `nextBackoff`: how long the *next* park lasts, given the
+    /// previous one and which token was just rejected. Starts wider and grows further than the
+    /// error backoff — the account is parked, not merely backed off.
+    ///
+    /// Doubling is reserved for the one signal that actually measures a dead login: a
+    /// **scheduled** probe — the previous window ran out, the poll asked again, the server said
+    /// no again. Two other rejections reach here and must not escalate:
+    /// - an **early** retry (the window still running): a user mashing Refresh against a standing
+    ///   park is rejected once per press, and doubling per press rode the park from 15 minutes to
+    ///   its cap inside a minute of clicking — the width is kept instead, restarted from now;
+    /// - a **different token** (fingerprint mismatch): a re-login starts a new story, and
+    ///   inheriting the old token's multi-hour window handed a fresh login a stale sentence.
+    /// Anything else — no window, a rate-limit/offline one, or the permanent (`distantFuture`)
+    /// park older versions wrote — starts fresh at the default.
+    static func nextTerminalBackoff(
+        after stored: ThrottleState?,
+        fingerprint: String,
+        now: Date
+    ) -> TimeInterval {
+        guard let stored, stored.backoffReason == .terminal,
+              stored.tokenFingerprint == fingerprint,
+              let until = stored.backoffUntil, let last = stored.lastAttemptAt,
+              until != .distantFuture, until > last
+        else {
+            return terminalBackoffSeconds
+        }
+        let width = until.timeIntervalSince(last)
+        guard until <= now else { return min(maxTerminalBackoffSeconds, width) }
+        return min(maxTerminalBackoffSeconds, width * 2)
     }
 }
 

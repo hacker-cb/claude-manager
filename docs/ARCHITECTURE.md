@@ -404,9 +404,15 @@ discard a standing rate-limit window.
 throttle state (last attempt, `backoff_until`, a token fingerprint `sha256(token)[:16]`,
 and the backoff **reason** — rateLimited / offline / terminal). A 60s floor gates even
 the manual Refresh; 429 honors `Retry-After` (integer **and** HTTP-date); other errors
-back off exponentially, capped ~30 min; 401/403 is terminal until the fingerprint changes
-(a re-login) or a manual Refresh. Storing the *reason* means a later tick renders the
-true cause rather than reading a transport failure back as a 429.
+back off exponentially, capped ~30 min; 401/403 parks **terminally but finitely** — 15 min,
+doubling per repeat to a 6 h cap — because the same statuses also arrive transiently (a
+proxy/WAF blip, a server-side session invalidation just before the client refreshes its
+token), and a permanent park turned one bad moment into "login needed" until a manual
+Refresh, hours after the blip passed. A re-login (fingerprint change) or a manual Refresh
+still lifts the park immediately; a `distantFuture` row written by older versions reads as
+already expired, so it stops gating anything (the retry's own outcome overwrites the
+usage-scope row; an identity-scope one just sits inert). Storing the *reason* means a later
+tick renders the true cause rather than reading a transport failure back as a 429.
 
 **Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
 via `.linkedLibrary("sqlite3")`; zero SPM deps). A canonical `snapshot_json` is the
