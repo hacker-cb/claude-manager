@@ -23,7 +23,7 @@ struct ClaudeUpdateBanner: View {
             banner(icon: "arrow.down.circle") {
                 Text("Claude \(update.version) is available.")
             } trailing: {
-                Button("Download") { model.startClaudeUpdateRefresh() }
+                Button("Download") { model.checkForClaudeUpdateNow() }
             }
         case let .downloading(version, received, total):
             banner(icon: "arrow.down.circle") {
@@ -75,8 +75,9 @@ struct ClaudeUpdateBanner: View {
                 Text(reason)
             } trailing: {
                 // Through the same entry point as every other trigger, so repeated clicks
-                // cannot start a second check beside the first.
-                Button("Try again") { model.startClaudeUpdateRefresh() }
+                // cannot start a second check beside the first — and so a retry that fails
+                // again says so, rather than clearing the banner and looking like a success.
+                Button("Try again") { model.checkForClaudeUpdateNow() }
             }
         }
     }

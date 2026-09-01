@@ -101,10 +101,25 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("Refresh") { Task { await model.refresh() } }
+        Button("Check for Claude Updates…") { checkForClaudeUpdates() }
         CheckForUpdatesView(updater: updater)
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// Ask for Claude's update from the menu bar, with a window open to answer in.
+    ///
+    /// The window comes first deliberately. Every answer a check can give is presented there
+    /// — "up to date", a failure, the download's progress, the Install button itself — and
+    /// `presentInfo` writes to an alert the window owns, so from a closed one this would be a
+    /// menu item whose result surfaces hours later, beside whatever the user is doing by
+    /// then. Activation is forceful for the same reason `Open Claude Manager` above is: this
+    /// fires from the menu-bar extra while another app is frontmost.
+    private func checkForClaudeUpdates() {
+        openWindow(id: WindowID.main)
+        NSApp.activate(ignoringOtherApps: true)
+        model.checkForClaudeUpdateNow()
     }
 
     /// A trailing `  ·  7d 54% · resets in 3h 10m` for a profile row, or "" when tracking is off
@@ -160,10 +175,29 @@ struct MenuBarContent: View {
     @ViewBuilder
     private var claudeUpdateItems: some View {
         switch model.claudeUpdateState {
-        case .idle, .available, .failed:
+        case .idle:
             // No divider either: an unconditional one opens the menu with a stray separator
             // above the first real item.
             EmptyView()
+        case let .available(update):
+            // What a dropped connection or a slept laptop leaves behind: a build exists and
+            // nothing is fetching it until the next scheduled check, hours away. A single
+            // click is safe here — this downloads, it does not close anybody's session.
+            Button {
+                checkForClaudeUpdates()
+            } label: {
+                Label("Download Claude \(update.version)", systemImage: "arrow.down.circle")
+            }
+            Divider()
+        case .failed:
+            // The reason itself stays in the window's banner: a menu row is one line, and a
+            // verification failure does not fit in one line.
+            Button {
+                checkForClaudeUpdates()
+            } label: {
+                Label("Claude update failed — check again", systemImage: "exclamationmark.triangle.fill")
+            }
+            Divider()
         case let .downloading(version, _, _):
             // Disabled Button, not a bare Label: an item with no action still looks
             // selectable in a menu.

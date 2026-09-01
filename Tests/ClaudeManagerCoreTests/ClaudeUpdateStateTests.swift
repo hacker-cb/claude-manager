@@ -85,4 +85,46 @@ struct ClaudeUpdateStateTests {
             lastCheck: now.addingTimeInterval(86400), now: now, interval: 3600
         ))
     }
+
+    // MARK: - The line the settings row and the menu both read
+
+    @Test
+    func describesWorkInFlightByItsVersion() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let line = { (state: ClaudeUpdateState) in state.statusLine(lastSuccess: now, now: now) }
+        #expect(line(.available(update)) == "Claude 1.37937.1 is available, not downloaded yet.")
+        #expect(line(.downloading(version: "1.2.3", received: 1, total: 2)) == "Downloading Claude 1.2.3…")
+        #expect(line(.ready(verified)) == "Claude 1.37937.1 is ready to install.")
+        #expect(line(.installing(version: "1.2.3")) == "Installing Claude 1.2.3…")
+        #expect(line(.failed(reason: "offline")) == "Last check failed: offline")
+    }
+
+    /// Idle is the state a *failed* background check also leaves behind, so the line falls
+    /// back to when the feed last answered — the one reading that can tell "up to date" apart
+    /// from "nothing has reached Anthropic in a week".
+    @Test
+    func fallsBackToWhenTheFeedLastAnswered() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(ClaudeUpdateState.idle.statusLine(lastSuccess: nil, now: now) == "Not checked yet.")
+        #expect(
+            ClaudeUpdateState.idle.statusLine(lastSuccess: now.addingTimeInterval(-30), now: now)
+                == "Last checked just now."
+        )
+        #expect(
+            ClaudeUpdateState.idle.statusLine(lastSuccess: now.addingTimeInterval(-3 * 86400), now: now)
+                == "Last checked 3 d ago."
+        )
+    }
+
+    /// The stamp is only consulted when nothing is happening: a download in flight is news
+    /// about *now*, and pairing it with "last checked 3 days ago" reads as a contradiction.
+    @Test
+    func ignoresTheStampWhileSomethingIsHappening() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let stale = now.addingTimeInterval(-9 * 86400)
+        #expect(
+            ClaudeUpdateState.ready(verified).statusLine(lastSuccess: stale, now: now)
+                == ClaudeUpdateState.ready(verified).statusLine(lastSuccess: nil, now: now)
+        )
+    }
 }

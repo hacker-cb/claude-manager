@@ -61,6 +61,26 @@ extension AppModel {
         }
     }
 
+    /// When the feed last *answered*, or nil if it never has.
+    ///
+    /// The successful check rather than the last attempt, for the reason
+    /// `PreferenceKeys.lastClaudeUpdateSuccess` gives: with Claude's own updater off, a feed
+    /// that has been failing for a week means nothing is updating Claude at all, and only
+    /// this stamp can tell that apart from a machine that is simply current.
+    var lastClaudeUpdateSuccess: Date? {
+        (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
+            .map(Date.init(timeIntervalSince1970:))
+    }
+
+    /// Whether a check-and-fetch is under way, for the controls that would start another.
+    ///
+    /// Wider than `claudeUpdateState.isBusy`, and deliberately so: between asking the feed
+    /// and hearing back the state is still `.idle`, and a button enabled through that window
+    /// invites a second press that the single-flight guard would drop in silence.
+    var isCheckingClaudeUpdate: Bool {
+        claudeUpdateTask != nil
+    }
+
     /// Stop any in-flight fetch and delete everything staged.
     ///
     /// Three things have to be true at once, which is why this is not two lines inline.
@@ -136,7 +156,7 @@ extension AppModel {
     /// The task handle is what makes this single-flight. `UpdateDownloader` states plainly
     /// that overlapping fetches are the caller's to prevent, and two of them would write the
     /// same cache names and race each other's published state.
-    func startClaudeUpdateRefresh(now: Date = Date()) {
+    func startClaudeUpdateRefresh(now: Date = Date(), announcing: Bool = false) {
         guard managesClaudeUpdates, claudeUpdateTask == nil else { return }
         // Stamped when the attempt *starts*: this throttles asking Anthropic, and an attempt
         // that got as far as the network has asked. A failed download is retried by its own
@@ -144,9 +164,38 @@ extension AppModel {
         // feed every minute.
         defaults.set(now.timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateCheck)
         claudeUpdateTask = Task { @MainActor [weak self] in
-            await self?.refreshClaudeUpdate()
+            await self?.refreshClaudeUpdate(announcing: announcing)
             self?.claudeUpdateTask = nil
         }
+    }
+
+    /// Check now because someone pressed a button, and say what came of it.
+    ///
+    /// Two things separate this from the scheduled path, and both are the point. It ignores
+    /// the four-hourly throttle — a button that answers "not yet, come back at half past two"
+    /// is not a button. And it reports its outcome: a background check that finds nothing is
+    /// right to stay silent, but a press that changes nothing on screen is indistinguishable
+    /// from one that did nothing at all, which is what an unreachable feed looked like for a
+    /// whole day before this existed.
+    func checkForClaudeUpdateNow() {
+        guard managesClaudeUpdates else {
+            presentInfo(
+                title: "Claude updates are switched off",
+                message: "Turn \u{201C}Let Claude Manager update Claude\u{201D} back on in Settings and "
+                    + "Claude Manager will fetch new builds again."
+            )
+            return
+        }
+        // `startClaudeUpdateRefresh` drops an overlapping call without a word, which is right
+        // for a timer and wrong for a press — so name what is already happening instead.
+        guard !isCheckingClaudeUpdate else {
+            presentInfo(
+                title: "Already working on it",
+                message: claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
+            )
+            return
+        }
+        startClaudeUpdateRefresh(announcing: true)
     }
 
     /// Ask the feed, and fetch what it offers.
@@ -154,7 +203,7 @@ extension AppModel {
     /// Both halves run unattended, and both are safe to: nothing here touches the installed
     /// app or the user's profiles. The bytes land in a cache and the verified bundle waits
     /// beside them until someone presses the button.
-    func refreshClaudeUpdate() async {
+    func refreshClaudeUpdate(announcing: Bool = false) async {
         guard managesClaudeUpdates else { return }
         // An install in flight owns the state; a background tick must not overwrite it with
         // a stale reading of the same thing.
@@ -173,6 +222,19 @@ extension AppModel {
             // Unreachable is not "up to date", but it is also not worth a banner: a laptop
             // is offline all the time. Logged, and left for the next tick.
             Log.claudeUpdate.error("check failed — \(error.localizedDescription, privacy: .public)")
+            if announcing {
+                // A press leaves a mark the scheduled path deliberately does not. Background
+                // silence is right — a laptop is offline all the time, and a banner for every
+                // closed lid is noise — but a check someone asked for has to survive being
+                // answered: `.failed` is what puts the reason in the banner, the status line
+                // and the menu, and it still allows the next scheduled check.
+                let reason = Self.describeUpdateFailure(error)
+                publishClaudeUpdateState(.failed(reason: reason))
+                presentInfo(
+                    title: "Could not check for updates",
+                    message: "Anthropic's release service could not be reached. " + reason
+                )
+            }
             return
         }
         guard let available else {
@@ -180,9 +242,23 @@ extension AppModel {
             // has just been installed.
             if case .ready = claudeUpdateState { claudeUpdateService.discardEverything() }
             publishClaudeUpdateState(.idle)
+            if announcing {
+                presentInfo(
+                    title: "Claude is up to date",
+                    message: installed.map { "Claude \($0) is the latest release." }
+                        ?? "The installed build is the latest release."
+                )
+            }
             return
         }
         if case let .ready(verified) = claudeUpdateState, verified.version == available.version {
+            if announcing {
+                presentInfo(
+                    title: "Claude \(verified.version) is ready to install",
+                    message: "It has already been downloaded and verified — press Install when "
+                        + "you are ready for your profiles to close."
+                )
+            }
             return // already prepared, nothing to do
         }
         await prepareClaudeUpdate(available)

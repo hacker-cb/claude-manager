@@ -109,7 +109,12 @@ final class AppModel: ObservableObject {
     var monitorTask: Task<Void, Never>?
     /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
     /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
-    var claudeUpdateTask: Task<Void, Never>?
+    ///
+    /// `@Published` for the manual check's button: a check that has asked the feed but not
+    /// heard back leaves `claudeUpdateState` at `.idle`, so this handle is the only thing
+    /// that knows work is under way, and without the notification the button would stay
+    /// enabled through it.
+    @Published var claudeUpdateTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two
@@ -350,9 +355,7 @@ final class AppModel: ObservableObject {
         // and a diagnostics set half-computed for "we update Claude" and half for "Claude
         // does" would contradict itself on screen.
         if let stale = Doctor.staleUpdateCheckDiagnostic(
-            managingUpdates: managingUpdates,
-            lastSuccess: (defaults.object(forKey: PreferenceKeys.lastClaudeUpdateSuccess) as? Double)
-                .map(Date.init(timeIntervalSince1970:))
+            managingUpdates: managingUpdates, lastSuccess: lastClaudeUpdateSuccess
         ) { result.append(stale) }
         diagnostics = result
     }

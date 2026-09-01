@@ -157,6 +157,14 @@ background, and verifies it before offering anything: the bundle must be signed 
 (team `Q6L2SF6YDW`), carry Apple's notarization ticket, and be the version it claimed to be.
 A build that fails any of that is discarded, not installed.
 
+That schedule is a background one — every four hours, plus whenever you come back to the
+app — so a build published minutes ago can still be hours away. **Check for Claude
+Updates…** in the menu bar, or **Check Now** under Settings → Claude updates, asks straight
+away and answers either way: the new build, *Claude is up to date*, or the reason the
+release service could not be reached. Beside that button is when the service last
+*answered*, which is what tells a machine that is current apart from one whose checks have
+been failing all week.
+
 Installing is always yours to trigger — a banner in the window and an entry in the menu bar.
 Pressing it closes every open profile, swaps the app, and reopens exactly the set that was
 running. A profile that is **still working** won't be closed: Claude refuses the quit and

@@ -80,3 +80,28 @@ public extension ClaudeUpdateState {
         return now.timeIntervalSince(lastCheck) >= interval
     }
 }
+
+public extension ClaudeUpdateState {
+    /// One line saying where update work stands, for the row beside a manual check.
+    ///
+    /// Reads `lastSuccess` rather than the attempt stamp deliberately: an attempt that never
+    /// reached Anthropic says nothing about whether Claude is current, and a check that fails
+    /// leaves this state `.idle` — so without this line a feed that has been unreachable all
+    /// week is indistinguishable, until Doctor's warning, from a machine that is up to date.
+    func statusLine(lastSuccess: Date?, now: Date = Date()) -> String {
+        switch self {
+        case .idle:
+            lastSuccess.map { "Last checked \(UsageFormat.age($0, now: now))." } ?? "Not checked yet."
+        case let .available(update):
+            "Claude \(update.version) is available, not downloaded yet."
+        case let .downloading(version, _, _):
+            "Downloading Claude \(version)…"
+        case let .ready(verified):
+            "Claude \(verified.version) is ready to install."
+        case let .installing(version):
+            "Installing Claude \(version)…"
+        case let .failed(reason):
+            "Last check failed: \(reason)"
+        }
+    }
+}

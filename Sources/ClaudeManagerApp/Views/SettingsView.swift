@@ -106,6 +106,20 @@ struct SettingsView: View {
                 + "when you press the button.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if model.managesClaudeUpdates {
+                // What makes a check something you can *ask* for. The schedule asks every four
+                // hours and whenever the app is activated, so a build published ten minutes ago
+                // is up to four hours away — and until this row existed, a check that never
+                // reached Anthropic was indistinguishable from one that found nothing.
+                HStack {
+                    Button("Check Now") { model.checkForClaudeUpdateNow() }
+                        .disabled(model.isCheckingClaudeUpdate)
+                    Text(claudeUpdateStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if !model.managesClaudeUpdates {
                 // The honest version of what switching this off means. Claude's own updater
                 // decides when to restart the default profile, and no setting here changes
@@ -120,6 +134,12 @@ struct SettingsView: View {
                 .foregroundStyle(.orange)
             }
         }
+    }
+
+    /// Where update work stands, in one line — spelled in the core beside the state machine
+    /// it describes, so the menu can say the same thing without a second wording.
+    private var claudeUpdateStatus: String {
+        model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
     }
 
     private var usageSection: some View {
