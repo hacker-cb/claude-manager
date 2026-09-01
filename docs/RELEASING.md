@@ -166,6 +166,12 @@ Two more things learned cutting v0.10.1:
   paid for the paragraph documenting the trap it hit. If that stops being funny, the fix is
   to teach `copilot-review-gate` to pass a diff with no reviewable files rather than to keep
   feeding it prose.
+- **A feature branch cut from `master` cannot go to `dev` untouched** (v0.13.0). A worktree
+  session starts on the default branch, so a branch cut there sits on the previous release's
+  merge commit; `master` and `dev` carry identical trees, so the PR's *diff* is clean while its
+  commit list opens with `Merge pull request #NNN from hacker-cb/dev`, which then rides into the
+  squash body. Move the branch onto `dev` before the first commit — `git reset --soft origin/dev`
+  where nothing is committed yet, a rebase afterwards.
 - **Admin merge may not be available to you.** It is the documented escape from the empty-diff
   gate, but an agent session can have it withheld (it is, after all, a branch-protection
   bypass). Giving the PR something real to review is the path that needs no special rights —
