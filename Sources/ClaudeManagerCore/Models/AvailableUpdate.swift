@@ -35,6 +35,17 @@ public struct AvailableUpdate: Equatable, Sendable {
         Self.isUpgrade(version, over: installedVersion)
     }
 
+    /// Whether a version string can take part in a comparison at all.
+    ///
+    /// `isUpgrade` answers `false` for a baseline it cannot read, which is the right answer to
+    /// "is this an upgrade" and the wrong one to every question asked around it: an absent or
+    /// unreadable installed version is not "already current", and it is not "the prepared build
+    /// has been overtaken" either. Callers that would otherwise read one as the other ask this
+    /// first.
+    public static func isComparableVersion(_ version: String) -> Bool {
+        VersionOrder.isComparable(version)
+    }
+
     /// The same question about a bare version string.
     ///
     /// Needed wherever an already-prepared build has to be re-checked against what is
