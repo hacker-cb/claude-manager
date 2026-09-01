@@ -106,6 +106,27 @@ struct SettingsView: View {
                 + "when you press the button.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if model.managesClaudeUpdates {
+                // What makes a check something you can *ask* for. The schedule asks every four
+                // hours and whenever the app is activated, so a build published ten minutes ago
+                // is up to four hours away — and until this row existed, a check that never
+                // reached Anthropic was indistinguishable from one that found nothing.
+                HStack {
+                    // `.inTheStatusLine`: the line beside this button renders whatever the
+                    // check makes of itself, and an alert raised from here would be presented
+                    // by the main window — a different scene, often closed, which would then
+                    // show the verdict whenever it is next opened.
+                    Button("Check Now") { model.checkForClaudeUpdateNow(announcing: .inTheStatusLine) }
+                        // Disabled rather than answering "already working on it": with no alert
+                        // to carry that sentence, a press that cannot start a check would look
+                        // like nothing happened. The line says why.
+                        .disabled(model.isCheckingClaudeUpdate || !model.claudeUpdateState.allowsCheck)
+                    Text(claudeUpdateStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if !model.managesClaudeUpdates {
                 // The honest version of what switching this off means. Claude's own updater
                 // decides when to restart the default profile, and no setting here changes
@@ -120,6 +141,32 @@ struct SettingsView: View {
                 .foregroundStyle(.orange)
             }
         }
+    }
+
+    /// Where update work stands, in one line — spelled in the core beside the state machine
+    /// it describes, so the menu can say the same thing without a second wording.
+    private var claudeUpdateStatus: String {
+        // Work in flight is invisible in the state — it stays `.idle` until the feed answers,
+        // which can be the full 20-second timeout — so without this the row would show a stale
+        // "Last checked 4 h ago" beside a greyed-out button for the whole request: the "nothing
+        // happened" reading this button exists to remove. The sweep is named separately; it is
+        // not a check, and the button it disables is the one that would start one.
+        if model.claudeUpdateState.allowsCheck {
+            if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
+            if model.claudeUpdateRestoreTask != nil { return "Checking the downloaded build…" }
+            if model.claudeUpdateTask != nil { return "Checking…" }
+        }
+        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        // A failure the state could not take — `.available` and `.ready` keep their own control
+        // — would otherwise leave a check started here with no answer at all.
+        guard let failure = model.claudeUpdateCheckFailure, !isFailureInState else { return line }
+        return line + " Last check failed: " + failure
+    }
+
+    /// Whether the state is already carrying the failure, so the row does not say it twice.
+    private var isFailureInState: Bool {
+        if case .failed = model.claudeUpdateState { return true }
+        return false
     }
 
     private var usageSection: some View {

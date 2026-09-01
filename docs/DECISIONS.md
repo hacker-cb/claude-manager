@@ -219,9 +219,13 @@ Three things narrow it:
 - `README.md` § Uninstall makes switching it off step one, and says where the file is for
   anyone who has already removed the app.
 - Doctor warns when this app is in charge and the release feed has not answered
-  successfully in a week. That is the only signal for the quiet version of this failure —
-  a blocked feed, with Claude's updater off and a healthy-looking machine — and without it
-  the situation is invisible.
+  successfully in a week, and **Settings → Claude updates** carries the same stamp beside a
+  **Check Now** that asks immediately and says what came back — a build, "up to date", or the
+  reason the service could not be reached. Between them they cover the quiet version of this
+  failure — a blocked feed, with Claude's updater off and a healthy-looking machine — which
+  is otherwise invisible: a background check that never reaches Anthropic leaves the state
+  `.idle`, which is exactly what a check finding nothing leaves behind. A check the user
+  *asked* for is the exception, and lands on `.failed` so the reason is on screen.
 
 **Doctor's Squirrel diagnostics went with it.** The old health check reported a staged
 update blocked by open profiles, an installer that had been waiting for minutes, and what

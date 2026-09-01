@@ -172,6 +172,23 @@ struct UpdateFeedTests {
         #expect(!update.isUpgrade(over: installed))
     }
 
+    /// The question `isUpgrade` deliberately cannot answer: it says `false` both for a baseline
+    /// that is genuinely current and for one it could not read, and the app has to tell those
+    /// apart — "already up to date" and "there is nothing to compare against" send the user to
+    /// two different places, and one of them is a machine that can never be updated.
+    @Test(arguments: [
+        ("1.37937.1", true),
+        ("0.0.0", true),
+        ("", false),
+        ("   ", false),
+        ("unknown", false),
+        ("v1.37937.1", false),
+        ("1.x.0", false)
+    ])
+    func knowsWhichVersionsCanBeCompared(_ version: String, _ expected: Bool) {
+        #expect(AvailableUpdate.isComparableVersion(version) == expected)
+    }
+
     /// The https guard is the only trust boundary in this slice, so it is worth one case
     /// that goes through the real entry point rather than the parser alone.
     @Test

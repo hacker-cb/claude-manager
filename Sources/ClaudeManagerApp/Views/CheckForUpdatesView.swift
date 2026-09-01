@@ -22,7 +22,9 @@ struct CheckForUpdatesView: View {
     }
 
     var body: some View {
-        Button("Check for Updates…") {
+        // Named for its subject: the item directly above it checks *Claude's* updates, and
+        // two neighbours both reading "Check for Updates…" would be a coin toss.
+        Button("Check for Claude Manager Updates…") {
             // Bring the app forward so Sparkle's modal update dialog can't open behind other
             // windows — the check often fires from the menu-bar extra while another app is
             // frontmost, where cooperative `NSApp.activate()` isn't guaranteed to foreground us.
