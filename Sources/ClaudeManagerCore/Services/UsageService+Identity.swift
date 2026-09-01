@@ -121,8 +121,10 @@ extension UsageService {
     /// written that way — permanent, lifted only by a re-login or an explicit Refresh — and rows
     /// like that survive in users' databases. Under the finite-park rule nothing would ever
     /// rewrite them (a parked account is never called, so no new backoff lands), which would keep
-    /// exactly the accounts this change is for parked forever. Reading them as expired retires
-    /// them the first time they are consulted.
+    /// exactly the accounts this change is for parked forever. Read as expired, a legacy row
+    /// simply stops gating: the usage-scope one is overwritten by the retry's own outcome, while
+    /// an identity-scope one can sit unrewritten indefinitely (a successful `/profile` writes no
+    /// throttle) — inert, re-read and re-ignored on every pass.
     static func hasActivePark(_ stored: ThrottleState, now: Date) -> Bool {
         guard let until = stored.backoffUntil, until > now else { return false }
         return !(stored.backoffReason == .terminal && until == .distantFuture)
@@ -182,7 +184,7 @@ extension UsageService {
             // a dead token would be re-offered on every tick forever.
             let scope = Self.identityScope(fingerprint)
             let stored = await history.throttle(scope: scope)
-            let (until, reason) = Self.backoff(for: error, after: stored, now: now)
+            let (until, reason) = Self.backoff(for: error, after: stored, fingerprint: fingerprint, now: now)
             CoreLog.usage.notice("""
             token \(fingerprint, privacy: .public): \
             /profile failed (\(String(describing: error), privacy: .public)) → \
@@ -201,15 +203,24 @@ extension UsageService {
     }
 
     /// Error → how long to stay away, and why. Shared by the `/usage` and `/profile` paths so a
-    /// failing identity lookup is throttled exactly like a failing usage fetch.
+    /// failing identity lookup is throttled exactly like a failing usage fetch. `fingerprint` is
+    /// the token the failing call spent — the terminal ladder escalates only along one token.
     static func backoff(
         for error: OAuthClientError,
         after stored: ThrottleState?,
+        fingerprint: String,
         now: Date
     ) -> (until: Date, reason: BackoffReason) {
         switch error {
         case .unauthorized:
-            (now.addingTimeInterval(nextTerminalBackoff(after: stored)), .terminal)
+            (
+                now.addingTimeInterval(nextTerminalBackoff(
+                    after: stored,
+                    fingerprint: fingerprint,
+                    now: now
+                )),
+                .terminal
+            )
         case let .rateLimited(retryAfter):
             (
                 now.addingTimeInterval(

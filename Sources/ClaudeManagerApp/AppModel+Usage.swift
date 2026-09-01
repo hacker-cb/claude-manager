@@ -31,8 +31,13 @@ extension AppModel {
     /// fast (no prompt) rather than blocking; the prompt is deferred to an interactive Refresh.
     func startUsagePolling() {
         guard usagePollTask == nil, usageTrackingEnabled, usagePollIntervalMinutes > 0 else { return }
-        let nextTick = Int(usagePollSleepInterval())
-        Log.usage.notice("usage polling started (next tick in \(nextTick, privacy: .public)s)")
+        // "first tick now", because it is: the task below fetches immediately and only then
+        // settles into the interval — a schedule line that said otherwise would be the very
+        // thing a stuck-usage report gets mis-reconstructed from.
+        let interval = Int(usagePollSleepInterval())
+        Log.usage.notice(
+            "usage polling started (first tick now, then every \(interval, privacy: .public)s)"
+        )
         usagePollTask = Task { @MainActor [weak self] in
             if let self { await pollUsageOnce() } // immediate, so returning users see usage now
             while !Task.isCancelled {
@@ -160,7 +165,10 @@ extension AppModel {
         // Master switch is the choke point: off → read nothing, call nothing, store nothing.
         guard usageTrackingEnabled else { return }
         guard realClaude != nil, let config = currentConfiguration() else {
-            Log.usage.notice("usage refresh skipped: no Claude install / store configuration")
+            // `.info`, not `.notice`: with no Claude installed this fires on every tick of the
+            // poll loop, and ~288 persisted lines a day about a standing configuration would
+            // drown the log this category exists for. Doctor already names the missing install.
+            Log.usage.info("usage refresh skipped: no Claude install / store configuration")
             return
         }
 

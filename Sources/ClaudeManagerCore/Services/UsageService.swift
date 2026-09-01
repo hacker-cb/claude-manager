@@ -120,7 +120,10 @@ public struct UsageService: Sendable {
         // before `/usage`. Resolving already-past a check still reads tokens, but the pass then
         // fetches nothing and writes nothing, which is what "off stops all polling" (README /
         // SECURITY.md) promises for the work that has and hasn't happened yet.
-        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: [:]) }
+        if Task.isCancelled {
+            CoreLog.usage.notice("pass cancelled before resolving any binding")
+            return UsageRefreshResult(accounts: [], bindingFailures: [:])
+        }
         var resolved = await resolver.resolve(bindings: bindings, interactive: interactive, now: now)
 
         // Fleet-level key self-heal: if EVERY binding failed to *decrypt* (a rotated
@@ -137,7 +140,10 @@ public struct UsageService: Sendable {
         // account once `/profile` has answered, and folding after fetching would already have
         // spent N calls and stored N rows for it. Gated on cancellation so a toggle-off during
         // resolution stops before spending any `/profile` call.
-        if Task.isCancelled { return UsageRefreshResult(accounts: [], bindingFailures: resolved.failures) }
+        if Task.isCancelled {
+            CoreLog.usage.notice("pass cancelled after resolving, before any call")
+            return UsageRefreshResult(accounts: [], bindingFailures: resolved.failures)
+        }
         let named = await identified(resolved.accounts, now: now, interactive: interactive)
         let settled = resolver.regroup(named, now: now)
 
@@ -158,6 +164,11 @@ public struct UsageService: Sendable {
         // (README / SECURITY.md) covers reads as much as writes. Breaking out of the account loop
         // above used to fall straight into it.
         guard !Task.isCancelled else {
+            // The cancelled passes log too — a loop that "silently died" is the very report
+            // this category was added to answer, and these were its silent exits.
+            CoreLog.usage.notice(
+                "pass cancelled mid-fleet after \(accounts.count, privacy: .public) account(s)"
+            )
             return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
         }
         Self.logPass(accounts, failures: resolved.failures, interactive: interactive)
@@ -166,45 +177,6 @@ public struct UsageService: Sendable {
             bindingFailures: resolved.failures,
             hintedAccounts: hintedAccounts(resolved.hints, among: accounts)
         )
-    }
-
-    /// One `.notice` per completed pass — the trail a "why didn't it refresh?" report is read
-    /// from, months later, out of `log show`. Counts and state labels only; nothing identifying.
-    private static func logPass(
-        _ accounts: [AccountUsage],
-        failures: [String: TokenProviderError],
-        interactive: Bool
-    ) {
-        var counts: [String: Int] = [:]
-        for account in accounts {
-            counts[stateLabel(account.state), default: 0] += 1
-        }
-        let states = counts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-            .joined(separator: " ")
-        CoreLog.usage.notice("""
-        pass done: \(accounts.count, privacy: .public) account(s) [\(states, privacy: .public)], \
-        \(failures.count, privacy: .public) binding failure(s), \
-        interactive=\(interactive, privacy: .public)
-        """)
-    }
-
-    /// The state's name for a log line — deliberately not `String(describing:)`, whose payloads
-    /// (a stale date, a provider error) would bloat every summary this feeds.
-    static func stateLabel(_ state: UsageState) -> String {
-        switch state {
-        case .fresh: "fresh"
-        case .stale: "stale"
-        case .loginNeeded: "loginNeeded"
-        case .rateLimited: "rateLimited"
-        case .noSource: "noSource"
-        case .offline: "offline"
-        }
-    }
-
-    /// An account uuid as logged: an 8-char prefix — enough to correlate lines, short of the
-    /// identifier itself.
-    static func logID(_ uuid: String) -> String {
-        String(uuid.prefix(8))
     }
 
     // MARK: - Per account
@@ -348,7 +320,12 @@ public struct UsageService: Sendable {
         // How long to stay away is shared with the `/profile` path; only the state the UI shows
         // is decided here. A terminal park stops polling until it runs out, a re-login, or an
         // explicit Refresh — whichever comes first.
-        let (backoffUntil, reason) = Self.backoff(for: error, after: stored, now: now)
+        let (backoffUntil, reason) = Self.backoff(
+            for: error,
+            after: stored,
+            fingerprint: fingerprint,
+            now: now
+        )
         let state: UsageState = switch error {
         case .unauthorized: .loginNeeded
         case .rateLimited: .rateLimited
@@ -429,19 +406,35 @@ public struct UsageService: Sendable {
         return min(maxBackoffSeconds, until.timeIntervalSince(last) * 2)
     }
 
-    /// The terminal (401/403) sibling of `nextBackoff`: doubling off the previous window, but
-    /// starting wider and growing further — the account is parked, not merely backed off, so the
-    /// next probe is deliberately far away. Only a previous *terminal* window feeds the doubling;
-    /// anything else — no window, a rate-limit/offline one, or the permanent (`distantFuture`)
-    /// park older versions wrote — starts fresh.
-    static func nextTerminalBackoff(after stored: ThrottleState?) -> TimeInterval {
-        guard stored?.backoffReason == .terminal,
-              let until = stored?.backoffUntil, let last = stored?.lastAttemptAt,
+    /// The terminal (401/403) sibling of `nextBackoff`: how long the *next* park lasts, given the
+    /// previous one and which token was just rejected. Starts wider and grows further than the
+    /// error backoff — the account is parked, not merely backed off.
+    ///
+    /// Doubling is reserved for the one signal that actually measures a dead login: a
+    /// **scheduled** probe — the previous window ran out, the poll asked again, the server said
+    /// no again. Two other rejections reach here and must not escalate:
+    /// - an **early** retry (the window still running): a user mashing Refresh against a standing
+    ///   park is rejected once per press, and doubling per press rode the park from 15 minutes to
+    ///   its cap inside a minute of clicking — the width is kept instead, restarted from now;
+    /// - a **different token** (fingerprint mismatch): a re-login starts a new story, and
+    ///   inheriting the old token's multi-hour window handed a fresh login a stale sentence.
+    /// Anything else — no window, a rate-limit/offline one, or the permanent (`distantFuture`)
+    /// park older versions wrote — starts fresh at the default.
+    static func nextTerminalBackoff(
+        after stored: ThrottleState?,
+        fingerprint: String,
+        now: Date
+    ) -> TimeInterval {
+        guard let stored, stored.backoffReason == .terminal,
+              stored.tokenFingerprint == fingerprint,
+              let until = stored.backoffUntil, let last = stored.lastAttemptAt,
               until != .distantFuture, until > last
         else {
             return terminalBackoffSeconds
         }
-        return min(maxTerminalBackoffSeconds, until.timeIntervalSince(last) * 2)
+        let width = until.timeIntervalSince(last)
+        guard until <= now else { return min(maxTerminalBackoffSeconds, width) }
+        return min(maxTerminalBackoffSeconds, width * 2)
     }
 }
 

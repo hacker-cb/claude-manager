@@ -410,7 +410,8 @@ proxy/WAF blip, a server-side session invalidation just before the client refres
 token), and a permanent park turned one bad moment into "login needed" until a manual
 Refresh, hours after the blip passed. A re-login (fingerprint change) or a manual Refresh
 still lifts the park immediately; a `distantFuture` row written by older versions reads as
-already expired, which retires it on first consultation. Storing the *reason* means a later
+already expired, so it stops gating anything (the retry's own outcome overwrites the
+usage-scope row; an identity-scope one just sits inert). Storing the *reason* means a later
 tick renders the true cause rather than reading a transport failure back as a 429.
 
 **Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
