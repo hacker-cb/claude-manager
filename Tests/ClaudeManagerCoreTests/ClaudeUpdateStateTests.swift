@@ -96,7 +96,7 @@ struct ClaudeUpdateStateTests {
         #expect(line(.downloading(version: "1.2.3", received: 1, total: 2)) == "Downloading Claude 1.2.3…")
         #expect(line(.ready(verified)) == "Claude 1.37937.1 is ready to install.")
         #expect(line(.installing(version: "1.2.3")) == "Installing Claude 1.2.3…")
-        #expect(line(.failed(reason: "offline")) == "Last check failed: offline")
+        #expect(line(.failed(reason: "offline")) == "Update failed: offline")
     }
 
     /// Idle is the state a *failed* background check also leaves behind, so the line falls

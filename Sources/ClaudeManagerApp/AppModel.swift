@@ -85,10 +85,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var runningInstances: [ClaudeInstance] = []
 
     /// Where this app is in fetching and installing Claude's own updates — see
-    /// `AppModel+ClaudeUpdate`.
+    /// `AppModel+ClaudeUpdateCheck` (fetching) and `AppModel+ClaudeUpdate` (installing).
     @Published private(set) var claudeUpdateState: ClaudeUpdateState = .idle
 
-    /// Set the update state (`private(set)`, driven from `AppModel+ClaudeUpdate`). Assigns
+    /// Set the update state (`private(set)`, driven from the two `ClaudeUpdate` extensions).
+    /// Assigns
     /// only on a change: `@Published` publishes on every assignment, and a background tick
     /// that recomputes the same value would re-run `RootView.body` for nothing.
     func setClaudeUpdateState(_ value: ClaudeUpdateState) {
@@ -99,7 +100,7 @@ final class AppModel: ObservableObject {
     /// Update keys ("`appPath@targetVersion`") already surfaced as a notification, so
     /// a pending update nags once — not on every refresh. A skew that resolves (the
     /// instance was restarted) drops out, so a later update notifies afresh.
-    /// Non-private for the `AppModel+ClaudeUpdate` extension, which owns the update
+    /// Non-private for the `AppModel+VersionSkewNotice` extension, which owns the update
     /// notifications.
     var notifiedClaudeUpdates: Set<String> {
         get { Set(defaults.stringArray(forKey: PreferenceKeys.notifiedClaudeUpdates) ?? []) }
@@ -108,13 +109,19 @@ final class AppModel: ObservableObject {
 
     var monitorTask: Task<Void, Never>?
     /// The in-flight check-and-fetch, so a second one cannot start beside it and switching
-    /// the feature off can stop it — see `AppModel+ClaudeUpdate`.
+    /// the feature off can stop it — see `AppModel+ClaudeUpdateCheck`.
     ///
     /// `@Published` for the manual check's button: a check that has asked the feed but not
     /// heard back leaves `claudeUpdateState` at `.idle`, so this handle is the only thing
     /// that knows work is under way, and without the notification the button would stay
     /// enabled through it.
     @Published var claudeUpdateTask: Task<Void, Never>?
+    /// The sweep that follows switching managed updates off — kept apart from the handle above
+    /// because it *awaits* that task, which clears its own handle on the way out. Sharing one
+    /// slot meant the finishing check cleared the sweep's, so `isCheckingClaudeUpdate` read
+    /// free while hundreds of megabytes were still being deleted from the cache a new check
+    /// would fetch into.
+    @Published var claudeUpdateCleanupTask: Task<Void, Never>?
     var activationObserver: (any NSObjectProtocol)?
 
     /// Serializes `openReal`: `@MainActor` makes its check-and-set atomic, so two

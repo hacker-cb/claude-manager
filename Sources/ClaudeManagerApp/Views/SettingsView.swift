@@ -112,8 +112,15 @@ struct SettingsView: View {
                 // is up to four hours away — and until this row existed, a check that never
                 // reached Anthropic was indistinguishable from one that found nothing.
                 HStack {
-                    Button("Check Now") { model.checkForClaudeUpdateNow() }
-                        .disabled(model.isCheckingClaudeUpdate)
+                    // `.inTheStatusLine`: the line beside this button renders whatever the
+                    // check makes of itself, and an alert raised from here would be presented
+                    // by the main window — a different scene, often closed, which would then
+                    // show the verdict whenever it is next opened.
+                    Button("Check Now") { model.checkForClaudeUpdateNow(announcing: .inTheStatusLine) }
+                        // Disabled rather than answering "already working on it": with no alert
+                        // to carry that sentence, a press that cannot start a check would look
+                        // like nothing happened. The line says why.
+                        .disabled(model.isCheckingClaudeUpdate || !model.claudeUpdateState.allowsCheck)
                     Text(claudeUpdateStatus)
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -101,7 +101,10 @@ public extension ClaudeUpdateState {
         case let .installing(version):
             "Installing Claude \(version)…"
         case let .failed(reason):
-            "Last check failed: \(reason)"
+            // "Update failed", not "check failed": this state is also where a download, a
+            // verification and an install land, and naming the wrong step sends the reader
+            // looking for a network problem that isn't there.
+            "Update failed: \(reason)"
         }
     }
 }
