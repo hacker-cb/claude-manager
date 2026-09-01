@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Result of one refresh pass: usage per resolved account, plus the bindings that couldn't
 /// produce a token at all (mapped by the app to a per-profile login-needed / no-source state).
@@ -159,11 +160,51 @@ public struct UsageService: Sendable {
         guard !Task.isCancelled else {
             return UsageRefreshResult(accounts: accounts, bindingFailures: resolved.failures)
         }
+        Self.logPass(accounts, failures: resolved.failures, interactive: interactive)
         return await UsageRefreshResult(
             accounts: accounts,
             bindingFailures: resolved.failures,
             hintedAccounts: hintedAccounts(resolved.hints, among: accounts)
         )
+    }
+
+    /// One `.notice` per completed pass — the trail a "why didn't it refresh?" report is read
+    /// from, months later, out of `log show`. Counts and state labels only; nothing identifying.
+    private static func logPass(
+        _ accounts: [AccountUsage],
+        failures: [String: TokenProviderError],
+        interactive: Bool
+    ) {
+        var counts: [String: Int] = [:]
+        for account in accounts {
+            counts[stateLabel(account.state), default: 0] += 1
+        }
+        let states = counts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+            .joined(separator: " ")
+        CoreLog.usage.notice("""
+        pass done: \(accounts.count, privacy: .public) account(s) [\(states, privacy: .public)], \
+        \(failures.count, privacy: .public) binding failure(s), \
+        interactive=\(interactive, privacy: .public)
+        """)
+    }
+
+    /// The state's name for a log line — deliberately not `String(describing:)`, whose payloads
+    /// (a stale date, a provider error) would bloat every summary this feeds.
+    static func stateLabel(_ state: UsageState) -> String {
+        switch state {
+        case .fresh: "fresh"
+        case .stale: "stale"
+        case .loginNeeded: "loginNeeded"
+        case .rateLimited: "rateLimited"
+        case .noSource: "noSource"
+        case .offline: "offline"
+        }
+    }
+
+    /// An account uuid as logged: an 8-char prefix — enough to correlate lines, short of the
+    /// identifier itself.
+    static func logID(_ uuid: String) -> String {
+        String(uuid.prefix(8))
     }
 
     // MARK: - Per account
@@ -173,6 +214,10 @@ public struct UsageService: Sendable {
         // Expired token → call nothing at all (not even `/profile`, which would 401); the account
         // needs a fresh login. Served from whatever key we have.
         if token.isExpired(now: now) {
+            CoreLog.usage.notice("""
+            account \(Self.logID(resolved.identity.uuid), privacy: .public): \
+            token expired → login needed, no call
+            """)
             let stale = await history.latest(accountUUID: resolved.identity.uuid)
             return resolved.usage(stale, state: .loginNeeded)
         }
@@ -196,6 +241,11 @@ public struct UsageService: Sendable {
         // Standing backoff still active → serve stale, rendering the *original* cause (a
         // transport backoff must not read back as a 429).
         if let parked = Self.parkedState(context) {
+            CoreLog.usage.info("""
+            account \(Self.logID(uuid), privacy: .public): \
+            parked (\(stored?.backoffReason?.rawValue ?? "?", privacy: .public)) — \
+            serving \(Self.stateLabel(parked), privacy: .public), no call
+            """)
             return account.usage(latest, state: parked)
         }
         // Inside the 60s floor: we already hold the newest values the API would hand back, and
@@ -305,6 +355,14 @@ public struct UsageService: Sendable {
         case .transport: .offline
         case .httpError, .malformedBody: latest.map { .stale(since: $0.capturedAt) } ?? .offline
         }
+        // The line a stuck-account report is diagnosed from: which status arrived, and what the
+        // service decided to do about it.
+        CoreLog.usage.notice("""
+        account \(Self.logID(uuid), privacy: .public): \
+        /usage failed (\(String(describing: error), privacy: .public)) → \
+        \(reason.rawValue, privacy: .public) backoff \
+        for \(Int(backoffUntil.timeIntervalSince(now)), privacy: .public)s
+        """)
 
         await history.setThrottle(
             ThrottleState(

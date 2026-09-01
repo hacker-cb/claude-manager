@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Working out **which account a token belongs to**, and naming it.
 ///
@@ -182,6 +183,12 @@ extension UsageService {
             let scope = Self.identityScope(fingerprint)
             let stored = await history.throttle(scope: scope)
             let (until, reason) = Self.backoff(for: error, after: stored, now: now)
+            CoreLog.usage.notice("""
+            token \(fingerprint, privacy: .public): \
+            /profile failed (\(String(describing: error), privacy: .public)) → \
+            \(reason.rawValue, privacy: .public) backoff \
+            for \(Int(until.timeIntervalSince(now)), privacy: .public)s
+            """)
             await history.setThrottle(
                 ThrottleState(
                     lastAttemptAt: now, backoffUntil: until,

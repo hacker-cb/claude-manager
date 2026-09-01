@@ -30,6 +30,15 @@ enum CoreLog {
 
     /// Checking for, downloading, verifying and installing a Claude Desktop update.
     static let update = Logger(subsystem: subsystem, category: "update")
+
+    /// The plan-usage pipeline: pass summaries, per-account fetch outcomes, backoff parks.
+    ///
+    /// Added the day a "stuck at login needed" report could not be diagnosed after the fact:
+    /// the pipeline made and skipped calls for hours and left no trace of which HTTP status
+    /// (or which gate) was behind any of it. Statuses, backoff reasons, counts and token
+    /// fingerprints (`sha256[:16]` — non-secret by design, see `DesktopToken.fingerprint`) are
+    /// `.public`; account uuids are logged as 8-char prefixes; emails and paths never appear.
+    static let usage = Logger(subsystem: subsystem, category: "usage")
 }
 
 public extension URL {
