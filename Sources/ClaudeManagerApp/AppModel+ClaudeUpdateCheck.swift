@@ -205,34 +205,49 @@ extension AppModel {
         // `refreshClaudeUpdate`'s busy guard — the "did I press it?" failure this exists to
         // remove.
         guard claudeUpdateState.allowsCheck, !isCheckingClaudeUpdate else {
-            announce(
-                announcing,
-                title: "Already working on it",
-                // Deliberately not "and it will tell you what it finds": the work in flight
-                // carries its own voice, and every non-manual starter passes `.silently` — the
-                // monitor tick, the activation observer, the restore that runs at launch. A
-                // promise none of them keeps is the same dead end as no answer at all, so this
-                // says what to do instead.
-                message: busyNote
-            )
+            let answer = busyAnswer
+            announce(announcing, title: answer.title, message: answer.message)
             return
         }
         startClaudeUpdateRefresh(announcing: announcing)
     }
 
-    /// What is holding the slot, in a sentence. Three different things can, and calling any of
-    /// them "a check" is how the promise of a report gets made on behalf of work that never
-    /// agreed to give one.
-    private var busyNote: String {
+    /// Why the press could not start a check, as a heading and a sentence.
+    ///
+    /// The heading matters as much as the body. Calling any of these "a check" is how a promise
+    /// of a report gets made on behalf of work that never agreed to give one — and a build
+    /// already prepared is not "working on it" at all: nothing is running, and the answer the
+    /// press was after is on the screen already.
+    ///
+    /// The message deliberately never says "and it will tell you what it finds": the work in
+    /// flight carries its own voice, and every non-manual starter passes `.silently` — the
+    /// monitor tick, the activation observer, the restore that runs at launch.
+    private var busyAnswer: (title: String, message: String) {
+        if case let .ready(verified) = claudeUpdateState {
+            return (
+                "Claude \(verified.version) is ready to install",
+                "It has been downloaded and verified — press Install when you are ready for your "
+                    + "profiles to close."
+            )
+        }
         guard claudeUpdateState.allowsCheck else {
-            // `.downloading`, `.installing`, `.ready` — the state says it better than this could.
-            return claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
+            // `.downloading` and `.installing` — the state says it better than this could.
+            return (
+                "Already working on it",
+                claudeUpdateState.statusLine(lastSuccess: lastClaudeUpdateSuccess)
+            )
         }
         if claudeUpdateCleanupTask != nil {
-            return "Claude Manager is still clearing the build it had downloaded. Try again in "
-                + "a moment."
+            return (
+                "Already working on it",
+                "Claude Manager is still clearing the build it had downloaded. Try again in a "
+                    + "moment."
+            )
         }
-        return "A check is already running. Give it a moment, and press again if nothing appears."
+        return (
+            "Already working on it",
+            "A check is already running. Give it a moment, and press again if nothing appears."
+        )
     }
 
     /// Say something, if this check's voice carries that far — see `ClaudeUpdateAnnouncement`
@@ -311,7 +326,10 @@ extension AppModel {
             announce(
                 announcing,
                 title: "Claude is up to date",
-                message: "Claude \(installed) is the latest release."
+                // "Nothing newer", not "the latest release": `checkForUpdate` answers nil for an
+                // installed build *ahead* of the feed too — a prerelease, or a release the feed
+                // has rolled back — and calling that one the latest is simply false.
+                message: "No newer release is available. Claude \(installed) is installed."
             )
             return
         }

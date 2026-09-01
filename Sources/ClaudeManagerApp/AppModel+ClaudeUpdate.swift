@@ -104,6 +104,12 @@ extension AppModel {
         startClaudeUpdateCleanup()
     }
 
+    /// Clear the sweep slot, but only while it still belongs to that sweep.
+    private func releaseCleanupSlot(_ generation: Int) {
+        guard claudeUpdateCleanupGeneration == generation else { return }
+        claudeUpdateCleanupTask = nil
+    }
+
     /// Stop any in-flight fetch and delete everything staged.
     ///
     /// Three things have to be true at once, which is why this is not two lines inline.
@@ -114,12 +120,6 @@ extension AppModel {
     /// race on the same cache directory. And it re-reads the setting before deleting: off
     /// and straight back on again is a real thing to do, and it must not cost the download
     /// that the second toggle just started.
-    /// Clear the sweep slot, but only while it still belongs to that sweep.
-    private func releaseCleanupSlot(_ generation: Int) {
-        guard claudeUpdateCleanupGeneration == generation else { return }
-        claudeUpdateCleanupTask = nil
-    }
-
     private func startClaudeUpdateCleanup() {
         // One sweep at a time. Off, on, off again is a real sequence, and without this the
         // second would overwrite the first's handle: two `discardEverything()` runs on one

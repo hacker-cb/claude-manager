@@ -101,7 +101,13 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("Refresh") { Task { await model.refresh() } }
-        Button("Check for Claude Updates…") { checkForClaudeUpdates() }
+        // Gated like every other item that needs Claude: with the app missing there is no
+        // version to compare a release against, and the item would answer a press with a
+        // second banner about an unreadable *version* beside the one saying Claude.app was
+        // not found — and send the user to Re-detect, which cannot conjure a missing app.
+        if model.realClaude != nil {
+            Button("Check for Claude Updates…") { checkForClaudeUpdates() }
+        }
         CheckForUpdatesView(updater: updater)
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }

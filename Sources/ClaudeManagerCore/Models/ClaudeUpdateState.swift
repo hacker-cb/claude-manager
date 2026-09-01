@@ -91,7 +91,12 @@ public extension ClaudeUpdateState {
     func statusLine(lastSuccess: Date?, now: Date = Date()) -> String {
         switch self {
         case .idle:
-            lastSuccess.map { "Last checked \(UsageFormat.age($0, now: now))." } ?? "Not checked yet."
+            // "Successful", because that is what the stamp records — and `.idle` is also where a
+            // *failed* scheduled check leaves the state, so a machine whose background check has
+            // been failing for three days would otherwise read "Last checked 3 d ago" and mean
+            // the opposite of what it says.
+            lastSuccess.map { "Last successful check \(UsageFormat.age($0, now: now))." }
+                ?? "Not checked yet."
         case let .available(update):
             "Claude \(update.version) is available, not downloaded yet."
         case let .downloading(version, _, _):

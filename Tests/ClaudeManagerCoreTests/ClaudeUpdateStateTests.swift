@@ -108,11 +108,11 @@ struct ClaudeUpdateStateTests {
         #expect(ClaudeUpdateState.idle.statusLine(lastSuccess: nil, now: now) == "Not checked yet.")
         #expect(
             ClaudeUpdateState.idle.statusLine(lastSuccess: now.addingTimeInterval(-30), now: now)
-                == "Last checked just now."
+                == "Last successful check just now."
         )
         #expect(
             ClaudeUpdateState.idle.statusLine(lastSuccess: now.addingTimeInterval(-3 * 86400), now: now)
-                == "Last checked 3 d ago."
+                == "Last successful check 3 d ago."
         )
     }
 
