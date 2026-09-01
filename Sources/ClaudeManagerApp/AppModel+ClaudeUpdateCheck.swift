@@ -60,16 +60,23 @@ extension AppModel {
     /// relaunch is invisible — the state lives in memory — and the schedule would not look
     /// again for hours with several hundred verified megabytes already on disk.
     func restoreClaudeUpdateState() {
-        guard managesClaudeUpdates, !isCheckingClaudeUpdate, case .idle = claudeUpdateState
-        else { return }
+        // Switched off, so there is nothing to restore — but possibly something to delete: the
+        // sweep that switching it off starts is deferred past an install, and an app that quit
+        // inside one never ran it. No other caller is left, the setting being already off.
+        guard managesClaudeUpdates else {
+            sweepIfSwitchedOff()
+            return
+        }
+        guard !isCheckingClaudeUpdate, case .idle = claudeUpdateState else { return }
         let service = claudeUpdateService
         let installed = realClaudeVersion
-        // In the single-flight slot, because re-verifying unpacks into the same staging
-        // directory a fetch writes to. The schedule used to be the only other caller and it
-        // waits for this one to finish; the manual check does not wait for anything, so
-        // without the slot a press seconds after launch runs `prepare` into a directory
-        // `restorePrepared` is still verifying — and whose failure path deletes it.
-        claudeUpdateTask = Task { @MainActor [weak self] in
+        // In a slot of its own, and `isCheckingClaudeUpdate` counts it: re-verifying unpacks
+        // into the same staging directory a fetch writes to, so nothing else may touch the
+        // cache while it runs. The schedule used to be the only other caller and it waits for
+        // this to finish; the manual check waits for nothing, so without the slot a press
+        // seconds after launch runs `prepare` into a directory `restorePrepared` is still
+        // verifying — and whose failure path deletes it.
+        claudeUpdateRestoreTask = Task { @MainActor [weak self] in
             // Off the main actor: re-verifying unpacks and runs `codesign` over an Electron
             // bundle, which is seconds of work.
             let restored = await Task.detached(priority: .utility) {
@@ -77,7 +84,7 @@ extension AppModel {
             }.value
             // Released before the guard, not after: an early return must not strand the slot
             // and leave every later check refusing to start.
-            self?.claudeUpdateTask = nil
+            self?.claudeUpdateRestoreTask = nil
             guard let self, case .idle = self.claudeUpdateState else { return }
             // Through the gate: re-verifying takes seconds, and the toggle can go off inside
             // them.
@@ -98,7 +105,12 @@ extension AppModel {
     func startClaudeUpdateRefresh(
         now: Date = Date(), announcing: ClaudeUpdateAnnouncement = .silently
     ) {
-        guard managesClaudeUpdates, !isCheckingClaudeUpdate else { return }
+        // `allowsCheck` as well as the slot: `startClaudeUpdateRefreshWhenIdle` can reach here
+        // with an install still in flight, and the stamp below would then silence the schedule
+        // for four hours on behalf of a check that `refreshClaudeUpdate` drops on its own guard
+        // without asking anybody anything.
+        guard managesClaudeUpdates, claudeUpdateState.allowsCheck, !isCheckingClaudeUpdate
+        else { return }
         // Stamped when the attempt *starts*: this throttles asking Anthropic, and an attempt
         // that got as far as the network has asked. A failed download is retried by its own
         // state (`.failed` and `.available` both allow a check) rather than by re-asking the
@@ -140,19 +152,6 @@ extension AppModel {
     /// from one that did nothing at all, which is what an unreachable feed looked like for a
     /// whole day before this existed.
     func checkForClaudeUpdateNow(announcing: ClaudeUpdateAnnouncement = .withAnAlert) {
-        // Nothing to compare a release against. `isUpgrade` answers `false` for an absent or
-        // unreadable installed version, so the feed's newest build reads as "no update" and the
-        // check would end by calling a machine that cannot be updated at all up to date — while
-        // stamping the success that keeps Doctor quiet about it.
-        guard realClaudeVersion != nil else {
-            announce(
-                announcing,
-                title: "Claude was not found",
-                message: "Claude Manager could not read a version from Claude.app, so there is "
-                    + "nothing to compare a release against. Try Re-detect in Settings."
-            )
-            return
-        }
         guard managesClaudeUpdates else {
             announce(
                 announcing,
@@ -160,6 +159,20 @@ extension AppModel {
                 message: "Turn \u{201C}Let Claude Manager update Claude\u{201D} back on in Settings and "
                     + "Claude Manager will fetch new builds again."
             )
+            return
+        }
+        // Nothing to compare a release against. `isUpgrade` answers `false` for an absent or
+        // unreadable installed version, so the feed's newest build reads as "no update" and the
+        // check would end by calling a machine that cannot be updated at all up to date — while
+        // stamping the success that keeps Doctor quiet about it.
+        //
+        // Recorded as a failure, not only announced: `.inTheStatusLine` shows no alert, so a
+        // press in Settings would otherwise be answered by nothing at all.
+        guard realClaudeVersion != nil else {
+            let reason = "Claude Manager could not read a version from Claude.app, so there is "
+                + "nothing to compare a release against. Try Re-detect in Settings."
+            setClaudeUpdateCheckFailure(reason)
+            announce(announcing, title: "Claude was not found", message: reason)
             return
         }
         // Both halves, and neither covers the other. `allowsCheck` is false for a build
@@ -207,6 +220,12 @@ extension AppModel {
         _ voice: ClaudeUpdateAnnouncement, title: String, message: String
     ) {
         guard voice.showsAnAlert else { return }
+        // The same gate `publishClaudeUpdateState` applies to the state. Switching the feature
+        // off cancels the request mid-flight, and the answer that arrives a moment later — "up
+        // to date" as much as a failure — would then be an alert about a feature the user has
+        // just turned off. `Task.isCancelled` reads false outside a task, so the synchronous
+        // callers are unaffected.
+        guard !Task.isCancelled, managesClaudeUpdates else { return }
         presentInfo(title: title, message: message)
     }
 
@@ -302,6 +321,25 @@ extension AppModel {
         // an insecure download URL — and prefixing those with a connectivity claim sends the
         // reader to check their wifi over a sentence saying the server replied.
         announce(announcing, title: "Could not check for updates", message: reason)
+    }
+
+    /// Throw away a prepared build that the installed app has caught up with.
+    ///
+    /// Called from `reconcile`, which re-reads the installed version whenever the user comes
+    /// back to the app — deliberately *not* from a check, which cannot run in `.ready` at all
+    /// (`allowsCheck`). That is the hole this fills: Claude replaced by hand or by an installer
+    /// of its own leaves a prepared build that is no longer newer, and nothing else would
+    /// notice until the next launch. Left alone the banner offers it forever, `.ready` blocks
+    /// every check — so `lastClaudeUpdateSuccess` stops moving and Doctor eventually reports a
+    /// feed that is answering perfectly well — and pressing Install swaps in something equal or
+    /// older: a downgrade dressed as an update.
+    func discardPreparedIfOvertaken(by installed: String?) {
+        guard case let .ready(verified) = claudeUpdateState else { return }
+        guard !AvailableUpdate.isUpgrade(verified.version, over: installed) else { return }
+        Log.claudeUpdate.info(
+            "discarding prepared \(verified.version, privacy: .public); no longer newer than installed"
+        )
+        discardPreparedUpdate()
     }
 
     /// Publish a state, unless something else owns it.

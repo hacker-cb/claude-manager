@@ -88,29 +88,32 @@ extension AppModel {
     /// silence. The sweep is `.idle` throughout by construction — the feature is off — and it
     /// is deleting the very directory a new check would fetch into.
     var isCheckingClaudeUpdate: Bool {
-        claudeUpdateTask != nil || claudeUpdateCleanupTask != nil
+        claudeUpdateTask != nil || claudeUpdateCleanupTask != nil || claudeUpdateRestoreTask != nil
     }
 
-    /// Stop any in-flight fetch and delete everything staged.
+    /// The half of switching the feature off that something else postponed.
     ///
-    /// Three things have to be true at once, which is why this is not two lines inline.
-    /// Cancellation is a request rather than a stop, so the sweep waits for the task to
-    /// actually finish — otherwise a task part-way through unpacking finishes *after* the
-    /// delete and leaves hundreds of megabytes staged for a feature that is off. The sweep
-    /// itself occupies the same single-flight slot, so a check cannot start beside it and
-    /// race on the same cache directory. And it re-reads the setting before deleting: off
-    /// and straight back on again is a real thing to do, and it must not cost the download
-    /// that the second toggle just started.
-    /// The half of switching the feature off that an install in flight postponed.
-    ///
-    /// Called once the swap is over, from `installClaudeUpdate`. A no-op in the ordinary case
-    /// where the setting was never touched.
+    /// Two callers, and neither is the setter. `installClaudeUpdate` runs it as it returns,
+    /// because the setter deliberately leaves a swap in flight alone. And launch runs it,
+    /// because that install may never have returned — quit or crash inside it and the setter
+    /// will not fire again (the setting is already off), leaving hundreds of megabytes staged
+    /// for a feature nobody has. A no-op in the ordinary case where the setting was untouched.
     func sweepIfSwitchedOff() {
         guard !managesClaudeUpdates else { return }
         setClaudeUpdateState(.idle)
         startClaudeUpdateCleanup()
     }
 
+    /// Stop any in-flight fetch and delete everything staged.
+    ///
+    /// Three things have to be true at once, which is why this is not two lines inline.
+    /// Cancellation is a request rather than a stop, so the sweep waits for the work to
+    /// actually finish — otherwise a task part-way through unpacking finishes *after* the
+    /// delete and leaves hundreds of megabytes staged for a feature that is off. The sweep
+    /// itself occupies a single-flight slot, so a check cannot start beside it and
+    /// race on the same cache directory. And it re-reads the setting before deleting: off
+    /// and straight back on again is a real thing to do, and it must not cost the download
+    /// that the second toggle just started.
     private func startClaudeUpdateCleanup() {
         // One sweep at a time. Off, on, off again is a real sequence, and without this the
         // second would overwrite the first's handle: two `discardEverything()` runs on one
@@ -118,14 +121,19 @@ extension AppModel {
         // Nothing is lost by returning — the sweep re-reads the setting after the wait, so the
         // one already in flight acts on whatever the toggle finally says.
         guard claudeUpdateCleanupTask == nil else { return }
+        // Both, because both write the cache this is about to delete: the check that fetches
+        // into it, and the launch-time restore that unpacks into it to re-verify.
         let inFlight = claudeUpdateTask
+        let restore = claudeUpdateRestoreTask
         inFlight?.cancel()
+        restore?.cancel()
         let service = claudeUpdateService
         // Its own handle rather than the check's: the task it awaits clears `claudeUpdateTask`
         // as it finishes, which — parked there — would clear *this* one instead, leaving the
         // sweep running with the slot reading free and the button that reads it saying idle.
         claudeUpdateCleanupTask = Task { @MainActor [weak self] in
             await inFlight?.value
+            await restore?.value
             defer { self?.claudeUpdateCleanupTask = nil }
             guard self?.managesClaudeUpdates == false else { return }
             await Task.detached(priority: .utility) { service.discardEverything() }.value

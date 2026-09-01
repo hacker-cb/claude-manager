@@ -131,6 +131,10 @@ final class AppModel: ObservableObject {
     /// that knows work is under way, and without the notification the button would stay
     /// enabled through it.
     @Published var claudeUpdateTask: Task<Void, Never>?
+    /// The launch-time re-verification of a build prepared before the last quit. Its own
+    /// handle, like the sweep's: it holds the same cache but it is not a check, and a status
+    /// row reading "Checking…" through seconds of `codesign` describes work nobody started.
+    @Published var claudeUpdateRestoreTask: Task<Void, Never>?
     /// The sweep that follows switching managed updates off — kept apart from the handle above
     /// because it *awaits* that task, which clears its own handle on the way out. Sharing one
     /// slot meant the finishing check cleared the sweep's, so `isCheckingClaudeUpdate` read

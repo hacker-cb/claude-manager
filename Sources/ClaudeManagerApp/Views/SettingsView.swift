@@ -153,6 +153,7 @@ struct SettingsView: View {
         // not a check, and the button it disables is the one that would start one.
         if model.claudeUpdateState.allowsCheck {
             if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
+            if model.claudeUpdateRestoreTask != nil { return "Checking the downloaded build…" }
             if model.claudeUpdateTask != nil { return "Checking…" }
         }
         let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
