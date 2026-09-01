@@ -139,7 +139,7 @@ extension UsageServiceTests {
     }
 
     @Test
-    func legacyPermanentParkReadsAsExpiredAndRetries() async {
+    func legacyPermanentParkReadsAsExpiredAndRetries() async throws {
         // Older versions wrote terminal parks as `distantFuture`, and rows like that survive in
         // users' databases. A parked account is never called, so nothing ever rewrites its row —
         // under the finite-park rule those rows must read as already expired, or exactly the
@@ -151,9 +151,12 @@ extension UsageServiceTests {
             http: http,
             history: history
         )
-        // Learn the scopes a real pass uses (the account uuid and the token fingerprint)…
+        // Learn the scopes a real pass uses (the account uuid and the token fingerprint) — and
+        // *require* them: falling back to a made-up scope would plant the legacy rows where the
+        // service never looks, and the retry assertion below would then pass without exercising
+        // the legacy-park rule at all.
         let seeded = await service.refresh(bindings: [binding("p")], now: now)
-        let uuid = seeded.accounts.first?.identity.uuid ?? ""
+        let uuid = try #require(seeded.accounts.first?.identity.uuid)
         let fingerprint = token("p").fingerprint
         // …then plant the legacy rows exactly as an older build left them.
         let legacy = ThrottleState(
