@@ -277,7 +277,8 @@ struct UsageOverviewTests {
         let overview = rank([account("a", limits: [limit(UsageLimit.kindWeeklyAll, 0.2)])])
         let candidate = try #require(overview.candidates.first)
         #expect(candidate.headroom == nil)
-        #expect(candidate.state == .onPace)
+        // Not `onPace` — that asserts a rate nothing here measured.
+        #expect(candidate.state == .paceUnknown)
         #expect(candidate.canLead == false)
         #expect(overview.leader == nil)
     }
@@ -292,6 +293,35 @@ struct UsageOverviewTests {
         ])])
         #expect(isClose(overview.candidates.first?.headroom, 0.30))
         #expect(overview.candidates.first?.canLead == true)
+    }
+
+    // MARK: - Which windows the server has in force
+
+    @Test
+    func anInactiveWindowDoesNotGateWhileAnActiveOneExists() {
+        // `is_active` varies per window in practice, and the rest of the app respects it:
+        // `LimitEvaluator` will not notify on an inactive window and `bindingLimit` prefers
+        // active ones. Gating on one the server had taken out of force sank an account the
+        // sidebar was meanwhile showing as fine.
+        var inactive = limit(UsageLimit.kindWeeklyScoped, 0.92, resetsIn: halfWeek, model: "Fable")
+        inactive.isActive = false
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek),
+            inactive
+        ])])
+        #expect(overview.candidates.first?.state == .spend)
+        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
+    }
+
+    @Test
+    func withNoActiveWindowAtAllTheInactiveOnesStillCount() {
+        // The fallback the rest of the app applies too: an account whose windows are all marked
+        // inactive still has a weekly budget, and must not be stranded without one.
+        var week = limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
+        week.isActive = false
+        let overview = rank([account("a", limits: [week])])
+        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
+        #expect(isClose(overview.candidates.first?.headroom, 0.30))
     }
 
     // MARK: - Stickiness

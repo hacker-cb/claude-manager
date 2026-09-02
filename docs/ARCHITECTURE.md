@@ -446,6 +446,10 @@ Six rules carry the weight, each with a test:
   separate windows — this fleet already reports two whose resets differ. Once they diverge the
   fuller window is easily the freer one: 70% resetting tomorrow leaves more room than 60% with
   six days to spend it in.
+- **Only the windows the server has in force are read.** `is_active` varies per window in
+  practice, and the rest of the app already respects it — `LimitEvaluator` will not notify on an
+  inactive window and `bindingLimit` prefers active ones — so the same preference applies here,
+  with the same fallback to all of them where the server marked none.
 - **Gates are separate from budget, and a gate is `displaySeverity`.** Not a percentage of our
   own: that is the reading every bar in the app paints from, so it folds in the server's
   `severity` beside our threshold — and the server escalates for what a percentage cannot
@@ -454,21 +458,26 @@ Six rules carry the weight, each with a test:
   `nearlyOut`, so the board can never send someone to a red bar. Where several windows gate at
   once the one reported is the one that **blocks longest**, since that is when work can go
   there again; the state still names the most severe. The **5-hour window gates and nothing
-  more**: it refills within hours, and charging it against the week would move someone to
-  another profile every session — a chat's context spent on a wait measured in minutes.
+  more, at any percentage**: it refills within hours, and charging it against the week would
+  move someone to another profile every session — a chat's context spent on a wait measured in
+  minutes. Asking about exhaustion first read a full session as a spent week, which is that
+  churn with an extra step.
 - **A window this build does not recognize still gates**, for the same reason the parser keeps
   it, but never enters the headroom: nothing here knows how long its period is.
-- **Only current figures may instruct.** Anything not `.fresh` ranks behind what is, and can
-  never *lead*; so can an account whose window reported no reset, since there is no clock to
-  measure a pace against. `leader` is therefore optional, and nil is a real answer — a fleet
-  that is entirely stale, gated or signed out has no recommendation to give, and the surfaces
-  say so instead of promoting the least-bad row.
+- **Only current figures may instruct.** Among the accounts work could actually go to, anything
+  not `.fresh` ranks behind what is, and can never *lead*; nor can an account whose window
+  reported no usable reset, which is `paceUnknown` rather than `onPace` — the latter is a claim
+  about a rate, and there is no clock to measure one against. `leader` is therefore optional,
+  and nil is a real answer: a fleet that is entirely stale, gated or signed out has no
+  recommendation to give, and a surface is meant to say so rather than promote the least-bad
+  row.
 - **A window whose reset has passed is not reasoned from at all.** Clamping the negative
   remainder to zero read a spent quota as a full week of room, and a `.fresh` snapshot reaches
   that state routinely — it is the standing condition of a "Manually only" fleet and of
   anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
-  claim; an elapsed *gate* reads as an unknown return rather than an imminent one. The same
-  rule the panes already apply to a countdown.
+  claim; an elapsed *gate* reads as an unknown return rather than an imminent one, so it blocks
+  longest rather than shortest. One reading of "is this window still ahead" serves all of it
+  (`UsagePresentation.showsReset`), which is the rule the panes already apply to a countdown.
 - **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
   (0.05) before the recommendation changes; a leader that hits a gate loses the place
   regardless. Without it the answer flips between near-equal accounts on every poll.
@@ -479,8 +488,9 @@ change the label on a row.
 
 The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
 model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
-`UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so the surfaces read
-"Fable work" today and follow the payload if it is renamed again. Extra usage is deliberately
+`UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so a surface reads
+"Fable work" today and follows the payload if it is renamed again. Nothing in the app layer draws
+any of this yet — the core decision landed first, as the update pipeline did. Extra usage is deliberately
 outside all of this — it is money, not a window.
 
 `UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one

@@ -30,9 +30,13 @@ public enum CandidateState: Sendable, Equatable, CaseIterable {
     case onPace
     /// Spending faster than the week elapses; this account runs out before its reset.
     case burningFast
+    /// Usable, but nothing said when its week turns over — so no pace can be claimed either way.
+    /// Kept apart from `onPace`, which asserts something this case does not know.
+    case paceUnknown
     /// The 5-hour window is nearly full. A gate, not a budget — it frees itself within hours.
     case sessionNearlyFull
-    /// A counted weekly window is at or past `UsageLimit.criticalUtilization`.
+    /// A counted window is one the app would paint red — our threshold, or the server's own
+    /// `severity`, whichever is more severe (`UsageLimit.displaySeverity`).
     case nearlyOut
     /// A counted window is exhausted; nothing can be spent here until it resets.
     case out
@@ -45,7 +49,7 @@ public enum CandidateState: Sendable, Equatable, CaseIterable {
     /// is a reason to be out of the running, ordered by how soon it stops being one.
     var order: Int {
         switch self {
-        case .spend, .onPace, .burningFast: 0
+        case .spend, .onPace, .burningFast, .paceUnknown: 0
         case .sessionNearlyFull: 1
         case .nearlyOut: 2
         case .out: 3
@@ -94,11 +98,6 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
     /// every account known to come back soon, while the copy and `soonestReturn` were separately
     /// careful to ignore it — three readings of one field, two of them right.
     public var freesAt: Date?
-    /// Whether this candidate may be *the answer*. False for anything gated, anything whose
-    /// figures have stopped moving, and anything with no clock to reason against — a stale 80%
-    /// is not evidence that work should go somewhere.
-    public var canLead: Bool
-
     public init(
         account: AccountUsage,
         state: CandidateState,
@@ -106,8 +105,7 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
         bindingWeekly: UsageLimit?,
         weeklyResetsAt: Date?,
         gatingLimit: UsageLimit?,
-        freesAt: Date?,
-        canLead: Bool
+        freesAt: Date?
     ) {
         self.account = account
         self.state = state
@@ -116,7 +114,15 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
         self.weeklyResetsAt = weeklyResetsAt
         self.gatingLimit = gatingLimit
         self.freesAt = freesAt
-        self.canLead = canLead
+    }
+
+    /// Whether this candidate may be *the answer*: usable, current, and with a clock behind it.
+    ///
+    /// Derived rather than stored. Every branch that built it computed exactly this, and a
+    /// stored copy is a second statement of the rule that can fall out of step with the state
+    /// beside it — a gated row asserting it may lead is not a state worth being able to express.
+    public var canLead: Bool {
+        state.isUsable && isCurrent && headroom != nil
     }
 
     public var id: String {
@@ -138,15 +144,10 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
 public struct UsageOverview: Sendable, Equatable {
     public var candidates: [UsageCandidate]
     public var mode: WorkMode
-    /// The clock this ranking was taken against. Stored so everything derived from it below
-    /// answers on the same one — a caller passing a second `now` is how two figures on one
-    /// screen come to disagree about which windows have already turned over.
-    public var now: Date
 
-    public init(candidates: [UsageCandidate], mode: WorkMode, now: Date) {
+    public init(candidates: [UsageCandidate], mode: WorkMode) {
         self.candidates = candidates
         self.mode = mode
-        self.now = now
     }
 
     /// The account to take work to, or nil when nothing is in a position to be recommended.
@@ -190,8 +191,7 @@ public struct UsageOverview: Sendable, Equatable {
         let ordered = assessed.sorted(by: precedes)
         return UsageOverview(
             candidates: applyStickiness(ordered, previousLeader: previousLeader),
-            mode: mode,
-            now: now
+            mode: mode
         )
     }
 }

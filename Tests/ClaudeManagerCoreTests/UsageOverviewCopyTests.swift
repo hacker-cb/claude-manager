@@ -180,6 +180,25 @@ struct UsageOverviewCopyTests {
         #expect(text == "7d 100%")
     }
 
+    @Test
+    func theVerbFollowsTheWindowNamedNotTheRowsState() throws {
+        // The state is the most severe thing happening; the figure is the window that blocks
+        // longest, and those are not always the same window. "back in 1h" beside a 95% session
+        // read as a claim about that session being spent.
+        let text = try reason(account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 900),
+            limit(UsageLimit.kindSession, 0.95, resetsIn: 3600)
+        ]))
+        #expect(text == "5h 95% · frees in 1h 0m")
+    }
+
+    @Test
+    func aWindowWithNoUsableResetPrintsItsFigureAndClaimsNoPace() throws {
+        let text = try reason(account("a", limits: [limit(UsageLimit.kindWeeklyAll, 0.2)]))
+        #expect(text == "80% of 7d left")
+        #expect(UsageOverview.stateLabel(.paceUnknown) == "No reset reported")
+    }
+
     // MARK: - State labels
 
     @Test

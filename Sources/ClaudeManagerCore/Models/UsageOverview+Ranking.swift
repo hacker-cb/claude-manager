@@ -21,8 +21,7 @@ extension UsageOverview {
                 bindingWeekly: nil,
                 weeklyResetsAt: nil,
                 gatingLimit: nil,
-                freesAt: nil,
-                canLead: false
+                freesAt: nil
             )
         }
         guard let snapshot = account.snapshot else {
@@ -33,13 +32,12 @@ extension UsageOverview {
                 bindingWeekly: nil,
                 weeklyResetsAt: nil,
                 gatingLimit: nil,
-                freesAt: nil,
-                canLead: false
+                freesAt: nil
             )
         }
         let counted = countedLimits(in: snapshot, mode: mode)
         let bound = bind(weekly: countedWeekly(in: snapshot, mode: mode), now: now)
-        if let gate = gate(among: counted) {
+        if let gate = gate(among: counted, now: now) {
             return UsageCandidate(
                 account: account,
                 state: gate.state,
@@ -48,8 +46,7 @@ extension UsageOverview {
                 weeklyResetsAt: bound?.resetsAt,
                 gatingLimit: gate.limit,
                 // Only a reset still ahead is a return time; a passed one is unknown, not early.
-                freesAt: gate.limit.resetsAt.flatMap { $0 > now ? $0 : nil },
-                canLead: false
+                freesAt: liveReset(gate.limit, now: now)
             )
         }
         let headroom = bound?.headroom
@@ -60,11 +57,7 @@ extension UsageOverview {
             bindingWeekly: bound?.limit,
             weeklyResetsAt: bound?.resetsAt,
             gatingLimit: nil,
-            freesAt: nil,
-            // A stale, offline or rate-limited account still shows its last figures, but it may
-            // not *instruct*: those numbers stopped moving, and the work they would send someone
-            // to may already have been done against them. Nor may one with no clock behind it.
-            canLead: account.state == .fresh && headroom != nil
+            freesAt: nil
         )
     }
 
@@ -86,13 +79,37 @@ extension UsageOverview {
     /// gate only (below), never toward headroom, because nothing here knows how long its window
     /// is or whether the mode should have counted it at all.
     static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
-        snapshot.limits.filter { counts($0, mode: mode) }
+        preferActive(snapshot.limits.filter { counts($0, mode: mode) })
     }
 
     /// The counted windows whose budget is a *weekly* one — the only ones headroom is measured
     /// over, since the headroom formula compares a budget against a week of wall clock.
     static func countedWeekly(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
-        snapshot.limits.filter { ($0.isWeeklyAll || $0.isWeeklyScoped) && counts($0, mode: mode) }
+        preferActive(
+            snapshot.limits.filter { ($0.isWeeklyAll || $0.isWeeklyScoped) && counts($0, mode: mode) }
+        )
+    }
+
+    /// The active windows, or all of them where the server marked none — the same preference
+    /// `UsageSnapshot.bindingLimit` applies, and the same one `LimitEvaluator` uses to decide
+    /// what may raise a notification.
+    ///
+    /// Reading `is_active` was not optional here: it varies per window in practice (this fleet
+    /// has an account whose weekly-all is inactive at 49% beside an active scoped window at
+    /// 98%), so ignoring it let a window the server had taken out of force gate an account that
+    /// the sidebar was meanwhile showing as fine — and no notification would ever have fired for
+    /// it. The fallback is what stops the preference stranding an account whose windows are all
+    /// marked inactive: it has a weekly budget whatever the flag says.
+    static func preferActive(_ limits: [UsageLimit]) -> [UsageLimit] {
+        let active = limits.filter(\.isActive)
+        return active.isEmpty ? limits : active
+    }
+
+    /// A reset only while it is still ahead. One reading of "has this window turned over yet",
+    /// shared by everything below — `UsagePresentation.showsReset` is the same rule, and this is
+    /// the form that hands back the date rather than a flag.
+    static func liveReset(_ limit: UsageLimit, now: Date) -> Date? {
+        UsagePresentation.showsReset(limit.resetsAt, now: now) ? limit.resetsAt : nil
     }
 
     private static func counts(_ limit: UsageLimit, mode: WorkMode) -> Bool {
@@ -117,16 +134,22 @@ extension UsageOverview {
     /// fifteen-minute wait, and quoting the session's countdown there promises a return the week
     /// will not honour. The *state* still names the most severe thing — an exhausted window is
     /// `out` whatever else is happening.
-    static func gate(among limits: [UsageLimit]) -> (state: CandidateState, limit: UsageLimit)? {
+    static func gate(
+        among limits: [UsageLimit],
+        now: Date
+    ) -> (state: CandidateState, limit: UsageLimit)? {
         let gating = limits.filter { $0.displaySeverity == .critical }
-        guard let blocker = blocksLongest(gating) else { return nil }
+        guard let blocker = blocksLongest(gating, now: now) else { return nil }
+        // The session check comes **first**, and being full does not promote it out of this
+        // arm. The 5-hour window is a gate and nothing more: it refills within hours, so it must
+        // not sink an account the way a spent week does. Asking about exhaustion first read a
+        // 100% session as `out` — below an account with 94% of its *week* gone — and twenty
+        // minutes later the same profile was best again, which is precisely the churn this state
+        // exists to prevent. It holds only while the session is the *one* thing gating, or the
+        // row would offer a wait of minutes over a block of days.
+        if gating.allSatisfy(\.isSession) { return (.sessionNearlyFull, blocker) }
         if gating.contains(where: { $0.utilization >= 1 }) { return (.out, blocker) }
-        // The 5-hour window is a gate and nothing more: it refills within hours, so it must not
-        // sink an account the way a spent week does, and it never enters the headroom below.
-        // Sending someone to a different profile every time a session fills would cost them a
-        // chat's context for a wait measured in minutes — but only while it is the *one* thing
-        // gating, or the row would offer a wait of minutes over a block of days.
-        return (gating.allSatisfy(\.isSession) ? .sessionNearlyFull : .nearlyOut, blocker)
+        return (.nearlyOut, blocker)
     }
 
     /// Of several gating windows, the one that keeps the account unusable longest — because that
@@ -135,11 +158,18 @@ extension UsageOverview {
     /// A window that reported no reset blocks longest of all: nothing said it frees, so nothing
     /// may promise it does. Fully ordered (reset, then utilization, then the window's own
     /// identity) so the row a reader sees does not depend on the order the server listed them in.
-    static func blocksLongest(_ limits: [UsageLimit]) -> UsageLimit? {
+    static func blocksLongest(_ limits: [UsageLimit], now: Date) -> UsageLimit? {
         limits.min { lhs, rhs in
-            if lhs.resetsAt != rhs.resetsAt {
-                guard let left = lhs.resetsAt else { return true }
-                guard let right = rhs.resetsAt else { return false }
+            // A reset that has already passed is read as *unknown*, exactly as a missing one is.
+            // Compared raw it sorted as the shortest block and lost to every future date — so an
+            // exhausted week whose reset had elapsed handed the row to a session freeing in
+            // fifteen minutes, and the window with no known return went unmentioned. That is the
+            // failure this function was written for, wearing a different date.
+            let leftReset = liveReset(lhs, now: now)
+            let rightReset = liveReset(rhs, now: now)
+            if leftReset != rightReset {
+                guard let left = leftReset else { return true }
+                guard let right = rightReset else { return false }
                 return left > right
             }
             if lhs.utilization != rhs.utilization { return lhs.utilization > rhs.utilization }
@@ -179,11 +209,12 @@ extension UsageOverview {
     /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
     /// it simply carries no headroom, and `assess` will not let it lead.
     static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
-        // An inactive scoped window legitimately reports no reset while the week it belongs to
-        // plainly has one; only a reset still ahead can stand in for it.
-        let fallback = weekly.compactMap(\.resetsAt).filter { $0 > now }.min()
+        // Any counted weekly window that reported no usable reset — absent, unparseable, or
+        // already elapsed — borrows the earliest live one beside it, since they describe the
+        // same week. Only a reset still ahead can stand in.
+        let fallback = weekly.compactMap { liveReset($0, now: now) }.min()
         let measured: [WeeklyBinding] = weekly.compactMap { limit in
-            guard let resetsAt = limit.resetsAt ?? fallback, resetsAt > now else { return nil }
+            guard let resetsAt = liveReset(limit, now: now) ?? fallback else { return nil }
             let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
                 .clamped(to: 0 ... 1)
             return WeeklyBinding(
@@ -193,8 +224,14 @@ extension UsageOverview {
             )
         }
         if let tightest = measured.min(by: tighter) { return tightest }
+        // Nothing measurable. Report the fullest window so the row keeps a figure, settling a
+        // tie on the window's own identity like every other pick a reader ends up seeing.
         return weekly
-            .max { $0.utilization < $1.utilization }
+            .max { lhs, rhs in
+                lhs.utilization != rhs.utilization
+                    ? lhs.utilization < rhs.utilization
+                    : lhs.dedupKey > rhs.dedupKey
+            }
             .map { WeeklyBinding(limit: $0, resetsAt: nil, headroom: nil) }
     }
 
@@ -220,9 +257,9 @@ extension UsageOverview {
     }
 
     private static func state(forHeadroom headroom: Double?) -> CandidateState {
-        // No clock, so no pace claim: say the account is unremarkable rather than praising or
-        // faulting a rate nothing measured.
-        guard let headroom else { return .onPace }
+        // No clock, so no pace claim — and `onPace` is a claim. The row is usable and says only
+        // that much.
+        guard let headroom else { return .paceUnknown }
         if headroom >= spendThreshold { return .spend }
         if headroom >= paceThreshold { return .onPace }
         return .burningFast

@@ -205,6 +205,39 @@ struct UsageOverviewOrderingTests {
         #expect(forward?.bindingWeekly?.scopeModelName == reversed?.bindingWeekly?.scopeModelName)
     }
 
+    @Test
+    func anExhaustedSessionIsStillOnlyASession() {
+        // Asking about exhaustion before asking whether the session is the only gate read a 100%
+        // session as `out` — below an account with 94% of its *week* gone — and twenty minutes
+        // later the same profile was best again. That churn is what this state exists to prevent.
+        let overview = rank([
+            account("session-full", limits: [
+                limit(UsageLimit.kindSession, 1.0, resetsIn: 900),
+                limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
+            ]),
+            account("week-nearly-gone", limits: [
+                limit(UsageLimit.kindWeeklyAll, 0.94, resetsIn: 3 * 24 * 3600)
+            ])
+        ])
+        #expect(overview.candidates.first?.state == .sessionNearlyFull)
+        #expect(overview.candidates.map(\.id) == ["session-full", "week-nearly-gone"])
+    }
+
+    @Test
+    func anExhaustedWindowWhoseResetElapsedBlocksLongestOfAll() {
+        // Compared raw, a past date sorted as the shortest block and lost to every future one —
+        // so the window with no known return went unmentioned behind a session freeing in
+        // fifteen minutes. An elapsed reset reads as unknown, exactly as a missing one does.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -3600),
+            limit(UsageLimit.kindSession, 0.95, resetsIn: 900)
+        ])])
+        let candidate = overview.candidates.first
+        #expect(candidate?.gatingLimit?.isWeeklyAll == true)
+        #expect(candidate?.freesAt == nil)
+        #expect(candidate?.state == .out)
+    }
+
     // MARK: - The ordering is a real ordering
 
     @Test

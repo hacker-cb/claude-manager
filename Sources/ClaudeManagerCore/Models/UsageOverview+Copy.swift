@@ -52,6 +52,7 @@ public extension UsageOverview {
         case .spend: "Use it or lose it"
         case .onPace: "On pace"
         case .burningFast: "Burning fast"
+        case .paceUnknown: "No reset reported"
         case .sessionNearlyFull: "Session nearly full"
         case .nearlyOut: "Nearly out"
         case .out: "Out"
@@ -76,7 +77,7 @@ public extension UsageOverview {
             "no usage read yet"
         case .out, .nearlyOut, .sessionNearlyFull:
             gatedReason(for: candidate, now: now)
-        case .spend, .onPace, .burningFast:
+        case .spend, .onPace, .burningFast, .paceUnknown:
             budgetReason(for: candidate, now: now)
         }
     }
@@ -84,8 +85,12 @@ public extension UsageOverview {
     private static func gatedReason(for candidate: UsageCandidate, now: Date) -> String {
         guard let limit = candidate.gatingLimit else { return stateLabel(candidate.state) }
         let figure = "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization))"
-        guard let freesAt = candidate.freesAt, freesAt > now else { return figure }
-        let verb = candidate.state == .out ? "back" : "frees"
+        guard let freesAt = candidate.freesAt else { return figure }
+        // The verb follows the window actually named, not the row's state. The state is the most
+        // severe thing happening while the figure is the window that blocks longest, and those
+        // are not always one window — "back in 1h" beside a 95% session read as a claim about
+        // that session being spent.
+        let verb = limit.utilization >= 1 ? "back" : "frees"
         return "\(figure) · \(verb) in \(UsageFormat.compactDuration(freesAt.timeIntervalSince(now)))"
     }
 
@@ -97,7 +102,8 @@ public extension UsageOverview {
         // a scoped window that reported none still belongs to a week, and reading only its own
         // field dropped the countdown from exactly the rows whose claim depends on it — leaving
         // a confident "use it or lose it" with nothing saying when.
-        guard let resetsAt = candidate.weeklyResetsAt, resetsAt > now else { return head }
+        guard UsagePresentation.showsReset(candidate.weeklyResetsAt, now: now),
+              let resetsAt = candidate.weeklyResetsAt else { return head }
         let clock = UsageFormat.compactDuration(resetsAt.timeIntervalSince(now))
         switch candidate.state {
         // The whole reason this ranking exists: a weekly window's leftovers do not roll over, so
@@ -106,5 +112,7 @@ public extension UsageOverview {
         case .burningFast: return "\(head) · \(clock) to go — burning faster than the week"
         default: return "\(head) · \(clock) to go — on pace"
         }
+        // `paceUnknown` never reaches the switch: it exists precisely because no reset was
+        // usable, and the guard above returns the bare figure for it.
     }
 }
