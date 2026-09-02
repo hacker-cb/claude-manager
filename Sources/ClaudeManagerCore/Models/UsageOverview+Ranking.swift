@@ -205,15 +205,34 @@ extension UsageOverview {
     /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
     /// it simply carries no headroom, and `assess` will not let it lead.
     static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
-        // **A window is measured against its own deadline or not at all.** Lending it a
-        // sibling's was tried twice and is wrong both ways round: these windows are documented as
-        // resetting independently — this fleet reports two whose dates differ — so one sibling's
-        // deadline is no evidence of another's. A borrowed clock turns an absent or unparseable
-        // `resets_at` into a confident recommendation, and one that has already passed into a
-        // spent week's figures re-entering the ranking. Unknown stays unknown: the row keeps its
-        // figure through the fallback below and simply cannot lead.
-        let measured: [WeeklyBinding] = weekly.compactMap { limit in
-            guard let resetsAt = liveReset(limit, now: now) else { return nil }
+        // Nothing here has a clock: no claim at all. The fullest window is still reported so the
+        // row keeps a figure, settling a tie on the window's own identity like every other pick
+        // a reader ends up seeing, and `assess` will not let it lead.
+        guard weekly.contains(where: { liveReset($0, now: now) != nil }) else {
+            return weekly
+                .max { lhs, rhs in
+                    lhs.utilization != rhs.utilization
+                        ? lhs.utilization < rhs.utilization
+                        : lhs.dedupKey > rhs.dedupKey
+                }
+                .map { WeeklyBinding(limit: $0, resetsAt: nil, headroom: nil) }
+        }
+        // **A window is measured against its own deadline, never a sibling's — and never
+        // dropped.** Both shortcuts were tried and both are wrong. Borrowing is wrong because
+        // these windows reset independently (this fleet reports two whose dates differ), so an
+        // absent `resets_at` became a confident recommendation and an elapsed one put a spent
+        // week's figures back into the ranking. Dropping is wrong because the window still
+        // constrains the work: a scoped window at 89% with no deadline sat silently behind a
+        // live weekly-all at 10% while the account was recommended for exactly the work that
+        // would spend it.
+        //
+        // So an unmeasurable window is taken at its **worst case**. With the whole week still to
+        // run its headroom is exactly `-utilization`, and every other clock it could have is
+        // roomier — a lower bound never over-promises, where an omission does.
+        let measured: [WeeklyBinding] = weekly.map { limit in
+            guard let resetsAt = liveReset(limit, now: now) else {
+                return WeeklyBinding(limit: limit, resetsAt: nil, headroom: -limit.utilization)
+            }
             let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
                 .clamped(to: 0 ... 1)
             return WeeklyBinding(
@@ -222,16 +241,7 @@ extension UsageOverview {
                 headroom: (1 - limit.utilization) - weekRemaining
             )
         }
-        if let tightest = measured.min(by: tighter) { return tightest }
-        // Nothing measurable. Report the fullest window so the row keeps a figure, settling a
-        // tie on the window's own identity like every other pick a reader ends up seeing.
-        return weekly
-            .max { lhs, rhs in
-                lhs.utilization != rhs.utilization
-                    ? lhs.utilization < rhs.utilization
-                    : lhs.dedupKey > rhs.dedupKey
-            }
-            .map { WeeklyBinding(limit: $0, resetsAt: nil, headroom: nil) }
+        return measured.min(by: tighter)
     }
 
     /// "lhs constrains more than rhs" — least headroom first, then the fuller window, then the

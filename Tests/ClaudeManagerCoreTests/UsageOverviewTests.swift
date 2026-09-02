@@ -273,17 +273,6 @@ struct UsageOverviewTests {
         #expect(isClose(overview.candidates.first?.headroom, 0.30 - 0.5))
     }
 
-    @Test
-    func aLiveSiblingResetStillStandsInForAWindowThatReportedNone() {
-        // The fallback survives the elapsed-reset rule, so long as the stand-in is still ahead.
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
-            limit(UsageLimit.kindWeeklyScoped, 0.2, model: "Fable")
-        ])])
-        #expect(overview.candidates.first?.canLead == true)
-        #expect(overview.candidates.first?.weeklyResetsAt == now.addingTimeInterval(halfWeek))
-    }
-
     // MARK: - No clock, no claim
 
     @Test
@@ -300,16 +289,34 @@ struct UsageOverviewTests {
     }
 
     @Test
-    func aWindowThatReportedNoResetIsNotMeasuredAgainstASiblingsClock() {
-        // Weekly windows reset independently — this fleet reports two whose dates differ — so a
-        // sibling's deadline is no evidence of another's. The scoped window here stays unmeasured
-        // rather than being lent a clock it never had; only the live weekly-all binds.
+    func aCountedWindowWithNoClockIsTakenAtItsWorstCaseNotDropped() {
+        // Dropping it let a scoped window at 89% with no deadline sit silently behind a live
+        // weekly-all at 10% while the account was recommended for exactly the work that would
+        // spend it. With the whole week still to run its headroom is `-utilization`, and every
+        // other clock it could have is roomier — a lower bound never over-promises.
         let overview = rank([account("a", limits: [
             limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
-            limit(UsageLimit.kindWeeklyScoped, 0.2, model: "Fable")
+            limit(UsageLimit.kindWeeklyScoped, 0.89, model: "Fable")
         ])])
-        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
-        #expect(isClose(overview.candidates.first?.headroom, 0.40))
+        let candidate = overview.candidates.first
+        #expect(candidate?.bindingWeekly?.scopeModelName == "Fable")
+        #expect(isClose(candidate?.headroom, -0.89))
+        #expect(candidate?.state == .burningFast)
+        // No clock behind the window that binds, so nothing to count down to.
+        #expect(candidate?.weeklyResetsAt == nil)
+    }
+
+    @Test
+    func anUnusedWindowWithNoClockCostsTheAccountNothingItCannotAfford() {
+        // The same rule on the shape that actually occurs: a per-model window an account has
+        // never touched reports 0% and no reset. Its worst case is 0.0 — level, never negative —
+        // so the account still ranks and can still lead.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
+            limit(UsageLimit.kindWeeklyScoped, 0, model: "Fable")
+        ])])
+        #expect(isClose(overview.candidates.first?.headroom, 0))
+        #expect(overview.candidates.first?.state == .onPace)
         #expect(overview.candidates.first?.canLead == true)
     }
 

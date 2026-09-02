@@ -480,12 +480,18 @@ Six rules carry the weight, each with a test:
   that state routinely — it is the standing condition of a "Manually only" fleet and of
   anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
   claim; an elapsed *gate* reads as an unknown return rather than an imminent one, so it blocks
-  longest rather than shortest. **A window is measured against its own deadline or not at all** —
-  lending it a sibling's was tried in both directions and is wrong in both, since these windows
-  reset independently, so an absent reset became a confident recommendation and an elapsed one
-  put a spent week back into the ranking. One reading of "is this window still ahead" serves all
-  of it (`UsagePresentation.showsReset`), the rule the panes already apply, and the copy re-asks
-  it against the *rendering* clock so a row drawn after a reset does not say "back in now".
+  longest rather than shortest. **A window is measured against its own deadline, never a
+  sibling's, and never dropped.** Borrowing was tried in both directions and is wrong in both,
+  since these windows reset independently: an absent reset became a confident recommendation, an
+  elapsed one put a spent week back into the ranking. Dropping is wrong too — a scoped window at
+  89% with no deadline sat silently behind a live weekly-all at 10% while the account was
+  recommended for exactly the work that would spend it. So an unmeasurable window is taken at its
+  **worst case**, `-utilization`: with the whole week still to run that is precisely its headroom,
+  every other clock it could have is roomier, and a lower bound never over-promises where an
+  omission does. Only when *nothing* has a clock is there no claim at all. One reading of "is this
+  window still ahead" serves all of it (`UsagePresentation.showsReset`), the rule the panes
+  already apply, and the copy re-asks it against the *rendering* clock so a row drawn after a
+  reset does not say "back in now".
 - **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
   (0.05) before the recommendation changes; a leader that hits a gate loses the place
   regardless. Without it the answer flips between near-equal accounts on every poll.
