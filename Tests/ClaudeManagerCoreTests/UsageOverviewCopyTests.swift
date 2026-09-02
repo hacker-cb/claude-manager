@@ -196,7 +196,8 @@ struct UsageOverviewCopyTests {
     func aWindowWithNoUsableResetPrintsItsFigureAndClaimsNoPace() throws {
         let text = try reason(account("a", limits: [limit(UsageLimit.kindWeeklyAll, 0.2)]))
         #expect(text == "80% of 7d left")
-        #expect(UsageOverview.stateLabel(.paceUnknown) == "No reset reported")
+        // Worded for both causes: a reset never reported, and one reported that has passed.
+        #expect(UsageOverview.stateLabel(.paceUnknown) == "Pace unknown")
     }
 
     // MARK: - State labels

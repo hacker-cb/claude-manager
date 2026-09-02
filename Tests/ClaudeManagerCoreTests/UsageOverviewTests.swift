@@ -307,6 +307,21 @@ struct UsageOverviewTests {
     }
 
     @Test
+    func anElapsedWindowIsNotBoundedByLastWeeksSpending() {
+        // The worst-case bound is for a window that never named a clock, whose percentage is
+        // therefore current. One whose reset has *passed* is describing a week that is over —
+        // bounding this week by it would sink an account whose current window is untouched.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
+            limit(UsageLimit.kindWeeklyScoped, 0.89, resetsIn: -3600, model: "Fable")
+        ])])
+        let candidate = overview.candidates.first
+        #expect(candidate?.bindingWeekly?.isWeeklyAll == true)
+        #expect(isClose(candidate?.headroom, 0.40))
+        #expect(candidate?.canLead == true)
+    }
+
+    @Test
     func anUnusedWindowWithNoClockCostsTheAccountNothingItCannotAfford() {
         // The same rule on the shape that actually occurs: a per-model window an account has
         // never touched reports 0% and no reset. Its worst case is 0.0 — level, never negative —

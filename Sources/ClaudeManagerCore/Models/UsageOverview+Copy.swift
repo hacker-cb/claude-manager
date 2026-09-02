@@ -52,7 +52,7 @@ public extension UsageOverview {
         case .spend: "Use it or lose it"
         case .onPace: "On pace"
         case .burningFast: "Burning fast"
-        case .paceUnknown: "No reset reported"
+        case .paceUnknown: "Pace unknown"
         case .sessionNearlyFull: "Session nearly full"
         case .nearlyOut: "Nearly out"
         case .out: "Out"

@@ -485,10 +485,12 @@ Six rules carry the weight, each with a test:
   since these windows reset independently: an absent reset became a confident recommendation, an
   elapsed one put a spent week back into the ranking. Dropping is wrong too — a scoped window at
   89% with no deadline sat silently behind a live weekly-all at 10% while the account was
-  recommended for exactly the work that would spend it. So an unmeasurable window is taken at its
-  **worst case**, `-utilization`: with the whole week still to run that is precisely its headroom,
-  every other clock it could have is roomier, and a lower bound never over-promises where an
-  omission does. Only when *nothing* has a clock is there no claim at all. One reading of "is this
+  recommended for exactly the work that would spend it. So a window that reported **no** reset is
+  taken at its **worst case**, `-utilization`: with the whole week still to run that is precisely
+  its headroom, every other clock it could have is roomier, and a lower bound never over-promises
+  where an omission does. A window whose reset has **elapsed** gets neither treatment — its
+  percentage belongs to a week that is over, so bounding the current one by it is not caution but
+  the wrong number. Only when *nothing* has a live clock is there no claim at all. One reading of "is this
   window still ahead" serves all of it (`UsagePresentation.showsReset`), the rule the panes
   already apply, and the copy re-asks it against the *rendering* clock so a row drawn after a
   reset does not say "back in now".

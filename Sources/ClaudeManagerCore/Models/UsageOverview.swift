@@ -30,8 +30,9 @@ public enum CandidateState: Sendable, Equatable, CaseIterable {
     case onPace
     /// Spending faster than the week elapses; this account runs out before its reset.
     case burningFast
-    /// Usable, but nothing said when its week turns over — so no pace can be claimed either way.
-    /// Kept apart from `onPace`, which asserts something this case does not know.
+    /// Usable, but no live clock behind the window that binds — either none was reported, or the
+    /// one that was has already passed. Kept apart from `onPace`, which asserts a rate this case
+    /// does not know, and worded for both causes rather than only the first.
     case paceUnknown
     /// The 5-hour window is nearly full. A gate, not a budget — it frees itself within hours.
     case sessionNearlyFull

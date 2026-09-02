@@ -226,21 +226,28 @@ extension UsageOverview {
         // live weekly-all at 10% while the account was recommended for exactly the work that
         // would spend it.
         //
-        // So an unmeasurable window is taken at its **worst case**. With the whole week still to
-        // run its headroom is exactly `-utilization`, and every other clock it could have is
-        // roomier — a lower bound never over-promises, where an omission does.
-        let measured: [WeeklyBinding] = weekly.map { limit in
-            guard let resetsAt = liveReset(limit, now: now) else {
-                return WeeklyBinding(limit: limit, resetsAt: nil, headroom: -limit.utilization)
+        // So a window with **no reset at all** is taken at its worst case. With the whole week
+        // still to run its headroom is exactly `-utilization`, and every other clock it could
+        // have is roomier — a lower bound never over-promises, where an omission does.
+        //
+        // A window whose reset has **elapsed** gets neither treatment, and the difference is not
+        // a nicety: its percentage belongs to a week that is over. Bounding *this* week by last
+        // week's spending is not caution, it is the wrong number — an 89% that has since rolled
+        // over would bind at −0.89 and sink an account whose current window is untouched.
+        let measured: [WeeklyBinding] = weekly.compactMap { limit in
+            if let resetsAt = liveReset(limit, now: now) {
+                let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
+                    .clamped(to: 0 ... 1)
+                return WeeklyBinding(
+                    limit: limit,
+                    resetsAt: resetsAt,
+                    headroom: (1 - limit.utilization) - weekRemaining
+                )
             }
-            let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
-                .clamped(to: 0 ... 1)
-            return WeeklyBinding(
-                limit: limit,
-                resetsAt: resetsAt,
-                headroom: (1 - limit.utilization) - weekRemaining
-            )
+            guard limit.resetsAt == nil else { return nil }
+            return WeeklyBinding(limit: limit, resetsAt: nil, headroom: -limit.utilization)
         }
+        // Never empty: the guard above established that at least one window has a live reset.
         return measured.min(by: tighter)
     }
 
