@@ -73,8 +73,8 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
     /// leftovers do not roll over. Nil when no counted weekly window reported a reset time, so
     /// there is no clock to compare against.
     public var headroom: Double?
-    /// The counted weekly window with the highest utilization — what actually constrains this
-    /// account, and the figure the copy quotes.
+    /// The counted weekly window that actually constrains this account — the one with the least
+    /// headroom, not the fullest — and the figure the copy quotes.
     public var bindingWeekly: UsageLimit?
     /// The reset `headroom` was actually measured against — the binding window's own, or a
     /// sibling weekly window's where it reported none.
@@ -86,6 +86,14 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
     public var weeklyResetsAt: Date?
     /// The window that put this candidate out of the running, for a gated state.
     public var gatingLimit: UsageLimit?
+    /// When that window lets go — **only while that is still ahead**.
+    ///
+    /// Normalized once, here, rather than read off the gating limit wherever it is needed: a
+    /// retained snapshot can carry a reset that has already passed, and a past date is not an
+    /// earlier return but an unknown one. Left un-normalized it sorted such a candidate ahead of
+    /// every account known to come back soon, while the copy and `soonestReturn` were separately
+    /// careful to ignore it — three readings of one field, two of them right.
+    public var freesAt: Date?
     /// Whether this candidate may be *the answer*. False for anything gated, anything whose
     /// figures have stopped moving, and anything with no clock to reason against — a stale 80%
     /// is not evidence that work should go somewhere.
@@ -98,6 +106,7 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
         bindingWeekly: UsageLimit?,
         weeklyResetsAt: Date?,
         gatingLimit: UsageLimit?,
+        freesAt: Date?,
         canLead: Bool
     ) {
         self.account = account
@@ -106,6 +115,7 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
         self.bindingWeekly = bindingWeekly
         self.weeklyResetsAt = weeklyResetsAt
         self.gatingLimit = gatingLimit
+        self.freesAt = freesAt
         self.canLead = canLead
     }
 
@@ -117,11 +127,6 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
     /// as an instruction; everything else is shown with its state beside it.
     public var isCurrent: Bool {
         account.state == .fresh
-    }
-
-    /// When the window that gated this candidate lets go, if it said.
-    public var freesAt: Date? {
-        gatingLimit?.resetsAt
     }
 }
 
@@ -153,12 +158,10 @@ public struct UsageOverview: Sendable, Equatable {
 
     /// The earliest moment any gated candidate frees up — what to say when `leader` is nil.
     ///
-    /// Only resets still ahead count. A retained snapshot can carry one that has already passed,
-    /// and taking the minimum over those returned a moment in the past — masking the real return
-    /// another account was about to offer, and handing the surfaces a countdown they are
-    /// elsewhere careful never to print.
+    /// Every `freesAt` is normalized to a future moment when the candidate is built, so this is
+    /// simply the earliest of them — a reset that has already passed reaches nothing here.
     public var soonestReturn: Date? {
-        candidates.compactMap(\.freesAt).filter { $0 > now }.min()
+        candidates.compactMap(\.freesAt).min()
     }
 
     // MARK: - Thresholds

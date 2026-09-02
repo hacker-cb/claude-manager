@@ -165,6 +165,46 @@ struct UsageOverviewOrderingTests {
         #expect(overview.soonestReturn == nil)
     }
 
+    @Test
+    func anElapsedGateReadsAsAnUnknownReturnNotAnImminentOne() {
+        // A past reset sorted ahead of every future one, so the account whose availability is
+        // actually unknown was presented as the one coming back first — while the copy and
+        // `soonestReturn` were separately careful to ignore that same date.
+        let overview = rank([
+            account("elapsed", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -7200)]),
+            account("known", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 600)])
+        ])
+        #expect(overview.candidates.map(\.id) == ["known", "elapsed"])
+        #expect(overview.candidates.last?.freesAt == nil)
+    }
+
+    @Test
+    func twoScopedGatesTieOnTheirOwnIdentityNotOnPayloadOrder() {
+        // Both windows share a kind, a reset and a percentage, and differ only by model — so a
+        // tie broken on `rawKind` left the named blocker, and the model the reader sees, decided
+        // by the order the server happened to list them in.
+        let windows = [
+            limit(UsageLimit.kindWeeklyScoped, 0.95, resetsIn: 3600, model: "Opus"),
+            limit(UsageLimit.kindWeeklyScoped, 0.95, resetsIn: 3600, model: "Fable")
+        ]
+        let forward = rank([account("a", limits: windows)]).candidates.first
+        let reversed = rank([account("a", limits: windows.reversed())]).candidates.first
+        #expect(forward?.gatingLimit?.scopeModelName == "Fable")
+        #expect(forward?.gatingLimit?.scopeModelName == reversed?.gatingLimit?.scopeModelName)
+    }
+
+    @Test
+    func windowsWithEqualHeadroomBindDeterministically() {
+        let windows = [
+            limit(UsageLimit.kindWeeklyScoped, 0.5, resetsIn: halfWeek, model: "Opus"),
+            limit(UsageLimit.kindWeeklyScoped, 0.5, resetsIn: halfWeek, model: "Fable")
+        ]
+        let forward = rank([account("a", limits: windows)]).candidates.first
+        let reversed = rank([account("a", limits: windows.reversed())]).candidates.first
+        #expect(forward?.bindingWeekly?.scopeModelName == "Fable")
+        #expect(forward?.bindingWeekly?.scopeModelName == reversed?.bindingWeekly?.scopeModelName)
+    }
+
     // MARK: - The ordering is a real ordering
 
     @Test

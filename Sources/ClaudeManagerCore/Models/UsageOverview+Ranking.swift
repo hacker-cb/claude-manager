@@ -21,6 +21,7 @@ extension UsageOverview {
                 bindingWeekly: nil,
                 weeklyResetsAt: nil,
                 gatingLimit: nil,
+                freesAt: nil,
                 canLead: false
             )
         }
@@ -32,6 +33,7 @@ extension UsageOverview {
                 bindingWeekly: nil,
                 weeklyResetsAt: nil,
                 gatingLimit: nil,
+                freesAt: nil,
                 canLead: false
             )
         }
@@ -45,6 +47,8 @@ extension UsageOverview {
                 bindingWeekly: bound?.limit,
                 weeklyResetsAt: bound?.resetsAt,
                 gatingLimit: gate.limit,
+                // Only a reset still ahead is a return time; a passed one is unknown, not early.
+                freesAt: gate.limit.resetsAt.flatMap { $0 > now ? $0 : nil },
                 canLead: false
             )
         }
@@ -56,6 +60,7 @@ extension UsageOverview {
             bindingWeekly: bound?.limit,
             weeklyResetsAt: bound?.resetsAt,
             gatingLimit: nil,
+            freesAt: nil,
             // A stale, offline or rate-limited account still shows its last figures, but it may
             // not *instruct*: those numbers stopped moving, and the work they would send someone
             // to may already have been done against them. Nor may one with no clock behind it.
@@ -128,8 +133,8 @@ extension UsageOverview {
     /// is when work can go there again.
     ///
     /// A window that reported no reset blocks longest of all: nothing said it frees, so nothing
-    /// may promise it does. Fully ordered (reset, then utilization, then kind) so the row a
-    /// reader sees does not depend on the order the server happened to list its windows in.
+    /// may promise it does. Fully ordered (reset, then utilization, then the window's own
+    /// identity) so the row a reader sees does not depend on the order the server listed them in.
     static func blocksLongest(_ limits: [UsageLimit]) -> UsageLimit? {
         limits.min { lhs, rhs in
             if lhs.resetsAt != rhs.resetsAt {
@@ -138,7 +143,10 @@ extension UsageOverview {
                 return left > right
             }
             if lhs.utilization != rhs.utilization { return lhs.utilization > rhs.utilization }
-            return lhs.rawKind < rhs.rawKind
+            // `dedupKey`, not `rawKind`: two scoped windows share a kind and differ only by
+            // model, so a rawKind tie left the named blocker — and the model label the reader
+            // sees — decided by the order the server happened to list them in.
+            return lhs.dedupKey < rhs.dedupKey
         }
     }
 
@@ -184,12 +192,31 @@ extension UsageOverview {
                 headroom: (1 - limit.utilization) - weekRemaining
             )
         }
-        if let tightest = measured.min(by: { ($0.headroom ?? 0) < ($1.headroom ?? 0) }) {
-            return tightest
-        }
+        if let tightest = measured.min(by: tighter) { return tightest }
         return weekly
             .max { $0.utilization < $1.utilization }
             .map { WeeklyBinding(limit: $0, resetsAt: nil, headroom: nil) }
+    }
+
+    /// "lhs constrains more than rhs" — least headroom first, then the fuller window, then the
+    /// earlier reset, then the window's own identity.
+    ///
+    /// Everything after the first key exists so a reordered payload cannot change which window a
+    /// row names: equal headroom does not mean equal labels, percentages or reset times, and
+    /// `bindingWeekly` is what the reader is shown.
+    static func tighter(_ lhs: WeeklyBinding, _ rhs: WeeklyBinding) -> Bool {
+        let left = lhs.headroom ?? .greatestFiniteMagnitude
+        let right = rhs.headroom ?? .greatestFiniteMagnitude
+        if left != right { return left < right }
+        if lhs.limit.utilization != rhs.limit.utilization {
+            return lhs.limit.utilization > rhs.limit.utilization
+        }
+        if lhs.resetsAt != rhs.resetsAt {
+            guard let leftReset = lhs.resetsAt else { return false }
+            guard let rightReset = rhs.resetsAt else { return true }
+            return leftReset < rightReset
+        }
+        return lhs.limit.dedupKey < rhs.limit.dedupKey
     }
 
     private static func state(forHeadroom headroom: Double?) -> CandidateState {
