@@ -416,7 +416,7 @@ tick renders the true cause rather than reading a transport failure back as a 42
 
 **Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
 via `.linkedLibrary("sqlite3")`; zero SPM deps). A canonical `snapshot_json` is the
-restore source; flat columns index it; `raw_json` is kept **latest-only** for the Doctor
+restore source, indexed by `(account_uuid, captured_at)`; `raw_json` is kept **latest-only** for the Doctor
 inspector; `notified_thresholds` dedups notifications across relaunches (keyed on account
 + limit identity + rounded threshold + reset window); a throttle table holds the state
 above. Bootstrap is `PRAGMA user_version` drop-and-recreate on mismatch (early-stage: no
