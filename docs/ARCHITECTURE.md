@@ -431,6 +431,44 @@ high *and* the window is early: 5h (0.80, 0.72), 7d (0.75, 0.60) — each tier s
 layer (`AppModel+UsageNotifications`) posts the warnings via `UNUserNotificationCenter`,
 deduped against `notified_thresholds` so each threshold fires once per reset window.
 
+**Where should work go now? (`UsageOverview`, pure.)** `LimitEvaluator` answers "is anything
+about to bite"; this answers the other question a fleet raises — which profile to open next.
+It ranks accounts by **headroom**: the share of the binding weekly window still unspent, minus
+the share of the week still to run. A weekly window's leftovers do not roll over, so a budget
+running ahead of its clock is spent now or lost at the reset, and that — not "who has the
+lowest percentage" — is what puts an account first.
+
+Four rules carry the weight, each with a test:
+
+- **Gates are separate from budget.** A counted window at 100% puts the account `out`; at
+  `UsageLimit.criticalUtilization` (0.90, the same threshold that paints a bar red) it is
+  `nearlyOut`, so the board can never send anyone to a red bar. The **5-hour window gates and
+  nothing more**: it refills within hours, and charging it against the week would move someone
+  to another profile every session — which costs a chat's context for a wait measured in
+  minutes.
+- **A window this build does not recognize still gates**, for the same reason the parser keeps
+  it, but never enters the headroom: nothing here knows how long its period is.
+- **Only current figures may instruct.** Anything not `.fresh` ranks behind what is, and can
+  never *lead*; so can an account whose window reported no reset, since there is no clock to
+  measure a pace against. `leader` is therefore optional, and nil is a real answer — a fleet
+  that is entirely stale, gated or signed out has no recommendation to give, and the surfaces
+  say so instead of promoting the least-bad row.
+- **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
+  (0.05) before the recommendation changes; a leader that hits a gate loses the place
+  regardless. Without it the answer flips between near-equal accounts on every poll.
+
+The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
+model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
+`UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so the surfaces read
+"Fable work" today and follow the payload if it is renamed again. Extra usage is deliberately
+outside all of this — it is money, not a window.
+
+`UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one
+point per bucket **by taking the last sample in each**, never a mean. Averaging across a reset
+boundary reports a value the account never held and smears the very event a timeline exists to
+show. The thinning is done in SQL (SQLite's documented single-`MAX()` bare-column rule), so one
+snapshot per bucket is decoded rather than the thousands a month of polling records.
+
 ## macOS facts baked into the code
 
 - **Keep `CFBundleIconName` OUT of launcher Info.plists.** When present, macOS reads

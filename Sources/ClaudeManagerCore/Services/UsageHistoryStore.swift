@@ -39,7 +39,11 @@ public actor UsageHistoryStore {
     ///
     /// A failed open is remembered as a connection with a nil handle rather than retried on every
     /// call, so a broken path degrades once (to the in-memory fallbacks) instead of thrashing.
-    private var db: OpaquePointer? {
+    ///
+    /// Non-private because the timeline's read lives in `UsageHistoryStore+Series` (another
+    /// file) — the same arrangement `UsageService` uses for its identity half. Still reached only
+    /// from inside the actor, so the one-connection-per-thread rule holds.
+    var db: OpaquePointer? {
         if let connection { return connection.handle }
         let opened = SQLiteConnection(handle: Self.open(path: path))
         connection = opened
