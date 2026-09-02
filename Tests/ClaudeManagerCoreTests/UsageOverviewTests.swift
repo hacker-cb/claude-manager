@@ -257,22 +257,6 @@ struct UsageOverviewTests {
         #expect(overview.leader == nil)
     }
 
-    @Test
-    func aWindowWhoseOwnResetElapsedNeverBorrowsALiveOne() {
-        // Saying nothing and saying something that has since passed are different states. A
-        // window that named a reset and reached it has demonstrably rolled over, so lending it a
-        // sibling's live deadline would put a spent week's figures back into the ranking — and a
-        // `.fresh` snapshot re-served inside the poll floor could lead on them.
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, 0.7, resetsIn: halfWeek),
-            limit(UsageLimit.kindWeeklyScoped, 0.05, resetsIn: -3600, model: "Fable")
-        ])])
-        // Lent the live deadline, the scoped window's stale 5% would have looked like the freest
-        // budget on the account and bound instead; only the live weekly-all is measured.
-        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
-        #expect(isClose(overview.candidates.first?.headroom, 0.30 - 0.5))
-    }
-
     // MARK: - No clock, no claim
 
     @Test
@@ -307,18 +291,34 @@ struct UsageOverviewTests {
     }
 
     @Test
-    func anElapsedWindowIsNotBoundedByLastWeeksSpending() {
-        // The worst-case bound is for a window that never named a clock, whose percentage is
-        // therefore current. One whose reset has *passed* is describing a week that is over —
-        // bounding this week by it would sink an account whose current window is untouched.
+    func anElapsedWindowWithholdsTheRecommendationForTheWholeAccount() {
+        // Its percentage is last week's, so it cannot bound this week — but the window that
+        // replaced it is *unknown*, not untouched. Dropping it and ranking on the live sibling
+        // recommended scoped work to a quota that may already be spent; the figures straddle a
+        // boundary nothing has re-read, so no recommendation is built on them until a refresh.
         let overview = rank([account("a", limits: [
             limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
             limit(UsageLimit.kindWeeklyScoped, 0.89, resetsIn: -3600, model: "Fable")
         ])])
         let candidate = overview.candidates.first
-        #expect(candidate?.bindingWeekly?.isWeeklyAll == true)
-        #expect(isClose(candidate?.headroom, 0.40))
-        #expect(candidate?.canLead == true)
+        #expect(candidate?.headroom == nil)
+        #expect(candidate?.state == .paceUnknown)
+        #expect(candidate?.canLead == false)
+        // The row still shows the fullest window rather than going blank.
+        #expect(candidate?.bindingWeekly?.scopeModelName == "Fable")
+        #expect(overview.leader == nil)
+    }
+
+    @Test
+    func inOtherWorkModeThatElapsedScopedWindowIsNotEvenCounted() {
+        // The withholding follows the mode: work that never touches the model does not care that
+        // its window rolled over.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
+            limit(UsageLimit.kindWeeklyScoped, 0.89, resetsIn: -3600, model: "Fable")
+        ])], mode: .otherWork)
+        #expect(isClose(overview.candidates.first?.headroom, 0.40))
+        #expect(overview.candidates.first?.canLead == true)
     }
 
     @Test

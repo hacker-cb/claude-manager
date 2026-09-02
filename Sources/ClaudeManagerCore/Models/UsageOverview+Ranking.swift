@@ -205,10 +205,23 @@ extension UsageOverview {
     /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
     /// it simply carries no headroom, and `assess` will not let it lead.
     static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
-        // Nothing here has a clock: no claim at all. The fullest window is still reported so the
-        // row keeps a figure, settling a tie on the window's own identity like every other pick
-        // a reader ends up seeing, and `assess` will not let it lead.
-        guard weekly.contains(where: { liveReset($0, now: now) != nil }) else {
+        // **No claim while any counted window has rolled over, or while none has a live clock.**
+        //
+        // A window whose reset has passed says nothing useful in either direction. Its percentage
+        // belongs to a week that is over, so bounding the current week by it is the wrong number
+        // — but the replacement window is *unknown*, not untouched, so quietly dropping it and
+        // ranking on a live sibling recommends scoped work to a quota that may already be spent.
+        // The honest reading is that this account's figures straddle a boundary nothing has
+        // re-read, and no recommendation may be built on them until a refresh.
+        //
+        // It is a narrow case by construction: only a `.fresh` snapshot old enough to cross a
+        // reset reaches it, which means "Manually only" polling or an app that slept through one.
+        // Everything staler is already barred from leading by its own state.
+        let rolledOver = weekly.contains { $0.resetsAt != nil && liveReset($0, now: now) == nil }
+        let anyLive = weekly.contains { liveReset($0, now: now) != nil }
+        guard !rolledOver, anyLive else {
+            // The row still keeps a figure — the fullest window, settling a tie on the window's
+            // own identity like every other pick a reader ends up seeing — and simply cannot lead.
             return weekly
                 .max { lhs, rhs in
                     lhs.utilization != rhs.utilization
@@ -220,34 +233,26 @@ extension UsageOverview {
         // **A window is measured against its own deadline, never a sibling's — and never
         // dropped.** Both shortcuts were tried and both are wrong. Borrowing is wrong because
         // these windows reset independently (this fleet reports two whose dates differ), so an
-        // absent `resets_at` became a confident recommendation and an elapsed one put a spent
-        // week's figures back into the ranking. Dropping is wrong because the window still
-        // constrains the work: a scoped window at 89% with no deadline sat silently behind a
-        // live weekly-all at 10% while the account was recommended for exactly the work that
-        // would spend it.
+        // absent `resets_at` became a confident recommendation. Dropping is wrong because the
+        // window still constrains the work: a scoped window at 89% with no deadline sat silently
+        // behind a live weekly-all at 10% while the account was recommended for exactly the work
+        // that would spend it.
         //
-        // So a window with **no reset at all** is taken at its worst case. With the whole week
+        // So a window with no reset at all is taken at its **worst case**. With the whole week
         // still to run its headroom is exactly `-utilization`, and every other clock it could
         // have is roomier — a lower bound never over-promises, where an omission does.
-        //
-        // A window whose reset has **elapsed** gets neither treatment, and the difference is not
-        // a nicety: its percentage belongs to a week that is over. Bounding *this* week by last
-        // week's spending is not caution, it is the wrong number — an 89% that has since rolled
-        // over would bind at −0.89 and sink an account whose current window is untouched.
-        let measured: [WeeklyBinding] = weekly.compactMap { limit in
-            if let resetsAt = liveReset(limit, now: now) {
-                let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
-                    .clamped(to: 0 ... 1)
-                return WeeklyBinding(
-                    limit: limit,
-                    resetsAt: resetsAt,
-                    headroom: (1 - limit.utilization) - weekRemaining
-                )
+        let measured: [WeeklyBinding] = weekly.map { limit in
+            guard let resetsAt = liveReset(limit, now: now) else {
+                return WeeklyBinding(limit: limit, resetsAt: nil, headroom: -limit.utilization)
             }
-            guard limit.resetsAt == nil else { return nil }
-            return WeeklyBinding(limit: limit, resetsAt: nil, headroom: -limit.utilization)
+            let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
+                .clamped(to: 0 ... 1)
+            return WeeklyBinding(
+                limit: limit,
+                resetsAt: resetsAt,
+                headroom: (1 - limit.utilization) - weekRemaining
+            )
         }
-        // Never empty: the guard above established that at least one window has a live reset.
         return measured.min(by: tighter)
     }
 

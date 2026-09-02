@@ -488,9 +488,13 @@ Six rules carry the weight, each with a test:
   recommended for exactly the work that would spend it. So a window that reported **no** reset is
   taken at its **worst case**, `-utilization`: with the whole week still to run that is precisely
   its headroom, every other clock it could have is roomier, and a lower bound never over-promises
-  where an omission does. A window whose reset has **elapsed** gets neither treatment — its
-  percentage belongs to a week that is over, so bounding the current one by it is not caution but
-  the wrong number. Only when *nothing* has a live clock is there no claim at all. One reading of "is this
+  where an omission does. A window whose reset has **elapsed** gets neither treatment and
+  withholds the recommendation for the whole account: its percentage belongs to a week that is
+  over, and the window that replaced it is *unknown* rather than untouched, so ranking on a live
+  sibling would recommend work to a quota that may already be spent. Only a `.fresh` snapshot old
+  enough to cross a reset reaches that — "Manually only" polling, or an app that slept through
+  one — and everything staler is already barred from leading by its own state. There is likewise
+  no claim when nothing has a live clock at all. One reading of "is this
   window still ahead" serves all of it (`UsagePresentation.showsReset`), the rule the panes
   already apply, and the copy re-asks it against the *rendering* clock so a row drawn after a
   reset does not say "back in now".
