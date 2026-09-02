@@ -438,14 +438,24 @@ the share of the week still to run. A weekly window's leftovers do not roll over
 running ahead of its clock is spent now or lost at the reset, and that — not "who has the
 lowest percentage" — is what puts an account first.
 
-Four rules carry the weight, each with a test:
+Six rules carry the weight, each with a test:
 
-- **Gates are separate from budget.** A counted window at 100% puts the account `out`; at
-  `UsageLimit.criticalUtilization` (0.90, the same threshold that paints a bar red) it is
-  `nearlyOut`, so the board can never send anyone to a red bar. The **5-hour window gates and
-  nothing more**: it refills within hours, and charging it against the week would move someone
-  to another profile every session — which costs a chat's context for a wait measured in
-  minutes.
+- **The binding window is the tightest, not the fullest.** Each counted weekly window is
+  measured against **its own** reset and the least headroom binds. Utilization alone is the
+  same answer only while every weekly window resets together, and they are separate fields on
+  separate windows — this fleet already reports two whose resets differ. Once they diverge the
+  fuller window is easily the freer one: 70% resetting tomorrow leaves more room than 60% with
+  six days to spend it in.
+- **Gates are separate from budget, and a gate is `displaySeverity`.** Not a percentage of our
+  own: that is the reading every bar in the app paints from, so it folds in the server's
+  `severity` beside our threshold — and the server escalates for what a percentage cannot
+  express (a plan policy, an account restriction, a window kind this build has no model for).
+  A counted window at 100% puts the account `out`; anything the app would draw red is
+  `nearlyOut`, so the board can never send someone to a red bar. Where several windows gate at
+  once the one reported is the one that **blocks longest**, since that is when work can go
+  there again; the state still names the most severe. The **5-hour window gates and nothing
+  more**: it refills within hours, and charging it against the week would move someone to
+  another profile every session — a chat's context spent on a wait measured in minutes.
 - **A window this build does not recognize still gates**, for the same reason the parser keeps
   it, but never enters the headroom: nothing here knows how long its period is.
 - **Only current figures may instruct.** Anything not `.fresh` ranks behind what is, and can
@@ -453,9 +463,19 @@ Four rules carry the weight, each with a test:
   measure a pace against. `leader` is therefore optional, and nil is a real answer — a fleet
   that is entirely stale, gated or signed out has no recommendation to give, and the surfaces
   say so instead of promoting the least-bad row.
+- **A window whose reset has passed is not reasoned from at all.** Clamping the negative
+  remainder to zero read a spent quota as a full week of room, and a `.fresh` snapshot reaches
+  that state routinely — it is the standing condition of a "Manually only" fleet and of
+  anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
+  claim; an elapsed *gate* reads as an unknown return rather than an imminent one. The same
+  rule the panes already apply to a countdown.
 - **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
   (0.05) before the recommendation changes; a leader that hits a gate loses the place
   regardless. Without it the answer flips between near-equal accounts on every poll.
+
+Every pick that a reader ends up seeing — which window binds, which one is named as the
+blocker — ends on the window's own `dedupKey`, so a server that reorders `limits[]` cannot
+change the label on a row.
 
 The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
 model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
@@ -466,7 +486,9 @@ outside all of this — it is money, not a window.
 `UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one
 point per bucket **by taking the last sample in each**, never a mean. Averaging across a reset
 boundary reports a value the account never held and smears the very event a timeline exists to
-show. The thinning is done in SQL (SQLite's documented single-`MAX()` bare-column rule), so one
+show. The thinning is done in SQL — `ROW_NUMBER` over each bucket, ordered by `captured_at`
+then `id`, rather than the neater-reading `MAX()` with a bare `snapshot_json`, which settles
+which row wins the maximum but not which of two rows sharing a millisecond answers — so one
 snapshot per bucket is decoded rather than the thousands a month of polling records.
 
 ## macOS facts baked into the code
