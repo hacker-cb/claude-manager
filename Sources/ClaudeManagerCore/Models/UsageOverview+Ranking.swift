@@ -79,31 +79,27 @@ extension UsageOverview {
     /// gate only (below), never toward headroom, because nothing here knows how long its window
     /// is or whether the mode should have counted it at all.
     static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
-        preferActive(snapshot.limits.filter { counts($0, mode: mode) })
+        snapshot.limits.filter { counts($0, mode: mode) }
     }
 
     /// The counted windows whose budget is a *weekly* one — the only ones headroom is measured
     /// over, since the headroom formula compares a budget against a week of wall clock.
     static func countedWeekly(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
-        preferActive(
-            snapshot.limits.filter { ($0.isWeeklyAll || $0.isWeeklyScoped) && counts($0, mode: mode) }
-        )
+        snapshot.limits.filter { ($0.isWeeklyAll || $0.isWeeklyScoped) && counts($0, mode: mode) }
     }
 
-    /// The active windows, or all of them where the server marked none — the same preference
-    /// `UsageSnapshot.bindingLimit` applies, and the same one `LimitEvaluator` uses to decide
-    /// what may raise a notification.
-    ///
-    /// Reading `is_active` was not optional here: it varies per window in practice (this fleet
-    /// has an account whose weekly-all is inactive at 49% beside an active scoped window at
-    /// 98%), so ignoring it let a window the server had taken out of force gate an account that
-    /// the sidebar was meanwhile showing as fine — and no notification would ever have fired for
-    /// it. The fallback is what stops the preference stranding an account whose windows are all
-    /// marked inactive: it has a weekly budget whatever the flag says.
-    static func preferActive(_ limits: [UsageLimit]) -> [UsageLimit] {
-        let active = limits.filter(\.isActive)
-        return active.isEmpty ? limits : active
-    }
+    // **`is_active` is deliberately not read here, and it must stay that way.** It reads like
+    // "this window is in force", and filtering on it is the obvious next idea — it was tried.
+    // Measured over 8,730 stored snapshots, **exactly one** window per account carries it, and
+    // it is **always** the one with the highest utilization: it is the server's pick of the
+    // window closest to binding, a headline for display, not a statement that the other two are
+    // out of force. Filtering on it throws away two windows out of three — including, in one
+    // arrangement, an exhausted one that then sails past the gate, and every weekly budget of an
+    // account whose headline happens to be its session.
+    //
+    // `UsageSnapshot.bindingLimit` and `LimitEvaluator` read the flag correctly for what they
+    // do: pick one headline figure, and decline to interrupt about a window the server does not
+    // consider the binding one. This ranking asks a different question and needs all of them.
 
     /// A reset only while it is still ahead. One reading of "has this window turned over yet",
     /// shared by everything below — `UsagePresentation.showsReset` is the same rule, and this is
@@ -209,21 +205,15 @@ extension UsageOverview {
     /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
     /// it simply carries no headroom, and `assess` will not let it lead.
     static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
-        // Only a window that said **nothing** may borrow a sibling's deadline. Saying nothing —
-        // an absent or unparseable `resets_at` — leaves us ignorant, and the siblings describe
-        // the same week, so the earliest live one among them is a fair stand-in. A window that
-        // *named* a reset which has since passed is a different case entirely: it has demonstrably
-        // rolled over, its utilization describes a week that is gone, and lending it a live
-        // deadline puts those stale figures straight back into the ranking — where a `.fresh`
-        // snapshot re-served inside the poll floor could lead on them.
-        let fallback = weekly.compactMap { liveReset($0, now: now) }.min()
+        // **A window is measured against its own deadline or not at all.** Lending it a
+        // sibling's was tried twice and is wrong both ways round: these windows are documented as
+        // resetting independently — this fleet reports two whose dates differ — so one sibling's
+        // deadline is no evidence of another's. A borrowed clock turns an absent or unparseable
+        // `resets_at` into a confident recommendation, and one that has already passed into a
+        // spent week's figures re-entering the ranking. Unknown stays unknown: the row keeps its
+        // figure through the fallback below and simply cannot lead.
         let measured: [WeeklyBinding] = weekly.compactMap { limit in
-            let deadline: Date? = if let own = limit.resetsAt {
-                own > now ? own : nil
-            } else {
-                fallback
-            }
-            guard let resetsAt = deadline else { return nil }
+            guard let resetsAt = liveReset(limit, now: now) else { return nil }
             let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
                 .clamped(to: 0 ... 1)
             return WeeklyBinding(

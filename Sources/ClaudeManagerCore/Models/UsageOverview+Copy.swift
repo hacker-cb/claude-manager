@@ -85,7 +85,11 @@ public extension UsageOverview {
     private static func gatedReason(for candidate: UsageCandidate, now: Date) -> String {
         guard let limit = candidate.gatingLimit else { return stateLabel(candidate.state) }
         let figure = "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization))"
-        guard let freesAt = candidate.freesAt else { return figure }
+        // Re-checked against the *rendering* clock, not only the ranking one: a row built before
+        // a reset and drawn after it would otherwise say "back in now" for ever, since
+        // `compactDuration` floors a negative interval. `budgetReason` already asks this.
+        guard UsagePresentation.showsReset(candidate.freesAt, now: now),
+              let freesAt = candidate.freesAt else { return figure }
         // The verb follows the window actually named, not the row's state. The state is the most
         // severe thing happening while the figure is the window that blocks longest, and those
         // are not always one window — "back in 1h" beside a 95% session read as a claim about

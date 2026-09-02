@@ -446,10 +446,14 @@ Six rules carry the weight, each with a test:
   separate windows — this fleet already reports two whose resets differ. Once they diverge the
   fuller window is easily the freer one: 70% resetting tomorrow leaves more room than 60% with
   six days to spend it in.
-- **Only the windows the server has in force are read.** `is_active` varies per window in
-  practice, and the rest of the app already respects it — `LimitEvaluator` will not notify on an
-  inactive window and `bindingLimit` prefers active ones — so the same preference applies here,
-  with the same fallback to all of them where the server marked none.
+- **Every counted window is read, whatever `is_active` says.** The flag reads like "in force",
+  and filtering on it is the obvious idea — it was tried and reverted. Measured over 8,730
+  stored snapshots, exactly one window per account carries it and it is always the one with the
+  highest utilization: it is the server's *headline* pick, not a claim about the other two.
+  Honouring it dropped an exhausted window past the gate and left an account whose headline was
+  its session with no weekly budget to measure. `bindingLimit` and `LimitEvaluator` read it
+  correctly for what they do — one figure to show, and no interruption about a non-binding
+  window; this ranking asks a different question.
 - **Gates are separate from budget, and a gate is `displaySeverity`.** Not a percentage of our
   own: that is the reading every bar in the app paints from, so it folds in the server's
   `severity` beside our threshold — and the server escalates for what a percentage cannot
@@ -476,11 +480,12 @@ Six rules carry the weight, each with a test:
   that state routinely — it is the standing condition of a "Manually only" fleet and of
   anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
   claim; an elapsed *gate* reads as an unknown return rather than an imminent one, so it blocks
-  longest rather than shortest. Saying nothing and saying something that has since passed are
-  kept apart: a window with no reset at all borrows the earliest live one beside it, since the
-  siblings describe the same week, while one that *named* a reset and reached it has
-  demonstrably rolled over and is not measured at all. One reading of "is this window still
-  ahead" serves the rest (`UsagePresentation.showsReset`), the rule the panes already apply.
+  longest rather than shortest. **A window is measured against its own deadline or not at all** —
+  lending it a sibling's was tried in both directions and is wrong in both, since these windows
+  reset independently, so an absent reset became a confident recommendation and an elapsed one
+  put a spent week back into the ranking. One reading of "is this window still ahead" serves all
+  of it (`UsagePresentation.showsReset`), the rule the panes already apply, and the copy re-asks
+  it against the *rendering* clock so a row drawn after a reset does not say "back in now".
 - **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
   (0.05) before the recommendation changes; a leader that hits a gate loses the place
   regardless. Without it the answer flips between near-equal accounts on every poll.

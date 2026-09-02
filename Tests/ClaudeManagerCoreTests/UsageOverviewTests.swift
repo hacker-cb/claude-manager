@@ -300,44 +300,49 @@ struct UsageOverviewTests {
     }
 
     @Test
-    func aSiblingWeeklyResetStandsInForAScopedWindowThatReportedNone() {
-        // An inactive scoped window legitimately carries no reset; the week it belongs to is
-        // still the all-models one, so the clock is known after all.
+    func aWindowThatReportedNoResetIsNotMeasuredAgainstASiblingsClock() {
+        // Weekly windows reset independently — this fleet reports two whose dates differ — so a
+        // sibling's deadline is no evidence of another's. The scoped window here stays unmeasured
+        // rather than being lent a clock it never had; only the live weekly-all binds.
         let overview = rank([account("a", limits: [
             limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
             limit(UsageLimit.kindWeeklyScoped, 0.2, model: "Fable")
         ])])
-        #expect(isClose(overview.candidates.first?.headroom, 0.30))
+        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
+        #expect(isClose(overview.candidates.first?.headroom, 0.40))
         #expect(overview.candidates.first?.canLead == true)
     }
 
-    // MARK: - Which windows the server has in force
+    // MARK: - The server's `is_active` headline
 
     @Test
-    func anInactiveWindowDoesNotGateWhileAnActiveOneExists() {
-        // `is_active` varies per window in practice, and the rest of the app respects it:
-        // `LimitEvaluator` will not notify on an inactive window and `bindingLimit` prefers
-        // active ones. Gating on one the server had taken out of force sank an account the
-        // sidebar was meanwhile showing as fine.
-        var inactive = limit(UsageLimit.kindWeeklyScoped, 0.92, resetsIn: halfWeek, model: "Fable")
-        inactive.isActive = false
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek),
-            inactive
-        ])])
-        #expect(overview.candidates.first?.state == .spend)
-        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
+    func everyWindowCountsWhateverTheServerCallsActive() {
+        // `is_active` reads like "this window is in force", and filtering on it is the obvious
+        // idea — it was tried and reverted. Across 8,730 stored snapshots exactly one window per
+        // account carries the flag, always the one with the highest utilization: it is the
+        // server's headline pick, not a claim about the other two. Honouring it here would drop
+        // an exhausted window straight past the gate.
+        var exhausted = limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 3600)
+        exhausted.isActive = false
+        var headline = limit(UsageLimit.kindSession, 0.1, resetsIn: 900)
+        headline.isActive = true
+        let overview = rank([account("a", limits: [headline, exhausted])])
+        #expect(overview.candidates.first?.state == .out)
+        #expect(overview.candidates.first?.canLead == false)
     }
 
     @Test
-    func withNoActiveWindowAtAllTheInactiveOnesStillCount() {
-        // The fallback the rest of the app applies too: an account whose windows are all marked
-        // inactive still has a weekly budget, and must not be stranded without one.
+    func anInactiveWeeklyWindowStillCarriesItsBudget() {
+        // The mirror of the above: an account whose headline is its session still has a weekly
+        // budget, and filtering on the flag left it with none to measure.
         var week = limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
         week.isActive = false
-        let overview = rank([account("a", limits: [week])])
+        var session = limit(UsageLimit.kindSession, 0.3, resetsIn: 900)
+        session.isActive = true
+        let overview = rank([account("a", limits: [session, week])])
         #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
         #expect(isClose(overview.candidates.first?.headroom, 0.30))
+        #expect(overview.candidates.first?.canLead == true)
     }
 
     // MARK: - Stickiness
