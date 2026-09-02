@@ -476,8 +476,11 @@ Six rules carry the weight, each with a test:
   that state routinely — it is the standing condition of a "Manually only" fleet and of
   anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
   claim; an elapsed *gate* reads as an unknown return rather than an imminent one, so it blocks
-  longest rather than shortest. One reading of "is this window still ahead" serves all of it
-  (`UsagePresentation.showsReset`), which is the rule the panes already apply to a countdown.
+  longest rather than shortest. Saying nothing and saying something that has since passed are
+  kept apart: a window with no reset at all borrows the earliest live one beside it, since the
+  siblings describe the same week, while one that *named* a reset and reached it has
+  demonstrably rolled over and is not measured at all. One reading of "is this window still
+  ahead" serves the rest (`UsagePresentation.showsReset`), the rule the panes already apply.
 - **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
   (0.05) before the recommendation changes; a leader that hits a gate loses the place
   regardless. Without it the answer flips between near-equal accounts on every poll.

@@ -258,6 +258,22 @@ struct UsageOverviewTests {
     }
 
     @Test
+    func aWindowWhoseOwnResetElapsedNeverBorrowsALiveOne() {
+        // Saying nothing and saying something that has since passed are different states. A
+        // window that named a reset and reached it has demonstrably rolled over, so lending it a
+        // sibling's live deadline would put a spent week's figures back into the ranking — and a
+        // `.fresh` snapshot re-served inside the poll floor could lead on them.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.7, resetsIn: halfWeek),
+            limit(UsageLimit.kindWeeklyScoped, 0.05, resetsIn: -3600, model: "Fable")
+        ])])
+        // Lent the live deadline, the scoped window's stale 5% would have looked like the freest
+        // budget on the account and bound instead; only the live weekly-all is measured.
+        #expect(overview.candidates.first?.bindingWeekly?.isWeeklyAll == true)
+        #expect(isClose(overview.candidates.first?.headroom, 0.30 - 0.5))
+    }
+
+    @Test
     func aLiveSiblingResetStillStandsInForAWindowThatReportedNone() {
         // The fallback survives the elapsed-reset rule, so long as the stand-in is still ahead.
         let overview = rank([account("a", limits: [

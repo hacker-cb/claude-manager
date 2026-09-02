@@ -209,12 +209,21 @@ extension UsageOverview {
     /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
     /// it simply carries no headroom, and `assess` will not let it lead.
     static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
-        // Any counted weekly window that reported no usable reset — absent, unparseable, or
-        // already elapsed — borrows the earliest live one beside it, since they describe the
-        // same week. Only a reset still ahead can stand in.
+        // Only a window that said **nothing** may borrow a sibling's deadline. Saying nothing —
+        // an absent or unparseable `resets_at` — leaves us ignorant, and the siblings describe
+        // the same week, so the earliest live one among them is a fair stand-in. A window that
+        // *named* a reset which has since passed is a different case entirely: it has demonstrably
+        // rolled over, its utilization describes a week that is gone, and lending it a live
+        // deadline puts those stale figures straight back into the ranking — where a `.fresh`
+        // snapshot re-served inside the poll floor could lead on them.
         let fallback = weekly.compactMap { liveReset($0, now: now) }.min()
         let measured: [WeeklyBinding] = weekly.compactMap { limit in
-            guard let resetsAt = liveReset(limit, now: now) ?? fallback else { return nil }
+            let deadline: Date? = if let own = limit.resetsAt {
+                own > now ? own : nil
+            } else {
+                fallback
+            }
+            guard let resetsAt = deadline else { return nil }
             let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
                 .clamped(to: 0 ... 1)
             return WeeklyBinding(
