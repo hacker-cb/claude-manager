@@ -39,12 +39,18 @@ public extension UsageHistoryStore {
     /// account, and while the index still bounds the scan, exactly one `snapshot_json` per bucket
     /// crosses into Swift to be decoded — which is the cost that actually matters here.
     ///
-    /// Degrades to empty like every other read on this store: an unopenable database, a
-    /// non-positive `step`, or an account with nothing recorded all return no points rather than
-    /// failing the caller.
+    /// Degrades to empty like every other read on this store: an unopenable database, a `step`
+    /// that is not a usable positive number, or an account with nothing recorded all return no
+    /// points rather than failing the caller.
     func series(accountUUID: String, since: Date, step: TimeInterval) -> [UsageSeriesPoint] {
         guard let db, step > 0 else { return [] }
-        let bucket = Int64(step * 1000)
+        // `Int64(_:)` **traps** on a value it cannot represent, and `step > 0` lets `.infinity`
+        // and anything past `Int64.max / 1000` through — so the obvious conversion takes the
+        // process down on a caller's arithmetic slip, in a read whose whole contract is to
+        // degrade to empty. (`NaN` is already excluded: every comparison against it is false.)
+        let millis = step * 1000
+        guard millis < Double(Int64.max) else { return [] }
+        let bucket = Int64(millis)
         guard bucket > 0 else { return [] }
         // `MAX(captured_at)` with bare columns beside it is SQLite's documented
         // single-min/max special case: every bare column comes from the row that achieved the

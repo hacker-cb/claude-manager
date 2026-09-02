@@ -93,7 +93,11 @@ public extension UsageOverview {
         guard let limit = candidate.bindingWeekly else { return stateLabel(candidate.state) }
         let left = UsageFormat.percent(1 - limit.utilization)
         let head = "\(left) of \(limit.shortLabel) left"
-        guard let resetsAt = limit.resetsAt, resetsAt > now else { return head }
+        // The reset the pace was actually measured against, not the binding window's own field:
+        // a scoped window that reported none still belongs to a week, and reading only its own
+        // field dropped the countdown from exactly the rows whose claim depends on it — leaving
+        // a confident "use it or lose it" with nothing saying when.
+        guard let resetsAt = candidate.weeklyResetsAt, resetsAt > now else { return head }
         let clock = UsageFormat.compactDuration(resetsAt.timeIntervalSince(now))
         switch candidate.state {
         // The whole reason this ranking exists: a weekly window's leftovers do not roll over, so

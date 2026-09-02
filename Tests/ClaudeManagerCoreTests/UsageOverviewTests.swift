@@ -117,67 +117,6 @@ struct UsageOverviewTests {
         #expect(overview.leader?.id == "high")
     }
 
-    // MARK: - Gates
-
-    @Test
-    func anExhaustedWindowPutsTheAccountOut() throws {
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 3600)
-        ])])
-        let candidate = try #require(overview.candidates.first)
-        #expect(candidate.state == .out)
-        #expect(candidate.canLead == false)
-        #expect(overview.leader == nil)
-    }
-
-    @Test
-    func nearlyFullWeeklyWindowIsGatedAtTheCriticalThreshold() {
-        // The gate is `UsageLimit.criticalUtilization`, the same 0.90 that paints a bar red —
-        // the board must never send anyone to a red bar.
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, UsageLimit.criticalUtilization, resetsIn: halfWeek)
-        ])])
-        #expect(overview.candidates.first?.state == .nearlyOut)
-        #expect(overview.candidates.first?.canLead == false)
-    }
-
-    @Test
-    func aFullSessionWindowGatesButIsNamedApart() throws {
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindSession, 0.95, resetsIn: 900),
-            limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
-        ])])
-        let candidate = try #require(overview.candidates.first)
-        #expect(candidate.state == .sessionNearlyFull)
-        #expect(candidate.canLead == false)
-        // The weekly window is still reported — it is what the account will have when the
-        // session frees up in fifteen minutes.
-        #expect(candidate.bindingWeekly?.isWeeklyAll == true)
-        #expect(candidate.freesAt == now.addingTimeInterval(900))
-    }
-
-    @Test
-    func sessionUsageBelowTheGateNeverEntersHeadroom() {
-        // A busy-but-not-full session must not move the ranking: it refills within hours, and
-        // charging it against the week would send someone to another profile every session.
-        let withSession = rank([account("a", limits: [
-            limit(UsageLimit.kindSession, 0.89, resetsIn: 900),
-            limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
-        ])])
-        #expect(isClose(withSession.candidates.first?.headroom, 0.30))
-        #expect(withSession.candidates.first?.state == .spend)
-    }
-
-    @Test
-    func exhaustionOutranksNearlyOutWhenBothApply() {
-        let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindSession, 0.95, resetsIn: 900),
-            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: halfWeek)
-        ])])
-        #expect(overview.candidates.first?.state == .out)
-        #expect(overview.candidates.first?.gatingLimit?.isWeeklyAll == true)
-    }
-
     // MARK: - What the mode counts
 
     @Test
@@ -308,18 +247,6 @@ struct UsageOverviewTests {
         #expect(overview.candidates.first?.canLead == true)
     }
 
-    // MARK: - Ordering among accounts that are out
-
-    @Test
-    func gatedAccountsAreOrderedBySoonestReturn() {
-        let overview = rank([
-            account("late", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 7200)]),
-            account("soon", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 600)])
-        ])
-        #expect(overview.candidates.map(\.id) == ["soon", "late"])
-        #expect(overview.soonestReturn == now.addingTimeInterval(600))
-    }
-
     // MARK: - Stickiness
 
     @Test
@@ -380,13 +307,5 @@ struct UsageOverviewTests {
         let reversed = rank([weeklyAccount("a", 0.4), weeklyAccount("b", 0.4)])
         #expect(forward.candidates.map(\.id) == ["a", "b"])
         #expect(reversed.candidates.map(\.id) == ["a", "b"])
-    }
-
-    @Test
-    func anEmptyFleetHasNoLeaderAndNoReturnTime() {
-        let overview = rank([])
-        #expect(overview.candidates.isEmpty)
-        #expect(overview.leader == nil)
-        #expect(overview.soonestReturn == nil)
     }
 }

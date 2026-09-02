@@ -199,6 +199,26 @@ struct UsageHistoryStoreSeriesTests {
     }
 
     @Test
+    func aStepTooLargeToMeasureReturnsNoPointsRatherThanTrapping() async {
+        // `Int64(_:)` traps on a value it cannot represent, and a bare `step > 0` admits both of
+        // these — so the obvious conversion crashed the process in a read whose whole contract
+        // is to degrade to empty.
+        await withStore { store in
+            await store.record(sample("acc", at: 100, weeklyAll: 0.4), rawBody: nil)
+            #expect(await series(store, step: .infinity).isEmpty)
+            #expect(await series(store, step: 1e18).isEmpty)
+        }
+    }
+
+    @Test
+    func aNaNStepReturnsNoPoints() async {
+        await withStore { store in
+            await store.record(sample("acc", at: 100, weeklyAll: 0.4), rawBody: nil)
+            #expect(await series(store, step: .nan).isEmpty)
+        }
+    }
+
+    @Test
     func anUnopenableDatabaseReturnsNoPointsRatherThanFailing() async {
         let store = UsageHistoryStore(path: "/nonexistent-directory/usage.db")
         let points = await store.series(

@@ -19,6 +19,7 @@ extension UsageOverview {
                 state: .needsAttention,
                 headroom: nil,
                 bindingWeekly: nil,
+                weeklyResetsAt: nil,
                 gatingLimit: nil,
                 canLead: false
             )
@@ -29,6 +30,7 @@ extension UsageOverview {
                 state: .noData,
                 headroom: nil,
                 bindingWeekly: nil,
+                weeklyResetsAt: nil,
                 gatingLimit: nil,
                 canLead: false
             )
@@ -36,22 +38,25 @@ extension UsageOverview {
         let counted = countedLimits(in: snapshot, mode: mode)
         let weekly = countedWeekly(in: snapshot, mode: mode)
         let binding = weekly.max { $0.utilization < $1.utilization }
+        let resetsAt = effectiveWeeklyReset(binding: binding, weekly: weekly)
         if let gate = gate(among: counted) {
             return UsageCandidate(
                 account: account,
                 state: gate.state,
                 headroom: nil,
                 bindingWeekly: binding,
+                weeklyResetsAt: resetsAt,
                 gatingLimit: gate.limit,
                 canLead: false
             )
         }
-        let headroom = headroom(binding: binding, weekly: weekly, now: now)
+        let headroom = headroom(binding: binding, resetsAt: resetsAt, now: now)
         return UsageCandidate(
             account: account,
             state: state(forHeadroom: headroom),
             headroom: headroom,
             bindingWeekly: binding,
+            weeklyResetsAt: resetsAt,
             gatingLimit: nil,
             // A stale, offline or rate-limited account still shows its last figures, but it may
             // not *instruct*: those numbers stopped moving, and the work they would send someone
@@ -96,37 +101,69 @@ extension UsageOverview {
 
     /// The window that takes this account out of the running, and what to call that.
     ///
-    /// Exhaustion wins over nearly-exhausted, and among equals the highest utilization is
-    /// reported — the reader wants the window that is actually stopping them, not whichever the
-    /// server happened to list first.
+    /// **What counts as a gate is `displaySeverity`, not a percentage.** That is the same
+    /// reading every bar in the app paints from, so it folds in the server's own `severity`
+    /// alongside our threshold — and the server escalates for things a flat percentage cannot
+    /// express: a plan policy, an account restriction, a window kind this build has no model
+    /// for. Gating on utilization alone let the ranking recommend an account whose bar the rest
+    /// of the app was already drawing red, which is precisely the promise this gate exists to
+    /// keep. It also stops the 0.90 threshold being restated here.
+    ///
+    /// **The window reported is the one that blocks longest, not the fullest.** A 95% session
+    /// freeing in fifteen minutes beside a 94% week freeing in three days is not a
+    /// fifteen-minute wait, and quoting the session's countdown there promises a return the week
+    /// will not honour. The *state* still names the most severe thing — an exhausted window is
+    /// `out` whatever else is happening.
     static func gate(among limits: [UsageLimit]) -> (state: CandidateState, limit: UsageLimit)? {
-        let ranked = limits.sorted { $0.utilization > $1.utilization }
-        if let full = ranked.first(where: { $0.utilization >= 1 }) {
-            return (.out, full)
-        }
-        guard let hot = ranked.first(where: { $0.utilization >= UsageLimit.criticalUtilization })
-        else { return nil }
+        let gating = limits.filter { $0.displaySeverity == .critical }
+        guard let blocker = blocksLongest(gating) else { return nil }
+        if gating.contains(where: { $0.utilization >= 1 }) { return (.out, blocker) }
         // The 5-hour window is a gate and nothing more: it refills within hours, so it must not
         // sink an account the way a spent week does, and it never enters the headroom below.
         // Sending someone to a different profile every time a session fills would cost them a
-        // chat's context for a wait measured in minutes.
-        return (hot.isSession ? .sessionNearlyFull : .nearlyOut, hot)
+        // chat's context for a wait measured in minutes — but only while it is the *one* thing
+        // gating, or the row would offer a wait of minutes over a block of days.
+        return (gating.allSatisfy(\.isSession) ? .sessionNearlyFull : .nearlyOut, blocker)
+    }
+
+    /// Of several gating windows, the one that keeps the account unusable longest — because that
+    /// is when work can go there again.
+    ///
+    /// A window that reported no reset blocks longest of all: nothing said it frees, so nothing
+    /// may promise it does. Fully ordered (reset, then utilization, then kind) so the row a
+    /// reader sees does not depend on the order the server happened to list its windows in.
+    static func blocksLongest(_ limits: [UsageLimit]) -> UsageLimit? {
+        limits.min { lhs, rhs in
+            if lhs.resetsAt != rhs.resetsAt {
+                guard let left = lhs.resetsAt else { return true }
+                guard let right = rhs.resetsAt else { return false }
+                return left > right
+            }
+            if lhs.utilization != rhs.utilization { return lhs.utilization > rhs.utilization }
+            return lhs.rawKind < rhs.rawKind
+        }
     }
 
     // MARK: - Headroom
+
+    /// The reset the week is measured against: the binding window's own, or a sibling weekly
+    /// window's where it reported none — an inactive scoped window legitimately carries no reset
+    /// while the week it belongs to plainly has one.
+    ///
+    /// Resolved once and carried on the candidate, so the pace and the sentence explaining it
+    /// cannot be computed from two different clocks.
+    static func effectiveWeeklyReset(binding: UsageLimit?, weekly: [UsageLimit]) -> Date? {
+        guard let binding else { return nil }
+        return binding.resetsAt ?? weekly.compactMap(\.resetsAt).min()
+    }
 
     /// Unspent share of the binding window minus the share of the week still to run.
     ///
     /// Nil when nothing counted reported a reset: with no clock there is no pace to compare a
     /// budget against, and a number invented for that case would rank an account we know least
     /// about above ones we can actually reason over.
-    static func headroom(binding: UsageLimit?, weekly: [UsageLimit], now: Date) -> Double? {
-        guard let binding else { return nil }
-        // The binding window's own reset first; a sibling weekly window's only as a fallback,
-        // since an inactive scoped window legitimately reports none.
-        guard let resetsAt = binding.resetsAt ?? weekly.compactMap(\.resetsAt).min() else {
-            return nil
-        }
+    static func headroom(binding: UsageLimit?, resetsAt: Date?, now: Date) -> Double? {
+        guard let binding, let resetsAt else { return nil }
         let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
             .clamped(to: 0 ... 1)
         return (1 - binding.utilization) - weekRemaining
@@ -154,7 +191,15 @@ extension UsageOverview {
             let left = lhs.headroom ?? -.greatestFiniteMagnitude
             let right = rhs.headroom ?? -.greatestFiniteMagnitude
             if left != right { return left > right }
-        } else if let left = lhs.freesAt, let right = rhs.freesAt, left != right {
+        } else if lhs.freesAt != rhs.freesAt {
+            // Nil is ordered explicitly, not skipped. Comparing two dates *only when both sides
+            // carried one* and otherwise falling through to the uuid is not a weak ordering at
+            // all: with `z` freeing in 1h, `a` in 2h and `m` reporting no reset, `z < a`,
+            // `a < m` and `m < z` all hold at once. `sorted(by:)` does not merely order a cycle
+            // oddly — its result is undefined. A window that never said when it frees sorts
+            // last, which is also the honest place for it.
+            guard let left = lhs.freesAt else { return false }
+            guard let right = rhs.freesAt else { return true }
             return left < right
         }
         return lhs.id < rhs.id
