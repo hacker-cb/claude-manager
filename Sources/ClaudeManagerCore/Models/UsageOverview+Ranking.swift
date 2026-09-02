@@ -36,27 +36,25 @@ extension UsageOverview {
             )
         }
         let counted = countedLimits(in: snapshot, mode: mode)
-        let weekly = countedWeekly(in: snapshot, mode: mode)
-        let binding = weekly.max { $0.utilization < $1.utilization }
-        let resetsAt = effectiveWeeklyReset(binding: binding, weekly: weekly)
+        let bound = bind(weekly: countedWeekly(in: snapshot, mode: mode), now: now)
         if let gate = gate(among: counted) {
             return UsageCandidate(
                 account: account,
                 state: gate.state,
                 headroom: nil,
-                bindingWeekly: binding,
-                weeklyResetsAt: resetsAt,
+                bindingWeekly: bound?.limit,
+                weeklyResetsAt: bound?.resetsAt,
                 gatingLimit: gate.limit,
                 canLead: false
             )
         }
-        let headroom = headroom(binding: binding, resetsAt: resetsAt, now: now)
+        let headroom = bound?.headroom
         return UsageCandidate(
             account: account,
             state: state(forHeadroom: headroom),
             headroom: headroom,
-            bindingWeekly: binding,
-            weeklyResetsAt: resetsAt,
+            bindingWeekly: bound?.limit,
+            weeklyResetsAt: bound?.resetsAt,
             gatingLimit: nil,
             // A stale, offline or rate-limited account still shows its last figures, but it may
             // not *instruct*: those numbers stopped moving, and the work they would send someone
@@ -146,27 +144,52 @@ extension UsageOverview {
 
     // MARK: - Headroom
 
-    /// The reset the week is measured against: the binding window's own, or a sibling weekly
-    /// window's where it reported none — an inactive scoped window legitimately carries no reset
-    /// while the week it belongs to plainly has one.
-    ///
-    /// Resolved once and carried on the candidate, so the pace and the sentence explaining it
-    /// cannot be computed from two different clocks.
-    static func effectiveWeeklyReset(binding: UsageLimit?, weekly: [UsageLimit]) -> Date? {
-        guard let binding else { return nil }
-        return binding.resetsAt ?? weekly.compactMap(\.resetsAt).min()
+    /// The weekly window that actually constrains the account, the clock it was measured
+    /// against, and the headroom that came out.
+    struct WeeklyBinding {
+        var limit: UsageLimit
+        var resetsAt: Date?
+        var headroom: Double?
     }
 
-    /// Unspent share of the binding window minus the share of the week still to run.
+    /// Bind to the **tightest** weekly window, measuring each against its own deadline.
     ///
-    /// Nil when nothing counted reported a reset: with no clock there is no pace to compare a
-    /// budget against, and a number invented for that case would rank an account we know least
-    /// about above ones we can actually reason over.
-    static func headroom(binding: UsageLimit?, resetsAt: Date?, now: Date) -> Double? {
-        guard let binding, let resetsAt else { return nil }
-        let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
-            .clamped(to: 0 ... 1)
-        return (1 - binding.utilization) - weekRemaining
+    /// Not the highest utilization, which is only the same thing while every weekly window
+    /// resets at the same moment. They are separate fields on separate windows — a fleet here
+    /// reports two that differ — and once they diverge the fuller window can easily be the freer
+    /// one: 70% resetting tomorrow leaves more room than 60% with six days to spend it in.
+    /// Picking by percentage there reports the account as on pace while the window that will
+    /// actually stop it goes unmentioned.
+    ///
+    /// **A window whose reset has passed is not measured at all.** Clamping a negative remainder
+    /// to zero turned a spent quota into maximal headroom and left the row able to lead — and a
+    /// `.fresh` snapshot can sit well past its reset, which is the documented state of a
+    /// "Manually only" fleet and of any account re-served inside the poll floor. The figures
+    /// from a window that has since rolled over say nothing about the one now running, so they
+    /// earn no pace claim until a refresh. The same rule the panes apply to a countdown.
+    ///
+    /// With nothing measurable the fullest window is still reported, so the row keeps a figure —
+    /// it simply carries no headroom, and `assess` will not let it lead.
+    static func bind(weekly: [UsageLimit], now: Date) -> WeeklyBinding? {
+        // An inactive scoped window legitimately reports no reset while the week it belongs to
+        // plainly has one; only a reset still ahead can stand in for it.
+        let fallback = weekly.compactMap(\.resetsAt).filter { $0 > now }.min()
+        let measured: [WeeklyBinding] = weekly.compactMap { limit in
+            guard let resetsAt = limit.resetsAt ?? fallback, resetsAt > now else { return nil }
+            let weekRemaining = (resetsAt.timeIntervalSince(now) / LimitEvaluator.sevenDayWindow)
+                .clamped(to: 0 ... 1)
+            return WeeklyBinding(
+                limit: limit,
+                resetsAt: resetsAt,
+                headroom: (1 - limit.utilization) - weekRemaining
+            )
+        }
+        if let tightest = measured.min(by: { ($0.headroom ?? 0) < ($1.headroom ?? 0) }) {
+            return tightest
+        }
+        return weekly
+            .max { $0.utilization < $1.utilization }
+            .map { WeeklyBinding(limit: $0, resetsAt: nil, headroom: nil) }
     }
 
     private static func state(forHeadroom headroom: Double?) -> CandidateState {

@@ -52,15 +52,22 @@ public extension UsageHistoryStore {
         guard millis < Double(Int64.max) else { return [] }
         let bucket = Int64(millis)
         guard bucket > 0 else { return [] }
-        // `MAX(captured_at)` with bare columns beside it is SQLite's documented
-        // single-min/max special case: every bare column comes from the row that achieved the
-        // maximum, so `snapshot_json` here is the last sample of its bucket rather than an
-        // arbitrary one.
+        // One row per bucket, ranked rather than aggregated. `MAX(captured_at)` with a bare
+        // `snapshot_json` beside it reads well — SQLite documents that the bare columns come
+        // from the row achieving the maximum — but it settles nothing when two samples share a
+        // millisecond, which the schema permits: both rows achieve the maximum and either
+        // snapshot may come back. `ROW_NUMBER` lets the tie be broken by `id`, so the point is
+        // the last sample of its bucket by the clock and, failing that, by insertion.
         let sql = """
-        SELECT MAX(captured_at), snapshot_json FROM usage_samples
-        WHERE account_uuid=?1 AND captured_at>=?2
-        GROUP BY captured_at/?3
-        ORDER BY 1
+        SELECT captured_at, snapshot_json FROM (
+            SELECT captured_at, snapshot_json,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY captured_at/?3 ORDER BY captured_at DESC, id DESC
+                   ) AS rank
+            FROM usage_samples
+            WHERE account_uuid=?1 AND captured_at>=?2
+        ) WHERE rank=1
+        ORDER BY captured_at
         """
         guard let stmt = Self.prepare(db, sql) else { return [] }
         defer { sqlite3_finalize(stmt) }

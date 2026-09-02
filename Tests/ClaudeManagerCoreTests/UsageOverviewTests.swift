@@ -221,6 +221,53 @@ struct UsageOverviewTests {
         #expect(overview.candidates.last?.state == .noData)
     }
 
+    // MARK: - Which weekly window binds
+
+    @Test
+    func theTightestWeeklyWindowBindsNotTheFullestOne() {
+        // The two are the same thing only while both windows reset together. Once the dates
+        // diverge the fuller window can be the freer one, and picking by percentage reports an
+        // account as on pace while the window that will actually stop it goes unmentioned.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.70, resetsIn: 24 * 3600),
+            limit(UsageLimit.kindWeeklyScoped, 0.60, resetsIn: 6 * 24 * 3600, model: "Fable")
+        ])])
+        let candidate = overview.candidates.first
+        // 60% with six days left is far tighter than 70% resetting tomorrow.
+        #expect(candidate?.bindingWeekly?.scopeModelName == "Fable")
+        #expect(isClose(candidate?.headroom, 0.40 - 6.0 / 7.0))
+        #expect(candidate?.state == .burningFast)
+        #expect(candidate?.weeklyResetsAt == now.addingTimeInterval(6 * 24 * 3600))
+    }
+
+    @Test
+    func aWindowWhoseResetHasPassedEarnsNoPaceClaim() {
+        // A `.fresh` snapshot can sit past its own reset — the documented state of a
+        // "Manually only" fleet, and of anything re-served inside the poll floor. Clamping the
+        // negative remainder to zero turned a spent quota into maximal headroom and let it lead.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: -3600)
+        ])])
+        let candidate = overview.candidates.first
+        #expect(candidate?.headroom == nil)
+        #expect(candidate?.canLead == false)
+        #expect(candidate?.weeklyResetsAt == nil)
+        // ...but the figure is still shown, so the row does not go blank.
+        #expect(candidate?.bindingWeekly?.utilization == 0.2)
+        #expect(overview.leader == nil)
+    }
+
+    @Test
+    func aLiveSiblingResetStillStandsInForAWindowThatReportedNone() {
+        // The fallback survives the elapsed-reset rule, so long as the stand-in is still ahead.
+        let overview = rank([account("a", limits: [
+            limit(UsageLimit.kindWeeklyAll, 0.1, resetsIn: halfWeek),
+            limit(UsageLimit.kindWeeklyScoped, 0.2, model: "Fable")
+        ])])
+        #expect(overview.candidates.first?.canLead == true)
+        #expect(overview.candidates.first?.weeklyResetsAt == now.addingTimeInterval(halfWeek))
+    }
+
     // MARK: - No clock, no claim
 
     @Test

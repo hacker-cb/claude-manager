@@ -133,10 +133,15 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
 public struct UsageOverview: Sendable, Equatable {
     public var candidates: [UsageCandidate]
     public var mode: WorkMode
+    /// The clock this ranking was taken against. Stored so everything derived from it below
+    /// answers on the same one — a caller passing a second `now` is how two figures on one
+    /// screen come to disagree about which windows have already turned over.
+    public var now: Date
 
-    public init(candidates: [UsageCandidate], mode: WorkMode) {
+    public init(candidates: [UsageCandidate], mode: WorkMode, now: Date) {
         self.candidates = candidates
         self.mode = mode
+        self.now = now
     }
 
     /// The account to take work to, or nil when nothing is in a position to be recommended.
@@ -147,8 +152,13 @@ public struct UsageOverview: Sendable, Equatable {
     }
 
     /// The earliest moment any gated candidate frees up — what to say when `leader` is nil.
+    ///
+    /// Only resets still ahead count. A retained snapshot can carry one that has already passed,
+    /// and taking the minimum over those returned a moment in the past — masking the real return
+    /// another account was about to offer, and handing the surfaces a countdown they are
+    /// elsewhere careful never to print.
     public var soonestReturn: Date? {
-        candidates.compactMap(\.freesAt).min()
+        candidates.compactMap(\.freesAt).filter { $0 > now }.min()
     }
 
     // MARK: - Thresholds
@@ -177,7 +187,8 @@ public struct UsageOverview: Sendable, Equatable {
         let ordered = assessed.sorted(by: precedes)
         return UsageOverview(
             candidates: applyStickiness(ordered, previousLeader: previousLeader),
-            mode: mode
+            mode: mode,
+            now: now
         )
     }
 }

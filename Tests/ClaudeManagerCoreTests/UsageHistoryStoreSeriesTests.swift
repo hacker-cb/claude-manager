@@ -127,6 +127,19 @@ struct UsageHistoryStoreSeriesTests {
         }
     }
 
+    @Test
+    func twoSamplesSharingAMillisecondResolveToTheLaterInsert() async {
+        // The schema permits two rows with one `captured_at`, and an aggregate that only takes
+        // the maximum leaves which of them answers undefined. The later insert wins.
+        await withStore { store in
+            await store.record(sample("acc", at: 100, weeklyAll: 0.1), rawBody: nil)
+            await store.record(sample("acc", at: 100, weeklyAll: 0.9), rawBody: nil)
+            let points = await series(store)
+            #expect(points.count == 1)
+            #expect(points.first?.weeklyAll == 0.9)
+        }
+    }
+
     // MARK: - Bounds
 
     @Test

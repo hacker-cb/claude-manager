@@ -146,6 +146,25 @@ struct UsageOverviewOrderingTests {
         #expect(overview.soonestReturn == now.addingTimeInterval(600))
     }
 
+    @Test
+    func soonestReturnIgnoresAResetThatHasAlreadyPassed() {
+        // A retained snapshot can carry an elapsed reset; taking the plain minimum returned a
+        // moment in the past and hid the real return the other account was about to offer.
+        let overview = rank([
+            account("stale-gate", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -7200)]),
+            account("live-gate", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 600)])
+        ])
+        #expect(overview.soonestReturn == now.addingTimeInterval(600))
+    }
+
+    @Test
+    func aFleetWhoseGatesHaveAllElapsedOffersNoReturnTime() {
+        let overview = rank([
+            account("a", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -7200)])
+        ])
+        #expect(overview.soonestReturn == nil)
+    }
+
     // MARK: - The ordering is a real ordering
 
     @Test
