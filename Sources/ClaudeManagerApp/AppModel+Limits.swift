@@ -72,23 +72,31 @@ extension AppModel {
     /// on this page dates one.
     var limitsWorstSummary: String? {
         let now = Date()
-        let live = limitsAccounts
+        let mode = limitsEffectiveMode
+        let ranked = limitsAccounts
             .filter { !UsageOverview.needsUser($0.state) }
             .compactMap { account -> (account: AccountUsage, limit: UsageLimit)? in
+                guard let snapshot = account.snapshot else { return nil }
+                // The windows this mode counts, and only those. Taking the max over the whole
+                // snapshot let the row read "worst 7d·Fable 98%" while the page beside it dimmed
+                // that very column as "Not counted for Other work" — and this property exists
+                // precisely so the row and the page cannot disagree.
+                //
                 // The elapsed *window* is dropped, never the account carrying it. Asking
                 // `bindingLimit` and discarding the whole account when its reset had passed threw
                 // away everything else in the same snapshot — and `bindingLimit` is the server's
                 // headline, frequently the 5-hour session, so a session resetting in ten minutes
                 // took a live 95% week off the row with it.
-                let live = (account.snapshot?.limits ?? []).filter { limit in
-                    guard let resetsAt = limit.resetsAt else { return true }
-                    return resetsAt > now
-                }
-                guard let worst = live.max(by: { $0.utilization < $1.utilization })
+                let counted = UsageOverview.countedLimits(in: snapshot, mode: mode)
+                    .filter { limit in
+                        guard let resetsAt = limit.resetsAt else { return true }
+                        return resetsAt > now
+                    }
+                guard let worst = counted.max(by: { $0.utilization < $1.utilization })
                 else { return nil }
                 return (account, worst)
             }
-        guard let worst = live.max(by: { $0.limit.utilization < $1.limit.utilization })
+        guard let worst = ranked.max(by: { $0.limit.utilization < $1.limit.utilization })
         else { return nil }
         let summary = UsageFormat.limitSummary(worst.limit)
         guard worst.account.state != .fresh,

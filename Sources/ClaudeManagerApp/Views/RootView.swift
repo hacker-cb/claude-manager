@@ -57,8 +57,14 @@ struct RootView: View {
             // already cover it. This is a `Window` scene, not a `WindowGroup`: the scene is a
             // singleton whose state survives its window being closed, so a window closed on a
             // profile and reopened later comes back where it was left rather than on the page it
-            // is meant to open on. Nothing in an open session re-runs this, so no selection made
-            // while the window stays open is discarded.
+            // is meant to open on.
+            //
+            // What it rests on, stated rather than asserted away: `.task` restarts whenever the
+            // view leaves and re-enters the hierarchy, which for this scene means the window
+            // closing and reopening — not anything a person does inside an open one. Should
+            // SwiftUI ever tear the split view down and rebuild it mid-session, the cost is a
+            // sidebar selection snapping back to Limits; nothing is lost and the next click
+            // undoes it.
             selection = ProfileEntry.limitsID
             await model.performLaunchTasks()
             // Refresh on *every* appearance too: reopening the window after an external

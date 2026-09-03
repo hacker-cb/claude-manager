@@ -47,6 +47,31 @@ struct UsageHistoryStoreSeriesTests {
         await body(UsageHistoryStore(path: ":memory:"))
     }
 
+    @Test
+    func aThinnedPointSaysWhichQuotaItsScopedValueCameFrom() async {
+        // The value alone is a per-sample maximum with the identity thrown away, so a line drawn
+        // through several samples cannot otherwise be asked whether it followed one quota.
+        await withStore { store in
+            await store.record(sample("a", at: 0, scoped: [0.4]), rawBody: nil)
+            await store.record(sample("a", at: 2 * Self.hour, scoped: [0.3, 0.7]), rawBody: nil)
+            await store.record(sample("a", at: 4 * Self.hour, scoped: []), rawBody: nil)
+            let points = await store.series(
+                accountUUID: "a", since: Date(timeIntervalSince1970: 0), step: Self.hour
+            )
+            #expect(points.map(\.weeklyScopedIdentity) == [.one("Model0"), .several, .none])
+        }
+    }
+
+    @Test
+    func oneQuotaRenamedIsNotTheSameQuota() {
+        // `.one(nil)` and `.one("Fable")` are both a single window, and they compare unequal on
+        // purpose: a rename mid-period changes which quota the line is about, exactly as a second
+        // window does.
+        #expect(ScopedIdentity.one("Fable") != ScopedIdentity.one("Sonnet"))
+        #expect(ScopedIdentity.one(nil) != ScopedIdentity.one("Fable"))
+        #expect(ScopedIdentity.one("Fable") == ScopedIdentity.one("Fable"))
+    }
+
     private func series(
         _ store: UsageHistoryStore,
         _ account: String = "acc",

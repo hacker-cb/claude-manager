@@ -85,7 +85,12 @@ extension UsageOverview {
     /// parser keeps it: it may be the one that actually constrains the account. It counts as a
     /// gate only (below), never toward headroom, because nothing here knows how long its window
     /// is or whether the mode should have counted it at all.
-    static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
+    ///
+    /// Public alongside `needsUser`, and for the same reason: it is the question "which windows
+    /// does the ranking look at", and a surface that summarises the fleet has to ask it rather
+    /// than approximate it. The sidebar row did approximate it, and read "worst 7d·Fable 98%"
+    /// over a window the page beside it was dimming as not counted.
+    public static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
         snapshot.limits.filter { counts($0, mode: mode) }
     }
 

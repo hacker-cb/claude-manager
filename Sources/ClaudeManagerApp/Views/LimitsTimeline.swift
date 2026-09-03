@@ -200,9 +200,28 @@ struct LimitsTimelineLane: View {
         // a live forecast. It is the same rule the ranking applies to whether such an account may
         // lead at all. It is only half the guard, though: `.fresh` bounds nothing about *age*,
         // which is what `forecast`'s `staleAfter` is handed `maxGap` for.
-        guard candidate.isCurrent else { return false }
+        candidate.isCurrent && followsOneQuota(window)
+    }
+
+    /// Whether the drawn line follows a single quota the whole way across.
+    ///
+    /// Kept apart from `projectable` because the reset mark needs this half and not the other:
+    /// a deadline does not go stale the way a *rate* does — the window turns over when it turns
+    /// over, whether or not anything has been read since — so gating the mark on currency would
+    /// strip a correct date off every lane the moment its account went offline.
+    private func followsOneQuota(_ window: KeyPath<UsageSeriesPoint, Double?>) -> Bool {
         guard window == \.weeklyScoped else { return true }
-        return (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1
+        guard (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1 else { return false }
+        // And the drawn history too, not only the snapshot. `weeklyScoped` is a per-sample
+        // maximum with the quota's identity thrown away, so a period recorded while the account
+        // had two per-model windows carries a line that switches models partway through — and it
+        // carries it still, after the server has gone back to sending one. Asking today's count
+        // alone would forecast from exactly that mixture and label the result as the surviving
+        // quota's.
+        let drawn = points.filter { $0.weeklyScoped != nil }.map(\.weeklyScopedIdentity)
+        guard let first = drawn.first else { return true }
+        guard first != .several else { return false }
+        return drawn.allSatisfy { $0 == first }
     }
 
     /// The reset lines to draw, and what each belongs to.
@@ -221,7 +240,12 @@ struct LimitsTimelineLane: View {
             (\UsageSeriesPoint.weeklyAll, "all"),
             (\UsageSeriesPoint.weeklyScoped, "per-model")
         ] {
-            guard !segments(window).isEmpty, let at = reset(for: window),
+            // With more than one per-model quota the plotted line changes which model it
+            // represents partway through, so a rule at any one window's deadline sits under a
+            // line that is not only that window's. The forecast already refuses this case; the
+            // deadline mark has to refuse it too — the same mismatch the resets *column* was
+            // fixed for, one view over.
+            guard followsOneQuota(window), !segments(window).isEmpty, let at = reset(for: window),
                   at > now, range.contains(at) else { continue }
             found.append(ResetMark(at: at, label: "resets · \(name)"))
         }
