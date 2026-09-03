@@ -24,14 +24,40 @@ extension AppModel {
     /// times; ranking that list would recommend the same account three times over and let it
     /// crowd out every other. `UsagePresentation.onePerAccount` already folds it — and folds it
     /// *stably*, which matters here because the ranking is re-run on every tick.
+    /// The bindings that still exist. Under "Manually only" polling
+    /// `refreshUsageIfBindingsChanged` fetches nothing, so every map keyed by binding —
+    /// `usageByBinding`, `usageBindingFailures` — keeps a launcher the user removed until the
+    /// next pass, which may never come.
+    var liveBindingIDs: Set<String> {
+        Set(profileEntries.map(\.id))
+    }
+
     var limitsAccounts: [AccountUsage] {
-        // Only accounts a live binding still speaks for. Under "Manually only" polling
-        // `refreshUsageIfBindingsChanged` fetches nothing, so `usageByBinding` keeps a launcher
-        // the user removed — and the ranking would go on recommending it, with no profile left
-        // for the Open button to act on.
-        let live = Set(profileEntries.map(\.id))
-        return UsagePresentation.onePerAccount(usageByBinding)
-            .filter { $0.bindingIDs.contains(where: live.contains) }
+        // Filtered **before** the fold, and the fan-out trimmed with it. Filtering afterwards
+        // left a removed binding eligible to represent its login — `onePerAccount` picks the
+        // widest fan-out, and a deleted entry still carries its old sibling list — so the board
+        // could rank an account on the deleted entry's state while opening a surviving profile.
+        let live = liveBindingIDs
+        var scoped: [String: AccountUsage] = [:]
+        for (binding, usage) in usageByBinding where live.contains(binding) {
+            var trimmed = usage
+            trimmed.bindingIDs = usage.bindingIDs.filter(live.contains)
+            scoped[binding] = trimmed
+        }
+        return UsagePresentation.onePerAccount(scoped)
+    }
+
+    /// The worst window across the ranked fleet, for the sidebar row's subtitle.
+    ///
+    /// Read from `limitsAccounts` rather than `menuBarUsageSummary`, which walks every binding in
+    /// the map: the row labels the page, and the two disagreed the moment one of them filtered a
+    /// removed launcher out and the other did not.
+    var limitsWorstSummary: String? {
+        let worst = limitsAccounts
+            .filter { $0.state == .fresh }
+            .compactMap(\.snapshot?.bindingLimit)
+            .max { $0.utilization < $1.utilization }
+        return worst.map(UsageFormat.limitSummary)
     }
 
     /// What each binding is called, for naming an account after a profile where the login has no
@@ -87,8 +113,13 @@ extension AppModel {
     /// the same screen, since refreshing cannot sign anyone in. `UsagePresentation` already owns
     /// the wording for each cause.
     var limitsBlockingFailures: [String] {
+        // Live bindings only, for the reason `limitsAccounts` filters: this map is stale in
+        // exactly the same way, and an unfiltered read told the user to sign into a profile they
+        // had already deleted.
+        let live = liveBindingIDs
         var seen = Set<String>()
         return usageBindingFailures.keys.sorted()
+            .filter(live.contains)
             .compactMap { usageBindingFailures[$0] }
             .compactMap { UsagePresentation.sentence(usage: nil, failure: $0)?.text }
             .filter { seen.insert($0).inserted }

@@ -167,9 +167,13 @@ struct LimitsTimelineLane: View {
                 .chartXScale(domain: range)
                 .chartYScale(domain: 0 ... 1)
                 .chartYAxis {
-                    AxisMarks(values: [0, 1]) {
+                    // `Double` marks and a `Double` percent style. A `Decimal` format style casts
+                    // the axis value to its own `FormatInput` at render, and against these values
+                    // that cast fails silently — leaving grid lines with no scale at all on a
+                    // chart whose entire subject is a percentage.
+                    AxisMarks(values: [0.0, 1.0]) {
                         AxisGridLine()
-                        AxisValueLabel(format: Decimal.FormatStyle.Percent.percent.scale(100))
+                        AxisValueLabel(format: FloatingPointFormatStyle<Double>.Percent())
                     }
                 }
                 .chartXAxis {
@@ -205,9 +209,16 @@ struct LimitsTimelineLane: View {
     private var chart: some View {
         Chart {
             ForEach(Array(segments(\.weeklyAll).enumerated()), id: \.offset) { index, run in
+                // The fill needs the per-run series as much as the line does: without one Charts
+                // folds every run into a single area and shades straight across the gap, so a
+                // correctly-broken line sat on top of a fill asserting usage through it.
                 ForEach(run) { plot in
-                    AreaMark(x: .value("When", plot.at), y: .value("Used", plot.value))
-                        .foregroundStyle(Color.accentColor.opacity(0.12))
+                    AreaMark(
+                        x: .value("When", plot.at),
+                        y: .value("Used", plot.value),
+                        series: .value("All fill", "fill-\(index)")
+                    )
+                    .foregroundStyle(Color.accentColor.opacity(0.12))
                 }
                 // A series per run, so Charts draws each as its own line instead of bridging the
                 // gap between them.

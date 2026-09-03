@@ -58,7 +58,7 @@ struct LimitsSidebarRow: View {
     /// recommendation is what the page itself opens with.
     private var subtitle: String {
         guard model.usageTrackingEnabled else { return "tracking off" }
-        guard let worst = model.menuBarUsageSummary else { return "where to work now" }
+        guard let worst = model.limitsWorstSummary else { return "where to work now" }
         return "worst \(worst)"
     }
 }
