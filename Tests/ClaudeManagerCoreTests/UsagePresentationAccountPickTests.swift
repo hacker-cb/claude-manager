@@ -12,11 +12,12 @@ extension UsagePresentationTests {
         uuid: String,
         email: String? = nil,
         state: UsageState = .fresh,
+        hasFigures: Bool = false,
         bindingIDs: [String]
     ) -> AccountUsage {
         AccountUsage(
             identity: AccountIdentity(uuid: uuid, email: email),
-            snapshot: nil,
+            snapshot: hasFigures ? UsageSnapshot(limits: []) : nil,
             state: state,
             bindingIDs: bindingIDs
         )
@@ -36,6 +37,31 @@ extension UsagePresentationTests {
         let picked = UsagePresentation.onePerAccount(["aaa": failed, "zzz": readable])
         #expect(picked.count == 1)
         #expect(picked.first?.state == .offline)
+    }
+
+    @Test
+    func figuresOutrankFreshnessWhenOnlyOneSideHasThem() {
+        // `.fresh` is not a promise of figures: the service reports "current with nothing yet"
+        // for a binding whose history is empty or unreadable. Ranking freshness above their
+        // *presence* put such an entry ahead of an offline sibling holding real numbers, and the
+        // login then read as "not checked yet" while another binding could have shown its week.
+        let freshButEmpty = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
+        let offlineWithFigures = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
+        let picked = UsagePresentation.onePerAccount(["aaa": freshButEmpty, "zzz": offlineWithFigures])
+        #expect(picked.count == 1)
+        #expect(picked.first?.snapshot != nil)
+    }
+
+    @Test
+    func freshnessStillDecidesWhenNeitherSideHasFigures() {
+        // The third question is only reached once the second is a tie — and there it still
+        // answers, since a fresh binding is the one the next pass will fill.
+        let offline = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let fresh = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
+        let picked = UsagePresentation.onePerAccount(["aaa": offline, "zzz": fresh])
+        #expect(picked.first?.state == .fresh)
     }
 
     @Test
