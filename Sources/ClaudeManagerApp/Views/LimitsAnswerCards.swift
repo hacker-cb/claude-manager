@@ -19,7 +19,7 @@ struct LimitsAnswerCards: View {
                 }
             }
         } else {
-            LimitsAnswerCard(mode: model.limitsMode, now: now)
+            LimitsAnswerCard(mode: model.limitsEffectiveMode, now: now)
         }
     }
 }
@@ -96,26 +96,37 @@ struct LimitsAnswerCard: View {
     /// the *default* profile's row disappears from `profileEntries` in that state while clones do
     /// not, so the card fell back to its "unavailable" arm for one and offered a live button for
     /// the other, on the same fact.
-    private var canOpen: Bool {
-        model.realClaude != nil && !model.claudeUpdateState.blocksProfileActivity
+    /// Nil when it can. Two conditions, and the tooltip has to name the right one: folded into a
+    /// single "Claude.app was not found", a disabled button during an install diagnosed a problem
+    /// the user did not have.
+    private var openBlocked: String? {
+        if model.realClaude == nil {
+            return "Claude.app was not found, so no profile can be opened."
+        }
+        if model.claudeUpdateState.blocksProfileActivity {
+            return "A Claude update is installing. Profiles reopen when it finishes."
+        }
+        return nil
     }
 
     @ViewBuilder
     private func openButtons(for leader: UsageCandidate) -> some View {
         let entries = model.limitsProfiles(of: leader.account)
+        let blocked = openBlocked
         if entries.count == 1, let entry = entries.first {
-            Button(verb(entry)) { open(entry) }
-                .disabled(!canOpen)
-                .help(canOpen ? "" : "Claude.app was not found, so no profile can be opened.")
+            // Branched rather than given an empty string: `.help("")` attaches a tooltip with
+            // nothing in it to every card that is working normally.
+            let button = Button(verb(entry)) { open(entry) }.disabled(blocked != nil)
+            if let blocked { button.help(blocked) } else { button }
         } else if entries.count > 1 {
-            Menu("Open") {
+            let menu = Menu("Open") {
                 ForEach(entries) { entry in
                     Button("\(name(entry)) — \(verb(entry).lowercased())") { open(entry) }
                 }
             }
             .fixedSize()
-            .disabled(!canOpen)
-            .help(canOpen ? "" : "Claude.app was not found, so no profile can be opened.")
+            .disabled(blocked != nil)
+            if let blocked { menu.help(blocked) } else { menu }
         } else {
             // The default account keeps its place in the ranking while Claude.app cannot be
             // located — during an update's bundle swap, or after the app is moved — but its

@@ -24,7 +24,7 @@ struct LimitsTimeline: View {
                 Spacer()
                 legend
             }
-            let ranked = model.limitsOverview(mode: model.limitsMode, now: now).candidates
+            let ranked = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).candidates
             ForEach(Array(ranked.enumerated()), id: \.element.id) { index, candidate in
                 LimitsTimelineLane(
                     candidate: candidate,

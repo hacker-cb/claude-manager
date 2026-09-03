@@ -124,6 +124,20 @@ extension AppModel {
         UsageOverview.hasScopedWindows(in: limitsAccounts)
     }
 
+    /// The mode every surface reads, as opposed to the one the toggle writes.
+    ///
+    /// The stored mode outlives the control that changes it: the toggle is hidden where the two
+    /// modes cannot differ, and the *fleet* can arrive at that shape — the one account reporting
+    /// a per-model window signs out — long after `.otherWork` was chosen and persisted. The mode
+    /// was then stuck with nothing on screen able to change it, and `.otherWork` is the narrower
+    /// of the two: that account's retained per-model window sat dimmed in its column under a
+    /// tooltip reading "Not counted for All work", which is both self-contradicting and
+    /// unfixable. Falling back to the mode that counts everything makes the hidden control
+    /// unreachable *and* irrelevant, which is the only state a hidden control may be left in.
+    var limitsEffectiveMode: WorkMode {
+        limitsHasScopedWindows ? limitsMode : .scopedModel
+    }
+
     /// What to call a mode, from the models the fleet actually reports.
     func limitsModeLabel(_ mode: WorkMode) -> String {
         UsageOverview.modeLabel(mode, accounts: limitsAccounts)

@@ -103,18 +103,27 @@ struct LimitsView: View {
         return "as of \(UsageFormat.age(oldest, now: now))"
     }
 
-    /// Re-detect, *then* read usage — the order the menu's own Refresh uses, and the reason it
-    /// is not a dead button here either.
+    /// Re-detect where that is the thing blocking, *then* read usage.
     ///
     /// `refreshUsage` returns immediately while Claude.app cannot be located, before it so much
     /// as sets `isRefreshingUsage`: nothing ran, nothing spun, nothing was reported. And this
     /// page is deliberately reachable in exactly that state — `limitsAccounts` keeps the default
     /// account whether or not the row for it exists — so its Refresh was the one that could be
-    /// pressed forever with no effect. Looking for Claude first is what makes the press mean
-    /// something: find it, and the usage read behind it now succeeds.
+    /// pressed forever with no effect.
+    ///
+    /// **`refresh()` is not what finds Claude**, which is the trap this fell into once already.
+    /// It goes straight to `perform`, which bails on the same `realClaude` guard and raises the
+    /// "not found" alert on top of the banner already saying so — so a button labelled "Look for
+    /// Claude" wired to it could not find an app the user had just put back. `relocate()` is the
+    /// one that runs the locator, and it refreshes afterwards itself. Reserved for that case:
+    /// with Claude present it would also re-apply the deep-link broker on every ordinary press.
     private func refresh() async {
-        await model.refresh()
-        guard model.usageTrackingEnabled else { return }
+        if model.realClaude == nil {
+            await model.relocate()
+        } else {
+            await model.refresh()
+        }
+        guard model.usageTrackingEnabled, model.realClaude != nil else { return }
         await model.refreshUsage(interactive: true)
     }
 

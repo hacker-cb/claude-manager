@@ -40,7 +40,7 @@ struct LimitsAccountList: View {
     }
 
     var body: some View {
-        let rows = model.limitsOverview(mode: model.limitsMode, now: now).candidates
+        let rows = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).candidates
         let showsOther = rows.contains { !($0.account.snapshot?.otherLimits ?? []).isEmpty }
         VStack(alignment: .leading, spacing: 10) {
             Text("Every account").font(.headline)
@@ -144,7 +144,9 @@ struct LimitsAccountList: View {
     }
 
     private func helpText(counted: Bool, retained: Bool) -> String? {
-        guard counted else { return "Not counted for \(model.limitsModeLabel(model.limitsMode))" }
+        guard counted else {
+            return "Not counted for \(model.limitsModeLabel(model.limitsEffectiveMode))"
+        }
         return retained ? "The last figures read before this account stopped reporting." : nil
     }
 
@@ -164,7 +166,7 @@ struct LimitsAccountList: View {
     private func scoped(_ row: UsageCandidate, retained: Bool) -> some View {
         stack(
             row.account.snapshot?.weeklyScoped ?? [],
-            counted: model.limitsMode == .scopedModel,
+            counted: model.limitsEffectiveMode == .scopedModel,
             retained: retained
         )
     }

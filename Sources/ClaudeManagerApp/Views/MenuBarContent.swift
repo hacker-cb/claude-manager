@@ -148,7 +148,7 @@ struct MenuBarContent: View {
             let now = Date()
             let modes: [WorkMode] = model.limitsHasScopedWindows
                 ? WorkMode.allCases
-                : [model.limitsMode]
+                : [model.limitsEffectiveMode]
             ForEach(modes, id: \.self) { mode in
                 nowRow(mode: mode, now: now)
             }
