@@ -7,21 +7,59 @@ struct ProfileListView: View {
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(model.profileEntries) { entry in
-                ProfileEntryRow(entry: entry)
-                    .tag(entry.id)
-            }
-            // The default-profile row keeps the list from ever being empty, so the
-            // "create a launcher" nudge is an inline, non-selectable hint below it rather
-            // than a full-list overlay that would float over the default row.
-            if model.profiles.isEmpty, model.realClaude != nil {
-                Text("Create a launcher to run another Claude profile side by side.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
-                    .listRowBackground(Color.clear)
+            // The one row that is not a profile, and the row the window opens on. First, because
+            // it is the question asked before any particular profile is the answer.
+            LimitsSidebarRow()
+                .tag(ProfileEntry.limitsID)
+            Section("Profiles") {
+                ForEach(model.profileEntries) { entry in
+                    ProfileEntryRow(entry: entry)
+                        .tag(entry.id)
+                }
+                // The default-profile row keeps the list from ever being empty, so the
+                // "create a launcher" nudge is an inline, non-selectable hint below it rather
+                // than a full-list overlay that would float over the default row.
+                if model.profiles.isEmpty, model.realClaude != nil {
+                    Text("Create a launcher to run another Claude profile side by side.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.clear)
+                }
             }
         }
+    }
+}
+
+/// The Limits row: the fleet's worst window as its subtitle, so the sidebar carries the headline
+/// even while the page is not the one on screen.
+struct LimitsSidebarRow: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "chart.bar.xaxis")
+                .resizable().scaledToFit()
+                .frame(width: 18, height: 18)
+                .frame(width: 44)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Limits").font(.body)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+        }
+        .frame(minHeight: 32)
+        .padding(.vertical, 2)
+    }
+
+    /// What the page would say, in one line. Deliberately the *worst* window rather than the
+    /// recommendation: the sidebar's job here is to make the row worth clicking, and the
+    /// recommendation is what the page itself opens with.
+    private var subtitle: String {
+        guard model.usageTrackingEnabled else { return "tracking off" }
+        guard let worst = model.menuBarUsageSummary else { return "where to work now" }
+        return "worst \(worst)"
     }
 }
 

@@ -514,8 +514,22 @@ change the label on a row.
 The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
 model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
 `UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so a surface reads
-"Fable work" today and follows the payload if it is renamed again. Nothing in the app layer draws
-any of this yet — the core decision landed first, as the update pipeline did. Extra usage is deliberately
+"Fable work" today and follows the payload if it is renamed again.
+
+**The surfaces.** A **Limits page** is the window's first sidebar row and the page it opens on —
+`RootView` resets the selection on every appearance, since the scene outlives its window and a
+window reopened later would otherwise come back where it was left. It carries an answer card per
+mode (with the button that opens the profile it names), a Swift Charts timeline of every account's
+weekly windows on one axis — a week behind, a week ahead, `now` down the middle, with the dashed
+continuation `UsageTrend` projects — and the ranked list the cards read their leader from. Two
+**"Now" rows** at the top of the menu bar say the same thing where it is actually asked most
+often, needing neither a window nor a Dock icon. The menu-bar *status item* is untouched: it shows
+the worst window across the fleet, which is a warning rather than an answer to "where".
+
+The damping state lives in `AppModel` and is settled once per usage pass
+(`refreshLimitsLeaders`), never from a view body — a ranking that updated its own memory as a side
+effect of being drawn would settle differently depending on how often the window happened to be
+open. Extra usage is deliberately
 outside all of this — it is money, not a window.
 
 `UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one

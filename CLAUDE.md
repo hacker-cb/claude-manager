@@ -190,7 +190,6 @@ short form:
 
 ## Backlog (not in the MVP; architecture leaves room)
 
-Config comparison / master→profile cloning, window grouping, account-limit
-summaries, Claude CLI management, `~/.claude/settings.json` and `~/.claude/projects`
-tooling. These are read/aggregate features that fit on top of `ProfileStore` and the
+Config comparison / master→profile cloning, window grouping, Claude CLI
+management, `~/.claude/settings.json` and `~/.claude/projects` tooling. These are read/aggregate features that fit on top of `ProfileStore` and the
 JSON metadata store.

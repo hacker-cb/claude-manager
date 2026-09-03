@@ -105,6 +105,10 @@ extension AppModel {
             pendingInteractiveRefresh = false
             usageByBinding = [:]
             usageBindingFailures = [:]
+            // "Off stops all storage" reaches the Limits page too: with nothing read, it has no
+            // ranking to damp and no history to draw.
+            setLimitsLeaders([:])
+            setLimitsSeries([:])
         }
     }
 
@@ -217,6 +221,13 @@ extension AppModel {
             let failures = UsageService.mergeFailures(previous: usageBindingFailures, result: result)
             usageByBinding = UsageService.merge(previous: usageByBinding, result: result)
             usageBindingFailures = failures
+            // Settle the Limits page's damping once per pass, against the figures this pass
+            // produced — never from a view body, or how steady the answer is would depend on how
+            // often the window happens to be open.
+            refreshLimitsLeaders()
+            // Detached for the reason the pass itself is: this is a per-account SQL read on a
+            // serialized connection, and the caller here can be a Save the user is waiting on.
+            Task { await loadLimitsSeries() }
             // The accounts this pass actually fetched — never anything derived from the map, whose
             // carried-forward entries are by definition not new readings.
             await notifyLimits(for: result.accounts)

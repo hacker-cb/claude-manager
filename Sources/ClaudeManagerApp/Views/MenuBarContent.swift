@@ -14,6 +14,7 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
+            nowRows
             claudeUpdateItems
             // Profiles — the default profile first, then each clone, as one uniform list.
             // The default keeps its own person glyph (filled when running, mirroring the
@@ -112,6 +113,61 @@ struct MenuBarContent: View {
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// The answer, at the top of the menu: which profile to take work to, per mode.
+    ///
+    /// The menu is where this question is actually asked most of the time — it needs no window
+    /// and no Dock icon — so the page's headline lives here as two rows that open the profile
+    /// they name. The menu is rebuilt on every open, so what they say is as current as a ticker
+    /// would make it.
+    ///
+    /// Only where the two modes can differ: on a plan reporting no per-model window they would be
+    /// two rows with one answer between them.
+    @ViewBuilder
+    private var nowRows: some View {
+        if model.usageTrackingEnabled, !model.limitsAccounts.isEmpty {
+            let now = Date()
+            let modes: [WorkMode] = model.limitsHasScopedWindows
+                ? WorkMode.allCases
+                : [model.limitsMode]
+            ForEach(modes, id: \.self) { mode in
+                nowRow(mode: mode, now: now)
+            }
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    private func nowRow(mode: WorkMode, now: Date) -> some View {
+        let overview = model.limitsOverview(mode: mode, now: now)
+        let label = model.limitsModeLabel(mode)
+        if let leader = overview.leader, let entry = model.limitsProfiles(of: leader.account).first {
+            Button {
+                open(entry)
+            } label: {
+                Label(
+                    "\(label) → \(model.limitsAccountName(leader.account))"
+                        + "  ·  \(UsageOverview.reason(for: leader, now: now))",
+                    systemImage: "arrow.right.circle"
+                )
+            }
+            .disabled(model.claudeUpdateState.blocksProfileActivity)
+        } else {
+            // Nil is a real answer, and a menu row that silently vanished when the fleet ran out
+            // would read as the feature being broken rather than as the fleet being spent.
+            Button {} label: {
+                Label("\(label) → nobody right now", systemImage: "arrow.right.circle")
+            }
+            .disabled(true)
+        }
+    }
+
+    private func open(_ entry: ProfileEntry) {
+        switch entry {
+        case .primary: Task { await model.openReal() }
+        case let .clone(managed): Task { await model.open(managed.profile) }
+        }
     }
 
     /// Ask for Claude's update from the menu bar, with a window open to answer in.
