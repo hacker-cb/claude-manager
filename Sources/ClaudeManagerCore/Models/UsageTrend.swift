@@ -169,9 +169,15 @@ public enum UsageTrend {
         // And a reading too old to extend. `.fresh` is not an age bound — a snapshot is carried
         // forward untouched, and under "Manually only" nothing polls, so a refresh on Monday
         // leaves a perfectly `.fresh` account whose last reading is three days behind by
-        // Thursday. Forecasting from it drew a confident dashed line across three days nobody
-        // observed — through a hole the *solid* line, held to this same tolerance, refuses to
-        // bridge. Whatever a caller will not draw a line across, it will not forecast from.
+        // Thursday. Forecasting from that drew a confident dashed line starting three days back,
+        // where the *solid* line held to the same tolerance had already stopped.
+        //
+        // It bounds the **last reading's age, and only that** — deliberately less than "never
+        // forecast across a hole the line will not bridge". `rate` still averages over gaps
+        // interior to the period, and should: under "Manually only" a history of `[Mon 10%,
+        // Thu 60%]` is two disconnected points on screen, but half a quota really was spent
+        // between them, and that is the only measurement such a user has. Refusing it would
+        // leave the people with the sparsest data the only ones told nothing.
         guard let last = points.last(where: { $0[keyPath: window] != nil }),
               now.timeIntervalSince(last.at) <= staleAfter
         else { return nil }

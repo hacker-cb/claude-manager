@@ -163,8 +163,12 @@ struct LimitsView: View {
                 }
             }
         } actions: {
+            // Not gated on `isRefreshingUsage` in the missing-Claude arm: that press runs the
+            // *locator*, which has nothing to do with a usage pass. The flag stays true for the
+            // whole of one, so a pass in flight when Claude.app was moved greyed out the only
+            // button able to recover from it.
             Button(noClaude ? "Look for Claude" : "Refresh") { Task { await refresh() } }
-                .disabled(model.isRefreshingUsage)
+                .disabled(!noClaude && model.isRefreshingUsage)
         }
     }
 
