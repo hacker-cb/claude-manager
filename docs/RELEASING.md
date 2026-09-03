@@ -178,6 +178,24 @@ Two more things learned cutting v0.10.1:
   and a sync PR cut this way has a natural candidate: whatever you just learned about this
   procedure, which is how both of these bullets got here.
 
+### The release PR itself
+
+The section above names "the release PR" three times without ever saying what it is — and
+what it is turns out to be the thing that *creates* the divergence the whole first half is
+about. So, stated once:
+
+- **Head is `dev` itself**, not a topic branch cut from it. `#157` and every release before
+  it were opened straight from `dev`.
+- **Base is `master`.**
+- **Merge it as a merge commit**, never a squash. That commit — `585df96 Merge pull request
+  #157 from hacker-cb/dev` — is precisely the one `master` then carries and `dev` never takes
+  back, which is why the *next* release opens with the sync dance above. Squashing would not
+  avoid that; it would flatten `dev`'s history onto `master` and leave the two genuinely
+  divergent rather than merely out of order.
+- **Title:** `Release: dev → master (vX.Y.Z — <one-line headline>)`.
+
+Only after that merge lands does the tag get pushed.
+
 ## Cutting a release
 
 ```bash

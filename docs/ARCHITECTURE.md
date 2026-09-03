@@ -21,7 +21,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 └─ CommandRunner injected process runner (mocked in tests)
 
 ClaudeManagerApp (SwiftUI — thin)
-├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
+├─ Window (Limits page + list + detail + editor + doctor) · MenuBarExtra · Settings
 └─ DeepLinkService + DeepLinkPresenter — claude:// hold + profile picker
 ```
 
@@ -416,7 +416,7 @@ tick renders the true cause rather than reading a transport failure back as a 42
 
 **Storage — one actor, one serialized `libsqlite3` connection** (system library, linked
 via `.linkedLibrary("sqlite3")`; zero SPM deps). A canonical `snapshot_json` is the
-restore source; flat columns index it; `raw_json` is kept **latest-only** for the Doctor
+restore source, indexed by `(account_uuid, captured_at)`; `raw_json` is kept **latest-only** for the Doctor
 inspector; `notified_thresholds` dedups notifications across relaunches (keyed on account
 + limit identity + rounded threshold + reset window); a throttle table holds the state
 above. Bootstrap is `PRAGMA user_version` drop-and-recreate on mismatch (early-stage: no
@@ -430,6 +430,143 @@ high *and* the window is early: 5h (0.80, 0.72), 7d (0.75, 0.60) — each tier s
 0.95 critical), floored at 0.70, firing only the single most-severe tier per limit. The app
 layer (`AppModel+UsageNotifications`) posts the warnings via `UNUserNotificationCenter`,
 deduped against `notified_thresholds` so each threshold fires once per reset window.
+
+**Where should work go now? (`UsageOverview`, pure.)** `LimitEvaluator` answers "is anything
+about to bite"; this answers the other question a fleet raises — which profile to open next.
+It ranks accounts by **headroom**: the share of the binding weekly window still unspent, minus
+the share of the week still to run. A weekly window's leftovers do not roll over, so a budget
+running ahead of its clock is spent now or lost at the reset, and that — not "who has the
+lowest percentage" — is what puts an account first.
+
+Six rules carry the weight, each with a test:
+
+- **The binding window is the tightest, not the fullest.** Each counted weekly window is
+  measured against **its own** reset and the least headroom binds. Utilization alone is the
+  same answer only while every weekly window resets together, and they are separate fields on
+  separate windows — this fleet already reports two whose resets differ. Once they diverge the
+  fuller window is easily the freer one: 70% resetting tomorrow leaves more room than 60% with
+  six days to spend it in.
+- **Every counted window is read, whatever `is_active` says.** The flag reads like "in force",
+  and filtering on it is the obvious idea — it was tried and reverted. Measured over 8,730
+  stored snapshots, exactly one window per account carries it and it is always the one with the
+  highest utilization: it is the server's *headline* pick, not a claim about the other two.
+  Honouring it dropped an exhausted window past the gate and left an account whose headline was
+  its session with no weekly budget to measure. `bindingLimit` and `LimitEvaluator` read it
+  correctly for what they do — one figure to show, and no interruption about a non-binding
+  window; this ranking asks a different question.
+- **Gates are separate from budget, and a gate is `displaySeverity`.** Not a percentage of our
+  own: that is the reading every bar in the app paints from, so it folds in the server's
+  `severity` beside our threshold — and the server escalates for what a percentage cannot
+  express (a plan policy, an account restriction, a window kind this build has no model for).
+  A counted window at 100% puts the account `out`; anything the app would draw red is
+  `nearlyOut`, so the board can never send someone to a red bar. Where several windows gate at
+  once the one reported is the one that **blocks longest**, since that is when work can go
+  there again; the state still names the most severe. A window whose own period has ended does
+  not gate at all — its percentage describes a week that is over, and it may no more raise a
+  verdict than lower one, so an eight-day-old snapshot no longer pins an account at `out` over a
+  week that has certainly reset. The **5-hour window gates and nothing
+  more, at any percentage**: it refills within hours, and charging it against the week would
+  move someone to another profile every session — a chat's context spent on a wait measured in
+  minutes. Asking about exhaustion first read a full session as a spent week, which is that
+  churn with an extra step.
+- **A window this build does not recognize still gates**, for the same reason the parser keeps
+  it, but never enters the headroom: nothing here knows how long its period is.
+- **Only current figures may instruct.** Among the accounts work could actually go to, anything
+  not `.fresh` ranks behind what is, and can never *lead*; nor can an account whose window
+  reported no usable reset, which is `paceUnknown` rather than `onPace` — the latter is a claim
+  about a rate, and there is no clock to measure one against. `leader` is therefore optional,
+  and nil is a real answer: a fleet that is entirely stale, gated or signed out has no
+  recommendation to give, and a surface is meant to say so rather than promote the least-bad
+  row.
+- **A window whose reset has passed is not reasoned from at all.** Clamping the negative
+  remainder to zero read a spent quota as a full week of room, and a `.fresh` snapshot reaches
+  that state routinely — it is the standing condition of a "Manually only" fleet and of
+  anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
+  claim, and does not gate either. "Blocks longest" is then a rule about a window that reported
+  **no** reset at all: nothing said it frees, so nothing may promise it does. **A window is
+  measured against its own deadline, never a sibling's, and never dropped.** Borrowing was tried in both directions and is wrong in both,
+  since these windows reset independently: an absent reset became a confident recommendation, an
+  elapsed one put a spent week back into the ranking. Dropping is wrong too — a scoped window at
+  89% with no deadline sat silently behind a live weekly-all at 10% while the account was
+  recommended for exactly the work that would spend it. So a window that reported **no** reset is
+  taken at its **worst case**, `-utilization`: with the whole week still to run that is precisely
+  its headroom, every other clock it could have is roomier, and a lower bound never over-promises
+  where an omission does. A window whose reset has **elapsed** gets neither treatment, does not
+  gate, and withholds the recommendation for the whole account: its percentage belongs to a week that is
+  over, and the window that replaced it is *unknown* rather than untouched, so ranking on a live
+  sibling would recommend work to a quota that may already be spent. Only a `.fresh` snapshot old
+  enough to cross a reset reaches that — "Manually only" polling, or an app that slept through
+  one — and everything staler is already barred from leading by its own state. There is likewise
+  no claim when nothing has a live clock at all. Such a row is `paceUnknown`, and it sorts below
+  the two dated constraints — a profile briefly blocked that says exactly when it frees is more
+  use in this list than one nobody can speak for. One reading of "is this
+  window still ahead" serves all of it (`UsagePresentation.showsReset`), the rule the panes
+  already apply, and the copy re-asks it against the *rendering* clock so a row drawn after a
+  reset does not say "back in now".
+- **The answer is damped.** A challenger must beat the standing leader by `stickyMargin`
+  (0.05) before the recommendation changes; a leader that hits a gate loses the place
+  regardless. Without it the answer flips between near-equal accounts on every poll.
+
+Every pick that a reader ends up seeing — which window binds, which one is named as the
+blocker — ends on the window's own `dedupKey`, so a server that reorders `limits[]` cannot
+change the label on a row.
+
+The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
+model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
+`UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so a surface reads
+"Fable work" today and follows the payload if it is renamed again.
+
+**The surfaces.** A **Limits page** is the window's first sidebar row and the page it opens on —
+`RootView` resets the selection on every appearance, since the scene outlives its window and a
+window reopened later would otherwise come back where it was left. It carries an answer card per
+mode (with the button that opens the profile it names), a Swift Charts timeline of every account's
+weekly windows on one axis — a week behind, a week ahead, `now` down the middle, with the dashed
+continuation `UsageTrend` projects — and the ranked list the cards read their leader from. Two
+**"Now" rows** at the top of the menu bar say the same thing where it is actually asked most
+often, needing neither a window nor a Dock icon. The menu-bar *status item* is untouched: it shows
+the worst window across the fleet, which is a warning rather than an answer to "where".
+
+The damping state lives in `AppModel` and is settled once per usage pass
+(`refreshLimitsLeaders`), never from a view body — a ranking that updated its own memory as a side
+effect of being drawn would settle differently depending on how often the window happened to be
+open. Extra usage is deliberately
+outside all of this — it is money, not a window.
+
+**One question every surface must answer the same way: does the ranking read this account's
+snapshot?** `UsageOverview.needsUser` is that question, and it is public for exactly this reason.
+An account waiting on a *person* — signed out, or with no token source — keeps its last snapshot
+indefinitely and `assess` answers before ever looking at it, so its windows move no ranking, date
+no header and belong in no summary. An account that is merely `.stale`, `.offline` or
+`.rateLimited` has its retained windows read, ranked and drawn. Six surfaces need that line and
+each of them answered it slightly differently at some point in review: the ranking itself, the
+page header's "as of", the sidebar subtitle, the account grid's dating and dimming, the timeline's
+projection gate, and `UsagePresentation.onePerAccount`'s choice of which profile speaks for a
+shared login. Every difference showed up as the page contradicting itself — a row saying "as of
+just now" over figures three days old, or a login represented by the one binding that failed while
+a readable sibling sat behind it. Ask the function; never re-derive the set.
+
+Riding on it: **a retained figure is always dated**. Only `.stale` names its own age, so
+`.offline` and `.rateLimited` have it appended, and a figure with no date at all reads as current
+— which is the whole failure this page exists to avoid.
+
+**`UsageTrend.rate` anchors on the last reading, and the baseline is the first reading not above
+it.** This is the most-revised rule in the feature and the one most likely to be "simplified" back
+into a defect. A utilization only grows within its period, so every dip in one is a figure the
+server has corrected — but from two samples alone there is no telling whether the earlier was
+over-reported or the later under-reported. Three anchors were tried: the series' first sample (one
+spurious *high* reading clamped a week to a flat zero), the period's *lowest* (one spurious low
+reading collapsed the span to an hour while keeping the week's whole delta — a 60% account
+forecast to run out in forty minutes), and the period's *highest* (an interior spike every later
+reading contradicts was kept as real). The last reading escapes all three: nothing later
+contradicts it, and it is where the drawn line starts anyway. Both counter-examples are tests.
+
+`UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one
+point per bucket **by taking the last sample in each**, never a mean. Averaging across a reset
+boundary reports a value the account never held and smears the very event a timeline exists to
+show. The thinning is done in SQL — `ROW_NUMBER` over each bucket, ordered by `captured_at`
+then `id`, rather than the neater-reading `MAX()` with a bare `snapshot_json`, which settles
+which row wins the maximum but not which of two rows sharing a millisecond answers — so one
+snapshot per bucket is decoded rather than the thousands a month of polling records.
 
 ## macOS facts baked into the code
 

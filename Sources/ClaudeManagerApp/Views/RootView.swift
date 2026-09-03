@@ -4,7 +4,9 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
-    @State private var selection: ProfileEntry.ID?
+    /// The window opens on the Limits page — it is the question asked before any particular
+    /// profile is the answer, and the reason the window gets opened at all most days.
+    @State private var selection: ProfileEntry.ID? = ProfileEntry.limitsID
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
     /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
@@ -51,6 +53,19 @@ struct RootView: View {
         .task {
             // Idempotent — `init` also kicks this off window-independently (a login /
             // menu-bar-only launch shows no window, so this `.task` may not run).
+            // Every appearance, not only the first — and the `@State` default above does *not*
+            // already cover it. This is a `Window` scene, not a `WindowGroup`: the scene is a
+            // singleton whose state survives its window being closed, so a window closed on a
+            // profile and reopened later comes back where it was left rather than on the page it
+            // is meant to open on.
+            //
+            // What it rests on, stated rather than asserted away: `.task` restarts whenever the
+            // view leaves and re-enters the hierarchy, which for this scene means the window
+            // closing and reopening — not anything a person does inside an open one. Should
+            // SwiftUI ever tear the split view down and rebuild it mid-session, the cost is a
+            // sidebar selection snapping back to Limits; nothing is lost and the next click
+            // undoes it.
+            selection = ProfileEntry.limitsID
             await model.performLaunchTasks()
             // Refresh on *every* appearance too: reopening the window after an external
             // change — while the app stayed active, so `didBecomeActive` never fired —
@@ -138,7 +153,9 @@ struct RootView: View {
         // Gate on `realClaude` too (mirrors `profileEntries`): if Claude vanished while the default
         // row was selected, the row is gone from the sidebar, so fall through to the empty
         // state rather than stranding a hollow default-profile pane.
-        if selection == ProfileEntry.primaryID, model.realClaude != nil {
+        if selection == ProfileEntry.limitsID {
+            LimitsView()
+        } else if selection == ProfileEntry.primaryID, model.realClaude != nil {
             PrimaryProfileDetailView()
         } else if let id = selection, let managed = model.profiles.first(where: { $0.id == id }) {
             ProfileDetailView(managed: managed, editor: $editor)

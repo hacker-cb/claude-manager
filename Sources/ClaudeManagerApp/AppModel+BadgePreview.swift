@@ -38,4 +38,23 @@ extension AppModel {
             base: base, label: label, color: color.rgba, style: style, pixels: pixels
         )
     }
+
+    // MARK: - The global style, persisted
+
+    /// Read the stored `BadgeStyle`, falling back to the default on anything unreadable — a
+    /// preference that will not decode is not worth failing a launch over.
+    ///
+    /// Here rather than beside the property it initializes: `AppModel` sits on the enforced
+    /// 500-line cap, and this is the file that already owns what a badge looks like.
+    static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
+        guard let data = defaults.data(forKey: PreferenceKeys.badgeStyle),
+              let style = try? JSONDecoder().decode(BadgeStyle.self, from: data)
+        else { return .default }
+        return style
+    }
+
+    func persistBadgeStyle() {
+        guard let data = try? JSONEncoder().encode(badgeStyle) else { return }
+        defaults.set(data, forKey: PreferenceKeys.badgeStyle)
+    }
 }
