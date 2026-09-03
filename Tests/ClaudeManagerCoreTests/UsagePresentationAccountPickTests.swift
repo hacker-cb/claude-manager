@@ -12,11 +12,19 @@ extension UsagePresentationTests {
         uuid: String,
         email: String? = nil,
         state: UsageState = .fresh,
+        hasFigures: Bool = false,
         bindingIDs: [String]
     ) -> AccountUsage {
         AccountUsage(
             identity: AccountIdentity(uuid: uuid, email: email),
-            snapshot: nil,
+            // A real window, not an empty snapshot: the rule under test asks whether there is
+            // anything to *show*, and a test whose "figures" are an empty array would pass just
+            // as happily against a rule that had stopped asking.
+            snapshot: hasFigures
+                ? UsageSnapshot(limits: [
+                    UsageLimit(rawKind: UsageLimit.kindWeeklyAll, utilization: 0.42)
+                ])
+                : nil,
             state: state,
             bindingIDs: bindingIDs
         )
@@ -32,15 +40,54 @@ extension UsagePresentationTests {
         let failed = entry(
             uuid: "A", state: .noSource(.signedOut), bindingIDs: ["aaa", "zzz"]
         )
-        let readable = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let readable = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
         let picked = UsagePresentation.onePerAccount(["aaa": failed, "zzz": readable])
         #expect(picked.count == 1)
         #expect(picked.first?.state == .offline)
     }
 
     @Test
+    func figuresOutrankFreshnessWhenOnlyOneSideHasThem() {
+        // `.fresh` is not a promise of figures: the service reports "current with nothing yet"
+        // for a binding whose history is empty or unreadable. Ranking freshness above their
+        // *presence* put such an entry ahead of an offline sibling holding real numbers, and the
+        // login then read as "not checked yet" while another binding could have shown its week.
+        let freshButEmpty = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
+        let offlineWithFigures = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
+        let picked = UsagePresentation.onePerAccount(["aaa": freshButEmpty, "zzz": offlineWithFigures])
+        #expect(picked.count == 1)
+        #expect(picked.first?.snapshot != nil)
+    }
+
+    @Test
+    func anEmptySnapshotIsNotFigures() {
+        // `UsageLimitsParser.parse(object:)` always succeeds — an empty or odd body yields a
+        // snapshot carrying no limits at all, so that a partial response cannot crash a poll.
+        // Asked as "is there a snapshot", that entry counted as having figures and outranked a
+        // sibling holding a full week.
+        let freshButEmpty = AccountUsage(
+            identity: AccountIdentity(uuid: "A"),
+            snapshot: UsageSnapshot(limits: []),
+            state: .fresh,
+            bindingIDs: ["aaa", "zzz"]
+        )
+        let offlineWithFigures = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
+        let picked = UsagePresentation.onePerAccount(
+            ["aaa": freshButEmpty, "zzz": offlineWithFigures]
+        )
+        #expect(picked.first?.state == .offline)
+    }
+
+    @Test
     func aFreshSiblingStillOutranksAReadableOne() {
-        // The top rung survives the middle one being added.
+        // Neither side has figures, so the question above is a tie and freshness is what is left
+        // to decide on — and it should, since a fresh binding is the one the next pass will fill.
         let offline = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
         let fresh = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
         let picked = UsagePresentation.onePerAccount(["aaa": offline, "zzz": fresh])

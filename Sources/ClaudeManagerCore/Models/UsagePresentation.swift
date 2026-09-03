@@ -137,17 +137,29 @@ public enum UsagePresentation {
 
     /// How well an entry speaks for its login, at equal fan-out. Higher wins.
     ///
-    /// **Three rungs, not two.** A single `.fresh` test looked sufficient and is not: a login
-    /// whose token failed to resolve on one binding while another returned `.stale`, `.offline`
-    /// or `.rateLimited` figures gives both entries the same fan-out and neither the top rung —
-    /// so the tie fell back to the lowest id, and a lexicographically earlier failure could carry
-    /// `.needsAttention` into the ranking while the sibling's perfectly readable retained
-    /// snapshot went unused. The middle rung is exactly `UsageOverview.needsUser`'s line: an
-    /// account waiting on a person has no figures anything will read, and one that is merely out
-    /// of date has.
+    /// Three questions, asked in this order, because each only matters once the one before it is
+    /// settled:
+    ///
+    /// 1. **Will anything read this entry's figures at all?** `UsageOverview.needsUser` is that
+    ///    line: an account waiting on a person keeps its snapshot and never has it read. Settled
+    ///    on the binding id alone, a lexicographically earlier failure could carry
+    ///    `.needsAttention` into the ranking while a sibling's perfectly readable retained
+    ///    snapshot went unused.
+    /// 2. **Are there figures?** A `.fresh` state is not a promise of any: `UsageService` reports
+    ///    "current with nothing yet" for a binding whose history is empty or unreadable. Ranking
+    ///    freshness above this put a figure-less entry ahead of an `.offline` sibling holding
+    ///    real numbers, and the login then read as "not checked yet" while another binding could
+    ///    have shown its week. Asked of the snapshot's *contents*, never of its existence: the
+    ///    parser always succeeds, so an empty or odd response yields a snapshot carrying nothing
+    ///    — which would otherwise have outranked a sibling with a full week on it.
+    /// 3. **Are they current?** Only here does `.fresh` decide anything — and where neither entry
+    ///    has figures it still does, since that is the one the next pass will fill.
     private static func usefulness(_ usage: AccountUsage) -> Int {
         guard !UsageOverview.needsUser(usage.state) else { return 0 }
-        return usage.state == .fresh ? 2 : 1
+        var score = 1
+        if usage.snapshot?.hasFigures == true { score += 2 }
+        if usage.state == .fresh { score += 1 }
+        return score
     }
 
     /// The member profile to name a login after, when the login itself has no name yet.

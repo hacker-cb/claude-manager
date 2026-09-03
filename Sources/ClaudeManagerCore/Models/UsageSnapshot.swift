@@ -203,6 +203,19 @@ public struct UsageSnapshot: Codable, Sendable, Equatable {
         self.capturedAt = capturedAt
     }
 
+    /// Whether there is anything here to show.
+    ///
+    /// Not the same question as the snapshot existing. `UsageLimitsParser.parse(object:)` always
+    /// succeeds — an empty or odd body yields a snapshot with no limits at all, so that a partial
+    /// response never crashes a background poll — and such a snapshot renders no bars, dates no
+    /// header and answers no ranking.
+    ///
+    /// `extra` deliberately does not count: extra usage is money rather than a window, and
+    /// nothing on the limits surfaces reads it.
+    public var hasFigures: Bool {
+        !limits.isEmpty
+    }
+
     public var session: UsageLimit? {
         limits.first(where: \.isSession)
     }
