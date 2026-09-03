@@ -21,7 +21,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 └─ CommandRunner injected process runner (mocked in tests)
 
 ClaudeManagerApp (SwiftUI — thin)
-├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
+├─ Window (Limits page + list + detail + editor + doctor) · MenuBarExtra · Settings
 └─ DeepLinkService + DeepLinkPresenter — claude:// hold + profile picker
 ```
 
@@ -514,9 +514,51 @@ change the label on a row.
 The **mode** is `WorkMode.scopedModel` / `.otherWork`, never a model name: the per-model window's
 model is data (above), so a `.fable` case would hard-code the one thing this codebase refuses to.
 `UsageOverview.modeLabel(_:accounts:)` builds the words from the snapshots, so a surface reads
-"Fable work" today and follows the payload if it is renamed again. Nothing in the app layer draws
-any of this yet — the core decision landed first, as the update pipeline did. Extra usage is deliberately
+"Fable work" today and follows the payload if it is renamed again.
+
+**The surfaces.** A **Limits page** is the window's first sidebar row and the page it opens on —
+`RootView` resets the selection on every appearance, since the scene outlives its window and a
+window reopened later would otherwise come back where it was left. It carries an answer card per
+mode (with the button that opens the profile it names), a Swift Charts timeline of every account's
+weekly windows on one axis — a week behind, a week ahead, `now` down the middle, with the dashed
+continuation `UsageTrend` projects — and the ranked list the cards read their leader from. Two
+**"Now" rows** at the top of the menu bar say the same thing where it is actually asked most
+often, needing neither a window nor a Dock icon. The menu-bar *status item* is untouched: it shows
+the worst window across the fleet, which is a warning rather than an answer to "where".
+
+The damping state lives in `AppModel` and is settled once per usage pass
+(`refreshLimitsLeaders`), never from a view body — a ranking that updated its own memory as a side
+effect of being drawn would settle differently depending on how often the window happened to be
+open. Extra usage is deliberately
 outside all of this — it is money, not a window.
+
+**One question every surface must answer the same way: does the ranking read this account's
+snapshot?** `UsageOverview.needsUser` is that question, and it is public for exactly this reason.
+An account waiting on a *person* — signed out, or with no token source — keeps its last snapshot
+indefinitely and `assess` answers before ever looking at it, so its windows move no ranking, date
+no header and belong in no summary. An account that is merely `.stale`, `.offline` or
+`.rateLimited` has its retained windows read, ranked and drawn. Six surfaces need that line and
+each of them answered it slightly differently at some point in review: the ranking itself, the
+page header's "as of", the sidebar subtitle, the account grid's dating and dimming, the timeline's
+projection gate, and `UsagePresentation.onePerAccount`'s choice of which profile speaks for a
+shared login. Every difference showed up as the page contradicting itself — a row saying "as of
+just now" over figures three days old, or a login represented by the one binding that failed while
+a readable sibling sat behind it. Ask the function; never re-derive the set.
+
+Riding on it: **a retained figure is always dated**. Only `.stale` names its own age, so
+`.offline` and `.rateLimited` have it appended, and a figure with no date at all reads as current
+— which is the whole failure this page exists to avoid.
+
+**`UsageTrend.rate` anchors on the last reading, and the baseline is the first reading not above
+it.** This is the most-revised rule in the feature and the one most likely to be "simplified" back
+into a defect. A utilization only grows within its period, so every dip in one is a figure the
+server has corrected — but from two samples alone there is no telling whether the earlier was
+over-reported or the later under-reported. Three anchors were tried: the series' first sample (one
+spurious *high* reading clamped a week to a flat zero), the period's *lowest* (one spurious low
+reading collapsed the span to an hour while keeping the week's whole delta — a 60% account
+forecast to run out in forty minutes), and the period's *highest* (an interior spike every later
+reading contradicts was kept as real). The last reading escapes all three: nothing later
+contradicts it, and it is where the drawn line starts anyway. Both counter-examples are tests.
 
 `UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one
 point per bucket **by taking the last sample in each**, never a mean. Averaging across a reset

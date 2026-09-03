@@ -64,9 +64,13 @@ extension UsageOverview {
     /// Whether this state means the binding is waiting on a person rather than on a window.
     /// Exhaustive on purpose — a future case must be classified here, not defaulted.
     ///
-    /// Non-private because `hasScopedWindows` asks the same question: an account this returns
-    /// true for never has its snapshot read, so its windows cannot move either ranking.
-    static func needsUser(_ state: UsageState) -> Bool {
+    /// Public because it *is* the question "does the ranking read this account's snapshot", and
+    /// three surfaces beyond `hasScopedWindows` need the answer. An account this returns true for
+    /// keeps its last snapshot indefinitely and never has it read, so its windows move no
+    /// ranking, date no header and belong in no summary — while a `.stale`, `.offline` or
+    /// `.rateLimited` one has its retained windows read and drawn, and every surface must agree
+    /// on which of those two things it is.
+    public static func needsUser(_ state: UsageState) -> Bool {
         switch state {
         case .loginNeeded, .noSource: true
         case .fresh, .stale, .rateLimited, .offline: false
@@ -81,7 +85,12 @@ extension UsageOverview {
     /// parser keeps it: it may be the one that actually constrains the account. It counts as a
     /// gate only (below), never toward headroom, because nothing here knows how long its window
     /// is or whether the mode should have counted it at all.
-    static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
+    ///
+    /// Public alongside `needsUser`, and for the same reason: it is the question "which windows
+    /// does the ranking look at", and a surface that summarises the fleet has to ask it rather
+    /// than approximate it. The sidebar row did approximate it, and read "worst 7d·Fable 98%"
+    /// over a window the page beside it was dimming as not counted.
+    public static func countedLimits(in snapshot: UsageSnapshot, mode: WorkMode) -> [UsageLimit] {
         snapshot.limits.filter { counts($0, mode: mode) }
     }
 

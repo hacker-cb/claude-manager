@@ -222,6 +222,31 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(usageNotificationsEnabled, forKey: PreferenceKeys.usageNotificationsEnabled) }
     }
 
+    /// Which windows the Limits page ranks against; persisted, so reopening resumes the mode the
+    /// user was working in. The rest of the page's wiring is in `AppModel+Limits`.
+    @Published var limitsMode: WorkMode {
+        didSet { defaults.set(limitsMode.rawValue, forKey: PreferenceKeys.limitsMode) }
+    }
+
+    /// What each mode last recommended (damping the answer) and the thinned history the timeline
+    /// draws. Both in memory only and rebuilt per usage pass — `AppModel+Limits` says why, and
+    /// drives them through the setters below, being another file.
+    @Published private(set) var limitsLeaders: [WorkMode: String] = [:]
+    @Published private(set) var limitsSeries: [String: [UsageSeriesPoint]] = [:]
+
+    func setLimitsLeaders(_ value: [WorkMode: String]) {
+        limitsLeaders = value
+    }
+
+    func setLimitsSeries(_ value: [String: [UsageSeriesPoint]]) {
+        limitsSeries = value
+    }
+
+    /// Bumped by every history load and by switching tracking off, so a load suspended on a read
+    /// commits nothing once a newer one — or an "off" — has overtaken it. The same shape
+    /// `usageRefreshGeneration` uses one layer up, and for the same two reasons.
+    var limitsSeriesGeneration = 0
+
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
     }
@@ -280,6 +305,8 @@ final class AppModel: ObservableObject {
         usageAdaptiveEnabled = defaults.object(forKey: PreferenceKeys.usageAdaptiveEnabled) as? Bool ?? true
         usageNotificationsEnabled = defaults
             .object(forKey: PreferenceKeys.usageNotificationsEnabled) as? Bool ?? true
+        limitsMode = defaults.string(forKey: PreferenceKeys.limitsMode)
+            .flatMap(WorkMode.init(rawValue:)) ?? .scopedModel
         locate()
         didFinishInit = true
         // Wire the AppKit deep-link sink and run the launch tasks. Both are deferred to the
@@ -295,18 +322,6 @@ final class AppModel: ObservableObject {
 
     /// One-shot guard for `performLaunchTasks` (owned by the `AppModel+DeepLink` extension).
     var didPerformLaunch = false
-
-    private static func loadBadgeStyle(from defaults: UserDefaults) -> BadgeStyle {
-        guard let data = defaults.data(forKey: PreferenceKeys.badgeStyle),
-              let style = try? JSONDecoder().decode(BadgeStyle.self, from: data)
-        else { return .default }
-        return style
-    }
-
-    private func persistBadgeStyle() {
-        guard let data = try? JSONEncoder().encode(badgeStyle) else { return }
-        defaults.set(data, forKey: PreferenceKeys.badgeStyle)
-    }
 
     // MARK: - Derived config
 

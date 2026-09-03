@@ -47,16 +47,58 @@ public extension UsageOverview {
     }
 
     /// What to call a mode: the reported model names for the scoped one ("Fable work"), and
-    /// "Other work" for its complement. Falls back to a neutral phrase where nothing has
-    /// reported a name yet, rather than printing a placeholder that reads like a model.
+    /// "Other work" for its complement.
+    ///
+    /// Where the fleet reports **no** per-model window, both modes count the same windows and
+    /// neither name is true of what is on screen: "Other work" has nothing to be other than, and
+    /// "Per-model work" promises a window that does not exist. That case is one answer about all
+    /// of someone's work, and says so — it is also the shape a surface falls into by default,
+    /// since the stored mode is the scoped one and the toggle that would change it is hidden.
     static func modeLabel(_ mode: WorkMode, accounts: [AccountUsage]) -> String {
+        guard hasScopedWindows(in: accounts) else { return "All work" }
         guard mode == .scopedModel else { return "Other work" }
         let names = scopedModelNames(in: accounts)
+        // Scoped windows exist here — `hasScopedWindows` just said so — but none reported a model
+        // name. "All work" would be the wrong half of a contradictory pair: this mode counts
+        // *more* windows than its sibling, which is still labelled "Other work".
         guard !names.isEmpty else { return "Per-model work" }
         return "\(names.joined(separator: " / ")) work"
     }
 
     // MARK: - Naming a state
+
+    /// The two or three words a chip prints for a candidate.
+    ///
+    /// Its ranking position where the figures are current, and the **account's own condition**
+    /// where they are not. A `.stale`, `.offline` or `.rateLimited` account keeps its last
+    /// snapshot, so `assess` still gives it a budget state — and a chip reading "Use it or lose
+    /// it" over figures that stopped moving yesterday is advice, dimmed or not. `canLead` already
+    /// refuses such a candidate the lead; this is that same fact where someone reads it.
+    static func stateLabel(for candidate: UsageCandidate, now: Date = Date()) -> String {
+        guard !candidate.isCurrent else { return stateLabel(candidate.state) }
+        switch candidate.state {
+        // Already the account's own condition rather than a position in the ranking.
+        case .needsAttention: return stateLabel(candidate.state)
+        // `.noData` is *not* one of those, which is easy to read the wrong way round: a first
+        // pass that never got a snapshot lands here whether nothing was asked or the network was
+        // down, and "Not checked yet" over an offline account states the one thing that is not
+        // true. It keeps that label only where the account really is `.fresh` — which the guard
+        // above has already sent home.
+        default: return condition(candidate.account, now: now)
+        }
+    }
+
+    /// The short form of what is wrong with an account's figures — the chip's width, where
+    /// `UsagePresentation.stateNote` gives the sentence.
+    private static func condition(_ account: AccountUsage, now: Date) -> String {
+        switch account.state {
+        case let .stale(since): "As of \(UsageFormat.age(since, now: now))"
+        case .rateLimited: "Rate limited"
+        case .offline: "Offline"
+        // `needsUser` sends both of these to `.needsAttention`, which never reaches here.
+        case .fresh, .loginNeeded, .noSource: stateLabel(.needsAttention)
+        }
+    }
 
     /// The two or three words a chip prints for a candidate's position.
     static func stateLabel(_ state: CandidateState) -> String {
@@ -84,18 +126,56 @@ public extension UsageOverview {
     static func reason(for candidate: UsageCandidate, now: Date) -> String {
         switch candidate.state {
         case .needsAttention:
-            UsagePresentation.stateNote(candidate.account, now: now)
+            return UsagePresentation.stateNote(candidate.account, now: now)
         case .noData:
             // `.offline` and `.rateLimited` reach this state too, on a first pass that never got
             // a snapshot — and `UsagePresentation` can name either. Only a genuinely `.fresh`
             // binding with nothing stored has no reason to give beyond the absence itself.
-            candidate.account.state == .fresh
-                ? "no usage read yet"
-                : UsagePresentation.stateNote(candidate.account, now: now)
+            guard candidate.account.state == .fresh else {
+                return UsagePresentation.stateNote(candidate.account, now: now)
+            }
+            return "no usage read yet"
         case .out, .nearlyOut, .sessionNearlyFull:
-            gatedReason(for: candidate, now: now)
+            guard candidate.isCurrent else {
+                return datedFigure(for: candidate, limit: candidate.gatingLimit, now: now)
+            }
+            return gatedReason(for: candidate, now: now)
         case .spend, .onPace, .burningFast, .paceUnknown:
-            budgetReason(for: candidate, now: now)
+            guard candidate.isCurrent else {
+                return datedFigure(for: candidate, limit: candidate.bindingWeekly, now: now)
+            }
+            return budgetReason(for: candidate, now: now)
+        }
+    }
+
+    /// What is left to say about an account whose figures stopped moving: the last one read, and
+    /// when it was read.
+    ///
+    /// The verdict is what goes — "on pace", "burning fast", "back in 2h" are all claims about a
+    /// window as it stands *now*, and this account has not reported since. The figure survives
+    /// because it is still a fact, correctly dated; the reset survives too, in the list's own
+    /// column, which reads it from the window rather than from a pace.
+    private static func datedFigure(
+        for candidate: UsageCandidate, limit: UsageLimit?, now: Date
+    ) -> String {
+        let note = dated(UsagePresentation.stateNote(candidate.account, now: now), candidate, now)
+        guard let limit else { return note }
+        return "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization)) · \(note)"
+    }
+
+    /// The age of the figures, where saying what is wrong has not already given it.
+    ///
+    /// `.stale` carries its own "as of …"; `.offline` and `.rateLimited` do not, and a snapshot is
+    /// retained under those indefinitely — so "7d 60% · offline" was a percentage with no date on
+    /// it at all, which is the one thing this sentence exists to supply. `headerNote` dates them
+    /// the same way, for the same reason.
+    private static func dated(_ note: String, _ candidate: UsageCandidate, _ now: Date) -> String {
+        switch candidate.account.state {
+        case .offline, .rateLimited:
+            guard let capturedAt = candidate.account.snapshot?.capturedAt else { return note }
+            return "\(note) · as of \(UsageFormat.age(capturedAt, now: now))"
+        case .fresh, .stale, .loginNeeded, .noSource:
+            return note
         }
     }
 

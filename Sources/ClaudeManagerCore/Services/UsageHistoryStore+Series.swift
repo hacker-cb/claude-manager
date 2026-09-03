@@ -17,13 +17,43 @@ public struct UsageSeriesPoint: Sendable, Equatable {
     /// per-model window the line is meant to show the pressure that constrains, and a mean over
     /// two models describes neither of them.
     public var weeklyScoped: Double?
+    /// **Which** quota `weeklyScoped` came from, so a line drawn through several samples can be
+    /// asked whether it followed one.
+    ///
+    /// The value alone cannot answer that: it is a per-sample maximum with the identity thrown
+    /// away, so two per-model quotas produce a line that silently switches models — and every
+    /// switch reads as a drop. Checking the *current* snapshot's window count is not enough
+    /// either; the history may have been recorded when the account had two and the switch is
+    /// already baked into the stored samples.
+    public var weeklyScopedIdentity: ScopedIdentity
 
-    public init(at: Date, session: Double?, weeklyAll: Double?, weeklyScoped: Double?) {
+    public init(
+        at: Date,
+        session: Double?,
+        weeklyAll: Double?,
+        weeklyScoped: Double?,
+        weeklyScopedIdentity: ScopedIdentity = .none
+    ) {
         self.at = at
         self.session = session
         self.weeklyAll = weeklyAll
         self.weeklyScoped = weeklyScoped
+        self.weeklyScopedIdentity = weeklyScopedIdentity
     }
+}
+
+/// What a sample's scoped weekly value can be attributed to.
+///
+/// `.one(nil)` and `.one("Fable")` are both a single quota — a server that reports the window
+/// without naming its model still reports *one* window — and they compare unequal, which is the
+/// point: a rename mid-period is a change of quota as much as a second window is.
+public enum ScopedIdentity: Sendable, Equatable {
+    /// No per-model weekly window in the snapshot.
+    case none
+    /// Exactly one, optionally naming its model.
+    case one(String?)
+    /// Several, so this sample's value belongs to whichever happened to be highest.
+    case several
 }
 
 public extension UsageHistoryStore {
@@ -80,16 +110,29 @@ public extension UsageHistoryStore {
                 guard let json = Self.text(stmt, 1), let snapshot = Self.decodeSnapshot(json) else {
                     continue
                 }
+                let scoped = snapshot.weeklyScoped
                 points.append(
                     UsageSeriesPoint(
                         at: Self.date(fromMillis: sqlite3_column_int64(stmt, 0)),
                         session: snapshot.session?.utilization,
                         weeklyAll: snapshot.weeklyAll?.utilization,
-                        weeklyScoped: snapshot.weeklyScoped.map(\.utilization).max()
+                        weeklyScoped: scoped.map(\.utilization).max(),
+                        weeklyScopedIdentity: Self.identity(of: scoped)
                     )
                 )
             }
             return points
         } ?? []
+    }
+
+    /// No schema change: the windows already travel inside each sample's `snapshot_json`, so this
+    /// reads from history recorded before the field existed exactly as from history recorded
+    /// after it.
+    private static func identity(of scoped: [UsageLimit]) -> ScopedIdentity {
+        switch scoped.count {
+        case 0: .none
+        case 1: .one(scoped[0].scopeModelName)
+        default: .several
+        }
     }
 }

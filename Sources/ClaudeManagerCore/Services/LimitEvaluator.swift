@@ -46,7 +46,10 @@ public struct LimitEvaluator: Sendable {
     }
 
     static let fiveHourWindow: TimeInterval = 5 * 60 * 60
-    static let sevenDayWindow: TimeInterval = 7 * 24 * 60 * 60
+    /// Public because the timeline needs it: the period a weekly window is in began one of these
+    /// before the reset it is heading for, and that boundary is what `UsageTrend` would otherwise
+    /// have to infer from a drop it cannot always see.
+    public static let sevenDayWindow: TimeInterval = 7 * 24 * 60 * 60
 
     /// Tiers above the 0.70 floor (the sub-floor CLI tiers at 0.25/0.50 are inert under it, so
     /// they're omitted rather than carried dead). Each must sit **below** `absoluteWarning` (0.90)
