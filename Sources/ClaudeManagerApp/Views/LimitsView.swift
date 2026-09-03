@@ -75,7 +75,7 @@ struct LimitsView: View {
                 .fixedSize()
             }
             Button {
-                Task { await refresh() }
+                Task { await model.refreshAfterLocating() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -101,30 +101,6 @@ struct LimitsView: View {
             .compactMap(\.snapshot?.capturedAt)
         guard let oldest = captured.min() else { return nil }
         return "as of \(UsageFormat.age(oldest, now: now))"
-    }
-
-    /// Re-detect where that is the thing blocking, *then* read usage.
-    ///
-    /// `refreshUsage` returns immediately while Claude.app cannot be located, before it so much
-    /// as sets `isRefreshingUsage`: nothing ran, nothing spun, nothing was reported. And this
-    /// page is deliberately reachable in exactly that state — `limitsAccounts` keeps the default
-    /// account whether or not the row for it exists — so its Refresh was the one that could be
-    /// pressed forever with no effect.
-    ///
-    /// **`refresh()` is not what finds Claude**, which is the trap this fell into once already.
-    /// It goes straight to `perform`, which bails on the same `realClaude` guard and raises the
-    /// "not found" alert on top of the banner already saying so — so a button labelled "Look for
-    /// Claude" wired to it could not find an app the user had just put back. `relocate()` is the
-    /// one that runs the locator, and it refreshes afterwards itself. Reserved for that case:
-    /// with Claude present it would also re-apply the deep-link broker on every ordinary press.
-    private func refresh() async {
-        if model.realClaude == nil {
-            await model.relocate()
-        } else {
-            await model.refresh()
-        }
-        guard model.usageTrackingEnabled, model.realClaude != nil else { return }
-        await model.refreshUsage(interactive: true)
     }
 
     // MARK: - Empty states
@@ -167,7 +143,7 @@ struct LimitsView: View {
             // *locator*, which has nothing to do with a usage pass. The flag stays true for the
             // whole of one, so a pass in flight when Claude.app was moved greyed out the only
             // button able to recover from it.
-            Button(noClaude ? "Look for Claude" : "Refresh") { Task { await refresh() } }
+            Button(noClaude ? "Look for Claude" : "Refresh") { Task { await model.refreshAfterLocating() } }
                 .disabled(!noClaude && model.isRefreshingUsage)
         }
     }

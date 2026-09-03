@@ -183,6 +183,28 @@ extension AppModel {
             .filter { seen.insert($0).inserted }
     }
 
+    /// What a user's Refresh gesture should actually do — re-detect where that is the thing
+    /// blocking, then read usage.
+    ///
+    /// **`refresh()` is not what finds Claude.** It goes straight to `perform`, which bails on the
+    /// same `realClaude` guard and raises the "not found" alert; `relocate()` is the one that runs
+    /// the locator, and it refreshes afterwards itself. Reserved for that case, because with
+    /// Claude present it would also re-apply the deep-link broker on every ordinary press.
+    ///
+    /// Here rather than in a view because both surfaces ask it and the second one got it wrong:
+    /// the page was fixed in review and the menu bar was not, which is precisely where it matters
+    /// most — menu-bar-only usage has no window and no banner, so that Refresh was the only way
+    /// back from a missing Claude, and it could not take it.
+    func refreshAfterLocating() async {
+        if realClaude == nil {
+            await relocate()
+        } else {
+            await refresh()
+        }
+        guard usageTrackingEnabled, realClaude != nil else { return }
+        await refreshUsage(interactive: true)
+    }
+
     // MARK: - Keeping the answer steady
 
     /// Record what each mode recommends now, so the next pass can damp a near-equal challenger.

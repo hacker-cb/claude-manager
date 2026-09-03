@@ -115,10 +115,7 @@ struct MenuBarContent: View {
         // this is a user gesture — the one path allowed to raise the keychain prompt — and the
         // service's own 60s floor keeps a mashed menu from hammering the API.
         Button("Refresh") {
-            Task {
-                await model.refresh()
-                if model.usageTrackingEnabled { await model.refreshUsage(interactive: true) }
-            }
+            Task { await model.refreshAfterLocating() }
         }
         // Gated like every other item that needs Claude: with the app missing there is no
         // version to compare a release against, and the item would answer a press with a
