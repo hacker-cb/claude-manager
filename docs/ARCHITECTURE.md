@@ -21,7 +21,7 @@ ClaudeManagerCore (Swift package — headless, fully tested)
 └─ CommandRunner injected process runner (mocked in tests)
 
 ClaudeManagerApp (SwiftUI — thin)
-├─ Window (list + detail + editor + doctor) · MenuBarExtra · Settings
+├─ Window (Limits page + list + detail + editor + doctor) · MenuBarExtra · Settings
 └─ DeepLinkService + DeepLinkPresenter — claude:// hold + profile picker
 ```
 
