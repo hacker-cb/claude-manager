@@ -101,6 +101,17 @@ struct LimitsAccountList: View {
 
     // MARK: - When
 
+    /// The clock time under the countdown — but only where there is one to give.
+    ///
+    /// `UsageFormat.resets` spells an absolute time beyond a day and returns a *relative* phrase
+    /// under it, which stripped of its "resets " prefix read as a word-for-word repeat of the
+    /// countdown directly above it.
+    private func absoluteReset(_ resetsAt: Date) -> String? {
+        guard resetsAt.timeIntervalSince(now) >= 24 * 3600 else { return nil }
+        return UsageFormat.resets(resetsAt, now: now)?
+            .replacingOccurrences(of: "resets ", with: "")
+    }
+
     @ViewBuilder
     private func resets(_ row: UsageCandidate) -> some View {
         // The clock the ranking actually measured against, not a window's own field — the two
@@ -109,9 +120,8 @@ struct LimitsAccountList: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("in \(UsageFormat.compactDuration(resetsAt.timeIntervalSince(now)))")
                     .font(.caption).bold().monospacedDigit()
-                if let absolute = UsageFormat.resets(resetsAt, now: now) {
-                    Text(absolute.replacingOccurrences(of: "resets ", with: ""))
-                        .font(.caption2).foregroundStyle(.secondary)
+                if let absolute = absoluteReset(resetsAt) {
+                    Text(absolute).font(.caption2).foregroundStyle(.secondary)
                 }
             }
         } else {

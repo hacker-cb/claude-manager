@@ -109,6 +109,9 @@ extension AppModel {
             // ranking to damp and no history to draw.
             setLimitsLeaders([:])
             setLimitsSeries([:])
+            // Disown a history load already suspended on a read, or it would publish what it
+            // finishes fetching after the switch said stop.
+            limitsSeriesGeneration += 1
         }
     }
 

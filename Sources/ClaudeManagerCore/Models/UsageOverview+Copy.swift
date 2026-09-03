@@ -47,12 +47,18 @@ public extension UsageOverview {
     }
 
     /// What to call a mode: the reported model names for the scoped one ("Fable work"), and
-    /// "Other work" for its complement. Falls back to a neutral phrase where nothing has
-    /// reported a name yet, rather than printing a placeholder that reads like a model.
+    /// "Other work" for its complement.
+    ///
+    /// Where the fleet reports **no** per-model window, both modes count the same windows and
+    /// neither name is true of what is on screen: "Other work" has nothing to be other than, and
+    /// "Per-model work" promises a window that does not exist. That case is one answer about all
+    /// of someone's work, and says so — it is also the shape a surface falls into by default,
+    /// since the stored mode is the scoped one and the toggle that would change it is hidden.
     static func modeLabel(_ mode: WorkMode, accounts: [AccountUsage]) -> String {
+        guard hasScopedWindows(in: accounts) else { return "All work" }
         guard mode == .scopedModel else { return "Other work" }
         let names = scopedModelNames(in: accounts)
-        guard !names.isEmpty else { return "Per-model work" }
+        guard !names.isEmpty else { return "All work" }
         return "\(names.joined(separator: " / ")) work"
     }
 

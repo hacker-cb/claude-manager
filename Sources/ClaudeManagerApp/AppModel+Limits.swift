@@ -25,7 +25,13 @@ extension AppModel {
     /// crowd out every other. `UsagePresentation.onePerAccount` already folds it — and folds it
     /// *stably*, which matters here because the ranking is re-run on every tick.
     var limitsAccounts: [AccountUsage] {
-        UsagePresentation.onePerAccount(usageByBinding)
+        // Only accounts a live binding still speaks for. Under "Manually only" polling
+        // `refreshUsageIfBindingsChanged` fetches nothing, so `usageByBinding` keeps a launcher
+        // the user removed — and the ranking would go on recommending it, with no profile left
+        // for the Open button to act on.
+        let live = Set(profileEntries.map(\.id))
+        return UsagePresentation.onePerAccount(usageByBinding)
+            .filter { $0.bindingIDs.contains(where: live.contains) }
     }
 
     /// What each binding is called, for naming an account after a profile where the login has no
@@ -98,20 +104,32 @@ extension AppModel {
     /// suspends — so a fleet's worth of SQL never blocks a frame. Accounts are read one after the
     /// other on purpose: they share a single serialized connection, so asking concurrently buys
     /// nothing and only lengthens the actor's queue.
+    ///
+    /// **Generation-guarded, and the guard is not decoration.** Two callers reach this — the
+    /// page's `.task` and the poll — so without one the slower of two overlapping loads
+    /// overwrites the fresher, wholesale. And the master switch can flip *between* two of those
+    /// reads: the entry guard has already passed by then, so the disable path clears
+    /// `limitsSeries` and this method would fetch the rest of the fleet from `usage.db` and put
+    /// it back. "Off reads nothing, stores nothing" is checked before every read and again before
+    /// the publish, the way `refreshUsage` does it one layer up.
     func loadLimitsSeries(now: Date = Date()) async {
         guard usageTrackingEnabled else {
             setLimitsSeries([:])
             return
         }
+        limitsSeriesGeneration += 1
+        let generation = limitsSeriesGeneration
         let since = now.addingTimeInterval(-Self.limitsHistoryWindow)
         var loaded: [String: [UsageSeriesPoint]] = [:]
         for account in limitsAccounts {
+            guard usageTrackingEnabled, generation == limitsSeriesGeneration else { return }
             loaded[account.identity.uuid] = await usageHistory.series(
                 accountUUID: account.identity.uuid,
                 since: since,
                 step: Self.limitsHistoryStep
             )
         }
+        guard usageTrackingEnabled, generation == limitsSeriesGeneration else { return }
         setLimitsSeries(loaded)
     }
 }

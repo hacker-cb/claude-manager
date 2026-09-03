@@ -42,10 +42,46 @@ struct UsageTrendTests {
     }
 
     @Test
-    func aDecreaseWithinAPeriodNeverProducesANegativeRate() {
-        // Only a reset lowers a utilization; a server correction must not draw a quota refilling.
-        let series = points([(0, 0.5), (1, 0.5)])
-        #expect(UsageTrend.rate(of: \.weeklyAll, in: series) == 0)
+    func aFlatWindowHasARateOfZero() {
+        #expect(UsageTrend.rate(of: \.weeklyAll, in: points([(0, 0.5), (1, 0.5)])) == 0)
+    }
+
+    @Test
+    func aSeriesEndingOnADropHasNoRateYet() {
+        // The drop *is* the period boundary, so the current period holds one sample and a rate
+        // needs two. No projection is drawn until the next poll — which is right: nothing yet
+        // says how fast the new window is being spent. (The earlier version of this test fed a
+        // flat series and claimed to be covering a decrease, so it asserted nothing of the kind.)
+        #expect(UsageTrend.rate(of: \.weeklyAll, in: points([(0, 0.9), (1, 0.02)])) == nil)
+        #expect(UsageTrend.rate(of: \.weeklyAll, in: points([(0, 0.9), (1, 0.02), (2, 0.05)]))
+            == 0.03 / Self.hour)
+    }
+
+    // MARK: - A boundary the caller knows
+
+    @Test
+    func aSuppliedPeriodStartBeatsTheDropHeuristic() {
+        // A week spent idle resets 0% → 0% and leaves no drop to find; the heuristic then
+        // averages across a boundary that is really there. The caller knows when the period
+        // began — the reset is seven days before the next one — so it can say.
+        let series = points([(0, 0), (1, 0), (2, 0), (3, 0.1)])
+        // Inferred: no drop anywhere, so it averages over the whole three hours.
+        #expect(isClose(UsageTrend.rate(of: \.weeklyAll, in: series), 0.1 / (3 * Self.hour)))
+        // Told the period began at hour 2, it measures only the hour that belongs to it.
+        #expect(isClose(
+            UsageTrend.rate(
+                of: \.weeklyAll, in: series, since: start.addingTimeInterval(2 * Self.hour)
+            ),
+            0.1 / Self.hour
+        ))
+    }
+
+    @Test
+    func aPeriodStartAfterEverySampleLeavesNothingToMeasure() {
+        let series = points([(0, 0.2), (1, 0.4)])
+        #expect(UsageTrend.rate(
+            of: \.weeklyAll, in: series, since: start.addingTimeInterval(5 * Self.hour)
+        ) == nil)
     }
 
     @Test

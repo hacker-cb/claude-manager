@@ -242,6 +242,11 @@ final class AppModel: ObservableObject {
         limitsSeries = value
     }
 
+    /// Bumped by every history load and by switching tracking off, so a load suspended on a read
+    /// commits nothing once a newer one — or an "off" — has overtaken it. The same shape
+    /// `usageRefreshGeneration` uses one layer up, and for the same two reasons.
+    var limitsSeriesGeneration = 0
+
     @Published var measureSizes: Bool {
         didSet { defaults.set(measureSizes, forKey: PreferenceKeys.measureSizes) }
     }

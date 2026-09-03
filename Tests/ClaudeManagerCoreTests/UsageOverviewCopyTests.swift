@@ -119,7 +119,12 @@ struct UsageOverviewCopyTests {
             limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
         ])]
         #expect(UsageOverview.hasScopedWindows(in: accounts) == false)
-        #expect(UsageOverview.modeLabel(.scopedModel, accounts: accounts) == "Per-model work")
+        // Neither name is true of what is on screen then: "Other work" has nothing to be other
+        // than, and "Per-model work" promises a window the fleet does not have. This is also the
+        // shape a surface lands in by default — the stored mode is the scoped one, and the toggle
+        // that would change it is hidden precisely because the modes coincide.
+        #expect(UsageOverview.modeLabel(.scopedModel, accounts: accounts) == "All work")
+        #expect(UsageOverview.modeLabel(.otherWork, accounts: accounts) == "All work")
     }
 
     // MARK: - The sentence

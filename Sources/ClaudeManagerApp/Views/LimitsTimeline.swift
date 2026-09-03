@@ -39,20 +39,25 @@ struct LimitsTimeline: View {
 
     private var legend: some View {
         HStack(spacing: 12) {
-            key(color: .accentColor, dashed: false, text: "All models")
-            key(color: .purple, dashed: true, text: "Per-model")
-            key(color: .secondary, dashed: true, text: "projected")
+            key(color: .accentColor, dash: nil, text: "All models")
+            key(color: .purple, dash: [4, 3], text: "Per-model")
+            key(color: .accentColor.opacity(0.5), dash: [2, 3], text: "projected")
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
     }
 
-    private func key(color: Color, dashed: Bool, text: String) -> some View {
+    /// Drawn with the same colour and the same dash pattern as the mark it stands for. The
+    /// earlier version dimmed a solid swatch instead of dashing it, so the two dashed series were
+    /// indistinguishable from the solid one — a legend that cannot be told apart is not one.
+    private func key(color: Color, dash: [CGFloat]?, text: String) -> some View {
         HStack(spacing: 4) {
-            Rectangle()
-                .fill(color)
-                .frame(width: 14, height: 2)
-                .opacity(dashed ? 0.6 : 1)
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 1))
+                path.addLine(to: CGPoint(x: 16, y: 1))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dash ?? []))
+            .frame(width: 16, height: 2)
             Text(text)
         }
     }
@@ -70,8 +75,15 @@ struct LimitsTimelineLane: View {
     /// A point on a drawn line. Charts wants one identifiable row per mark, and the optionals in
     /// `UsageSeriesPoint` are gaps rather than zeroes — dropping them here is what keeps a window
     /// nobody reported from being drawn as a quota spent to nothing.
+    ///
+    /// Identified by its own timestamp, not a fresh `UUID`: these are rebuilt several times per
+    /// `body` and again on every minute tick, and a new identity each time makes Charts treat an
+    /// unchanged series as an entirely new set of marks.
     private struct Plot: Identifiable {
-        let id = UUID()
+        var id: Date {
+            at
+        }
+
         let at: Date
         let value: Double
     }
@@ -82,12 +94,30 @@ struct LimitsTimelineLane: View {
         }
     }
 
-    /// The dashed continuation: from the last reading to the reset, at the rate the window has
-    /// actually been spent since it last turned over.
+    /// When *this* window turns over — not the candidate's `weeklyResetsAt`, which is only the
+    /// deadline of whichever window the current mode found tightest. These windows reset
+    /// independently (this fleet reports two whose dates differ), and in `.otherWork` the scoped
+    /// one is not even counted, so using that date for both lines extrapolated one of them to a
+    /// deadline its own quota does not reset on.
+    private func reset(for window: KeyPath<UsageSeriesPoint, Double?>) -> Date? {
+        guard let snapshot = candidate.account.snapshot else { return nil }
+        if window == \.weeklyAll { return snapshot.weeklyAll?.resetsAt }
+        // The series carries the highest scoped window per sample, so its reset is that one's.
+        return snapshot.weeklyScoped.max { $0.utilization < $1.utilization }?.resetsAt
+    }
+
+    /// The dashed continuation: from the last reading to that window's own reset, at the rate it
+    /// has been spent since it last turned over — measured from the period boundary the reset
+    /// itself gives, rather than from a drop `UsageTrend` might not be able to see.
     private func projection(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
-        guard let resetsAt = candidate.weeklyResetsAt, resetsAt > now,
+        guard let resetsAt = reset(for: window), resetsAt > now,
               let last = history(window).last,
-              let ahead = UsageTrend.projected(of: window, in: points, at: resetsAt)
+              let ahead = UsageTrend.projected(
+                  of: window,
+                  in: points,
+                  at: resetsAt,
+                  since: resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow)
+              )
         else { return [] }
         return [Plot(at: last.at, value: last.value), Plot(at: resetsAt, value: ahead)]
     }
@@ -165,7 +195,7 @@ struct LimitsTimelineLane: View {
                 .lineStyle(StrokeStyle(lineWidth: 1))
             // Only a reset still ahead is drawn: one that has passed is not a countdown, and the
             // ranking has already stopped reasoning from it.
-            if let resetsAt = candidate.weeklyResetsAt, resetsAt > now, range.contains(resetsAt) {
+            if let resetsAt = reset(for: \.weeklyAll), resetsAt > now, range.contains(resetsAt) {
                 RuleMark(x: .value("Resets", resetsAt))
                     .foregroundStyle(.secondary)
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))

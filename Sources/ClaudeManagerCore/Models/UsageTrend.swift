@@ -9,18 +9,29 @@ public enum UsageTrend {
     /// How fast the window has been spent, as utilization per second. Nil when the series says
     /// nothing usable.
     ///
-    /// **Measured from the last reset, not from the start of the series.** A window that turned
-    /// over inside the range spent its whole previous period too, and averaging across that
-    /// boundary describes a rate the account is not on — it would read a fresh week as though it
-    /// were carrying last week's spending.
+    /// **Measured from the current period, not from the start of the series.** A window that
+    /// turned over inside the range spent its whole previous period too, and averaging across
+    /// that boundary describes a rate the account is not on — it would read a fresh week as
+    /// though it were carrying last week's spending.
+    ///
+    /// `periodStart` is where that period is *known* to begin, and a caller that knows it should
+    /// say so. Inferring the boundary from a drop in utilization is the fallback, and it is only
+    /// a heuristic: a week spent idle resets from 0% to 0% and leaves no drop to find, and the
+    /// thinning can put the last pre-reset sample in a bucket whose representative is already the
+    /// post-reset one. Both cases average across a boundary that is there.
     ///
     /// Never negative: a decrease within one period is the server correcting a figure, not the
     /// account un-spending anything, and a downward projection would draw a quota refilling.
     public static func rate(
         of window: KeyPath<UsageSeriesPoint, Double?>,
-        in points: [UsageSeriesPoint]
+        in points: [UsageSeriesPoint],
+        since periodStart: Date? = nil
     ) -> Double? {
-        let usable = points.filter { $0[keyPath: window] != nil }
+        let usable = points.filter { point in
+            guard point[keyPath: window] != nil else { return false }
+            guard let periodStart else { return true }
+            return point.at >= periodStart
+        }
         guard let last = usable.last, let latest = last[keyPath: window] else { return nil }
         let start = usable[startIndex(of: window, in: usable)...].first
         guard let start, let first = start[keyPath: window] else { return nil }
@@ -35,11 +46,12 @@ public enum UsageTrend {
     public static func projected(
         of window: KeyPath<UsageSeriesPoint, Double?>,
         in points: [UsageSeriesPoint],
-        at target: Date
+        at target: Date,
+        since periodStart: Date? = nil
     ) -> Double? {
         let usable = points.filter { $0[keyPath: window] != nil }
         guard let last = usable.last, let latest = last[keyPath: window],
-              let rate = rate(of: window, in: points)
+              let rate = rate(of: window, in: points, since: periodStart)
         else { return nil }
         let seconds = target.timeIntervalSince(last.at)
         guard seconds >= 0 else { return nil }
@@ -51,11 +63,12 @@ public enum UsageTrend {
     public static func exhausts(
         of window: KeyPath<UsageSeriesPoint, Double?>,
         in points: [UsageSeriesPoint],
-        before limit: Date
+        before limit: Date,
+        since periodStart: Date? = nil
     ) -> Date? {
         let usable = points.filter { $0[keyPath: window] != nil }
         guard let last = usable.last, let latest = last[keyPath: window],
-              let rate = rate(of: window, in: points), rate > 0, latest < 1
+              let rate = rate(of: window, in: points, since: periodStart), rate > 0, latest < 1
         else { return nil }
         let hit = last.at.addingTimeInterval((1 - latest) / rate)
         return hit < limit ? hit : nil

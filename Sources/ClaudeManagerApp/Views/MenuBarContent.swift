@@ -142,17 +142,34 @@ struct MenuBarContent: View {
     private func nowRow(mode: WorkMode, now: Date) -> some View {
         let overview = model.limitsOverview(mode: mode, now: now)
         let label = model.limitsModeLabel(mode)
-        if let leader = overview.leader, let entry = model.limitsProfiles(of: leader.account).first {
-            Button {
-                open(entry)
-            } label: {
-                Label(
-                    "\(label) → \(model.limitsAccountName(leader.account))"
-                        + "  ·  \(UsageOverview.reason(for: leader, now: now))",
-                    systemImage: "arrow.right.circle"
-                )
+        // The two questions are asked separately on purpose. Folded into one `if let` chain, a
+        // leader whose profiles could not be resolved fell into the else and announced an
+        // exhausted fleet — reporting "nobody" where a recommendation actually existed.
+        if let leader = overview.leader {
+            let entries = model.limitsProfiles(of: leader.account)
+            let text = "\(label) → \(model.limitsAccountName(leader.account))"
+                + "  ·  \(UsageOverview.reason(for: leader, now: now))"
+            if entries.count == 1, let entry = entries.first {
+                Button { open(entry) } label: {
+                    Label(text, systemImage: "arrow.right.circle")
+                }
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
+            } else if entries.count > 1 {
+                // A login several launchers share: the ranking chose the *account*, and which
+                // window to open it in is the person's call — taking the first silently activated
+                // an arbitrary workspace.
+                Menu {
+                    ForEach(entries) { entry in
+                        Button(profileName(entry)) { open(entry) }
+                    }
+                } label: {
+                    Label(text, systemImage: "arrow.right.circle")
+                }
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
+            } else {
+                Button {} label: { Label(text, systemImage: "arrow.right.circle") }
+                    .disabled(true)
             }
-            .disabled(model.claudeUpdateState.blocksProfileActivity)
         } else {
             // Nil is a real answer, and a menu row that silently vanished when the fleet ran out
             // would read as the feature being broken rather than as the fleet being spent.
@@ -160,6 +177,13 @@ struct MenuBarContent: View {
                 Label("\(label) → nobody right now", systemImage: "arrow.right.circle")
             }
             .disabled(true)
+        }
+    }
+
+    private func profileName(_ entry: ProfileEntry) -> String {
+        switch entry {
+        case .primary: "Default profile"
+        case let .clone(managed): managed.profile.displayName
         }
     }
 

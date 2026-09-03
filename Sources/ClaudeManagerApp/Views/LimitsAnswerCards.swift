@@ -136,8 +136,14 @@ struct LimitsAnswerCard: View {
     // MARK: - The rest of the fleet
 
     /// The order after the leader, as names — the "and then?" the card would otherwise provoke.
+    ///
+    /// Only accounts work could actually go to. Listing the ranking's tail unfiltered put "then
+    /// Alice → Bob" directly beneath "Nobody right now", offering three addresses one line after
+    /// saying there were none — and named signed-out and exhausted accounts as the next option
+    /// even when there was a leader.
     private func chain(_ overview: UsageOverview) -> String {
         let names = overview.candidates
+            .filter(\.canLead)
             .dropFirst(overview.leader == nil ? 0 : 1)
             .prefix(3)
             .map { model.limitsAccountName($0.account) }
