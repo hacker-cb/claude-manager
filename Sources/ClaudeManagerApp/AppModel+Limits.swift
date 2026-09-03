@@ -18,19 +18,27 @@ extension AppModel {
 
     // MARK: - What is being ranked
 
-    /// One entry per Claude account, not per profile.
-    ///
-    /// `usageByBinding` is keyed by binding, so a login shared by three launchers appears three
-    /// times; ranking that list would recommend the same account three times over and let it
-    /// crowd out every other. `UsagePresentation.onePerAccount` already folds it — and folds it
-    /// *stably*, which matters here because the ranking is re-run on every tick.
     /// The bindings that still exist. Under "Manually only" polling
     /// `refreshUsageIfBindingsChanged` fetches nothing, so every map keyed by binding —
     /// `usageByBinding`, `usageBindingFailures` — keeps a launcher the user removed until the
     /// next pass, which may never come.
+    ///
+    /// The default binding is always in the set, and not because `profileEntries` lists it:
+    /// that row disappears while Claude.app cannot be located — during an update's bundle swap,
+    /// or after the app is moved — whereas `usageBindings` fetches and stores the default
+    /// account's usage regardless. Deriving the set from the rows alone dropped that account from
+    /// the ranking exactly when the missing-Claude banner was already on screen, taking the menu
+    /// rows and the timeline with it on a single-profile setup.
     var liveBindingIDs: Set<String> {
-        Set(profileEntries.map(\.id))
+        Set(profileEntries.map(\.id)).union([TokenBinding.defaultID])
     }
+
+    // One entry per Claude account, not per profile.
+    //
+    // `usageByBinding` is keyed by binding, so a login shared by three launchers appears three
+    // times; ranking that list would recommend the same account three times over and let it
+    // crowd out every other. `UsagePresentation.onePerAccount` already folds it — and folds it
+    // *stably*, which matters here because the ranking is re-run on every tick.
 
     var limitsAccounts: [AccountUsage] {
         // Filtered **before** the fold, and the fan-out trimmed with it. Filtering afterwards

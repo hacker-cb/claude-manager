@@ -20,8 +20,9 @@ public enum UsageTrend {
     /// thinning can put the last pre-reset sample in a bucket whose representative is already the
     /// post-reset one. Both cases average across a boundary that is there.
     ///
-    /// Never negative: a decrease within one period is the server correcting a figure, not the
-    /// account un-spending anything, and a downward projection would draw a quota refilling.
+    /// Never negative, and by construction rather than by clamping: the baseline is the period's
+    /// lowest reading, so a decrease within it — the server correcting a figure, never the account
+    /// un-spending anything — cannot pull the rate below zero or draw a quota refilling.
     public static func rate(
         of window: KeyPath<UsageSeriesPoint, Double?>,
         in points: [UsageSeriesPoint],
@@ -33,18 +34,30 @@ public enum UsageTrend {
             return point.at >= periodStart
         }
         guard let last = usable.last, let latest = last[keyPath: window] else { return nil }
-        // A **told** boundary is the boundary. Running the drop heuristic inside it as well read
-        // every server correction as a fresh period: one poll reporting 0.49 after 0.50 collapsed
-        // a week of history to the hour that followed it, and the projection built on that rate
-        // shot to 100% days early. The heuristic is the fallback for when nobody said, and only
-        // then — which is also what makes the `max(0, …)` below reachable at last, since a
-        // corrected figure can now legitimately sit below the period's first sample.
-        let first = periodStart == nil ? usable[startIndex(of: window, in: usable)...].first
-            : usable.first
-        guard let start = first, let first = start[keyPath: window] else { return nil }
-        let seconds = last.at.timeIntervalSince(start.at)
+        // A **told** boundary is the boundary: running the drop heuristic inside it as well read
+        // every server correction as a fresh period, collapsing a week of history to the hour
+        // after one poll reported 0.49 instead of 0.50. The heuristic is the fallback for when
+        // nobody said, and only then.
+        let period = periodStart == nil
+            ? Array(usable[startIndex(of: window, in: usable)...])
+            : usable
+        // The baseline is the period's **lowest** reading, not its first. Within one period a
+        // utilization only grows, so the low point is where the period actually began — and
+        // taking the first sample instead let a single high one poison the whole week: every
+        // honest reading below it clamped the rate to zero, and the timeline drew a flat dashed
+        // line promising the account would finish the week exactly where it stood. It also
+        // absorbs a pre-reset sample that survives a boundary shifted by DST or clock skew.
+        // Earliest occurrence, so the span is the longest the evidence supports.
+        guard let base = period.min(by: { lhs, rhs in
+            let left = lhs[keyPath: window] ?? .infinity
+            let right = rhs[keyPath: window] ?? .infinity
+            return left != right ? left < right : lhs.at < rhs.at
+        }), let first = base[keyPath: window] else { return nil }
+        let seconds = last.at.timeIntervalSince(base.at)
+        // Zero span is the series ending on its own low point — one reading is not a rate.
         guard seconds > 0 else { return nil }
-        return max(0, (latest - first) / seconds)
+        // Non-negative by construction now: nothing in the period is below the baseline.
+        return (latest - first) / seconds
     }
 
     /// Where the window lands at `target` if it keeps that rate — clamped to 0…1, because a

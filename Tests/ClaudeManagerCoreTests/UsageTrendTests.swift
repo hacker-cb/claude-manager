@@ -91,12 +91,22 @@ struct UsageTrendTests {
     }
 
     @Test
-    func aToldBoundaryClampsACorrectionToZeroRatherThanGoingNegative() {
-        // With the boundary told, the first sample of the period is fixed — so a figure the
-        // server later corrects downward can genuinely sit below it. That is what the clamp is
-        // for, and it was unreachable while the heuristic always restarted at the last dip.
-        let series = points([(0, 0.5), (1, 0.4)])
-        #expect(UsageTrend.rate(of: \.weeklyAll, in: series, since: start) == 0)
+    func aCorrectionAtTheEndLeavesNothingToMeasureRatherThanAFlatRate() {
+        // Both readings of the period go *down*, so its lowest is the last one and there is no
+        // span to measure over. Reporting zero instead would put a flat dashed line on the
+        // timeline promising the account finishes the week exactly where it stands.
+        #expect(UsageTrend.rate(of: \.weeklyAll, in: points([(0, 0.5), (1, 0.4)]), since: start) == nil)
+    }
+
+    @Test
+    func oneHighReadingDoesNotPoisonTheWholePeriod() {
+        // Taking the period's *first* sample as the baseline let a single spurious high reading
+        // clamp every honest one after it to a zero rate — for the rest of the week. The period's
+        // lowest reading is where it actually began.
+        let series = points([(0, 0.85), (1, 0.10), (25, 0.34)])
+        #expect(isClose(
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.24 / (24 * Self.hour)
+        ))
     }
 
     @Test

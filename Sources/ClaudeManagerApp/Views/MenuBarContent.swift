@@ -101,7 +101,17 @@ struct MenuBarContent: View {
             // placeholder) — see #31 for why this isn't migrated to `activate()`.
             NSApp.activate(ignoringOtherApps: true)
         }
-        Button("Refresh") { Task { await model.refresh() } }
+        // Also refreshes usage, which is what makes the rows above reachable at all under
+        // "Manually only": nothing polls then, so after every launch `usageByBinding` is empty
+        // and the answers stay hidden with no windowless way to fill them. Interactive, because
+        // this is a user gesture — the one path allowed to raise the keychain prompt — and the
+        // service's own 60s floor keeps a mashed menu from hammering the API.
+        Button("Refresh") {
+            Task {
+                await model.refresh()
+                if model.usageTrackingEnabled { await model.refreshUsage(interactive: true) }
+            }
+        }
         // Gated like every other item that needs Claude: with the app missing there is no
         // version to compare a release against, and the item would answer a press with a
         // second banner about an unreadable *version* beside the one saying Claude.app was
