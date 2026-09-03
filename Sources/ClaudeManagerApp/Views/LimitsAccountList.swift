@@ -201,7 +201,14 @@ struct LimitsAccountList: View {
     /// date three days out, and this is the one surface whose stated job is to expose the
     /// decision's inputs. Dimmed, because nothing measured against it.
     private func retainedReset(_ row: UsageCandidate) -> Date? {
-        guard row.weeklyResetsAt == nil, let snapshot = row.account.snapshot else { return nil }
+        // **Only where the ranking never looked.** `weeklyResetsAt` is nil for two different
+        // reasons and this fallback is right for exactly one of them: an account waiting on a
+        // person, whose snapshot `assess` answered before reading. The other is an account that
+        // *was* read and whose binding window simply reported no live reset — there the ranking
+        // deliberately declines to borrow a sibling window's date, and filling the cell from one
+        // anyway puts a countdown under a quota it does not belong to.
+        guard UsageOverview.needsUser(row.account.state),
+              let snapshot = row.account.snapshot else { return nil }
         // Both weekly windows, not just the all-models one. A snapshot can carry a per-model
         // weekly whose reset is the only date in it — and the cell then said "unknown" over a
         // perfectly good deadline sitting in the very snapshot it was reading, which is the one
