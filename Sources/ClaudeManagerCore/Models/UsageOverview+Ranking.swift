@@ -134,8 +134,17 @@ extension UsageOverview {
         among limits: [UsageLimit],
         now: Date
     ) -> (state: CandidateState, limit: UsageLimit)? {
-        let gating = limits.filter { $0.displaySeverity == .critical }
-        guard let blocker = blocksLongest(gating, now: now) else { return nil }
+        // A window whose reset has passed reports a window that is gone, and its percentage may
+        // no more raise a verdict than lower one — `bind` refuses those same figures. Left in, an
+        // eight-day-old `.fresh` snapshot pinned an account at `out` over a week that had
+        // certainly reset, with no countdown to say when it would end. Windows reset
+        // independently, so the siblings with live clocks still gate on their own figures.
+        let current = limits.filter { limit in
+            guard let resetsAt = limit.resetsAt else { return true }
+            return resetsAt > now
+        }
+        let gating = current.filter { $0.displaySeverity == .critical }
+        guard let blocker = blocksLongest(gating) else { return nil }
         // The session check comes **first**, and being full does not promote it out of this
         // arm. The 5-hour window is a gate and nothing more: it refills within hours, so it must
         // not sink an account the way a spent week does. Asking about exhaustion first read a
@@ -154,18 +163,14 @@ extension UsageOverview {
     /// A window that reported no reset blocks longest of all: nothing said it frees, so nothing
     /// may promise it does. Fully ordered (reset, then utilization, then the window's own
     /// identity) so the row a reader sees does not depend on the order the server listed them in.
-    static func blocksLongest(_ limits: [UsageLimit], now: Date) -> UsageLimit? {
+    /// Windows whose own period has ended are filtered out before this — they are not blockers.
+    static func blocksLongest(_ limits: [UsageLimit]) -> UsageLimit? {
         limits.min { lhs, rhs in
-            // A reset that has already passed is read as *unknown*, exactly as a missing one is.
-            // Compared raw it sorted as the shortest block and lost to every future date — so an
-            // exhausted week whose reset had elapsed handed the row to a session freeing in
-            // fifteen minutes, and the window with no known return went unmentioned. That is the
-            // failure this function was written for, wearing a different date.
-            let leftReset = liveReset(lhs, now: now)
-            let rightReset = liveReset(rhs, now: now)
-            if leftReset != rightReset {
-                guard let left = leftReset else { return true }
-                guard let right = rightReset else { return false }
+            // Only windows still in their own period reach here, so a missing reset is the one
+            // unknown left — and unknown blocks longest, since nothing said it frees.
+            if lhs.resetsAt != rhs.resetsAt {
+                guard let left = lhs.resetsAt else { return true }
+                guard let right = rhs.resetsAt else { return false }
                 return left > right
             }
             if lhs.utilization != rhs.utilization { return lhs.utilization > rhs.utilization }

@@ -81,13 +81,12 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
     /// The counted weekly window that actually constrains this account — the one with the least
     /// headroom, not the fullest — and the figure the copy quotes.
     public var bindingWeekly: UsageLimit?
-    /// The reset `headroom` was actually measured against — the binding window's own, or a
-    /// sibling weekly window's where it reported none.
+    /// The reset `headroom` was measured against: the binding window's own, and nil where that
+    /// window had no live clock of its own.
     ///
     /// Carried rather than re-derived because the two consumers disagreed the moment they each
-    /// looked it up: the pace was computed from the fallback while the sentence read only the
-    /// binding window's own field, so a scoped window that reported no reset produced a
-    /// confident "use it or lose it" with the countdown behind it silently dropped.
+    /// looked it up — the pace was computed one way and the sentence explaining it another, so a
+    /// row could read "use it or lose it" with the countdown behind it silently dropped.
     public var weeklyResetsAt: Date?
     /// The window that put this candidate out of the running, for a gated state.
     public var gatingLimit: UsageLimit?

@@ -74,7 +74,12 @@ public extension UsageOverview {
         case .needsAttention:
             UsagePresentation.stateNote(candidate.account, now: now)
         case .noData:
-            "no usage read yet"
+            // `.offline` and `.rateLimited` reach this state too, on a first pass that never got
+            // a snapshot — and `UsagePresentation` can name either. Only a genuinely `.fresh`
+            // binding with nothing stored has no reason to give beyond the absence itself.
+            candidate.account.state == .fresh
+                ? "no usage read yet"
+                : UsagePresentation.stateNote(candidate.account, now: now)
         case .out, .nearlyOut, .sessionNearlyFull:
             gatedReason(for: candidate, now: now)
         case .spend, .onPace, .burningFast, .paceUnknown:
@@ -102,10 +107,9 @@ public extension UsageOverview {
         guard let limit = candidate.bindingWeekly else { return stateLabel(candidate.state) }
         let left = UsageFormat.percent(1 - limit.utilization)
         let head = "\(left) of \(limit.shortLabel) left"
-        // The reset the pace was actually measured against, not the binding window's own field:
-        // a scoped window that reported none still belongs to a week, and reading only its own
-        // field dropped the countdown from exactly the rows whose claim depends on it — leaving
-        // a confident "use it or lose it" with nothing saying when.
+        // The reset the pace was actually measured against. Re-deriving it here is what let the
+        // countdown fall out of exactly the rows whose claim depends on it, leaving a confident
+        // "use it or lose it" with nothing saying when.
         guard UsagePresentation.showsReset(candidate.weeklyResetsAt, now: now),
               let resetsAt = candidate.weeklyResetsAt else { return head }
         let clock = UsageFormat.compactDuration(resetsAt.timeIntervalSince(now))

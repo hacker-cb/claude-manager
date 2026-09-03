@@ -166,16 +166,20 @@ struct UsageOverviewOrderingTests {
     }
 
     @Test
-    func anElapsedGateReadsAsAnUnknownReturnNotAnImminentOne() {
-        // A past reset sorted ahead of every future one, so the account whose availability is
-        // actually unknown was presented as the one coming back first — while the copy and
-        // `soonestReturn` were separately careful to ignore that same date.
+    func anElapsedGateStopsGatingRatherThanPinningTheAccountAtOut() {
+        // Once a window's own period has ended, its figures cannot hold an account down: the
+        // week has certainly reset and nothing has re-read it. The account that is *known* to be
+        // out stays out; the one whose evidence expired is merely unrateable, which is a better
+        // place in the list, not a worse one.
         let overview = rank([
             account("elapsed", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -7200)]),
             account("known", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 600)])
         ])
-        #expect(overview.candidates.map(\.id) == ["known", "elapsed"])
-        #expect(overview.candidates.last?.freesAt == nil)
+        #expect(overview.candidates.map(\.id) == ["elapsed", "known"])
+        #expect(overview.candidates.first?.state == .paceUnknown)
+        #expect(overview.candidates.first?.canLead == false)
+        #expect(overview.candidates.last?.state == .out)
+        #expect(overview.soonestReturn == now.addingTimeInterval(600))
     }
 
     @Test
@@ -224,18 +228,18 @@ struct UsageOverviewOrderingTests {
     }
 
     @Test
-    func anExhaustedWindowWhoseResetElapsedBlocksLongestOfAll() {
-        // Compared raw, a past date sorted as the shortest block and lost to every future one —
-        // so the window with no known return went unmentioned behind a session freeing in
-        // fifteen minutes. An elapsed reset reads as unknown, exactly as a missing one does.
+    func aLiveGateIsNotHiddenBehindAnExpiredOne() {
+        // The session is live and genuinely blocking; the week's 100% is from a period that
+        // ended five hours ago. Letting the expired figure name the blocker printed "7d 100%"
+        // with no countdown and left the real, dated wait unmentioned.
         let overview = rank([account("a", limits: [
-            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -3600),
+            limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -5 * 3600),
             limit(UsageLimit.kindSession, 0.95, resetsIn: 900)
         ])])
         let candidate = overview.candidates.first
-        #expect(candidate?.gatingLimit?.isWeeklyAll == true)
-        #expect(candidate?.freesAt == nil)
-        #expect(candidate?.state == .out)
+        #expect(candidate?.state == .sessionNearlyFull)
+        #expect(candidate?.gatingLimit?.isSession == true)
+        #expect(candidate?.freesAt == now.addingTimeInterval(900))
     }
 
     // MARK: - The ordering is a real ordering

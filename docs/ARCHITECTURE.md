@@ -461,7 +461,10 @@ Six rules carry the weight, each with a test:
   A counted window at 100% puts the account `out`; anything the app would draw red is
   `nearlyOut`, so the board can never send someone to a red bar. Where several windows gate at
   once the one reported is the one that **blocks longest**, since that is when work can go
-  there again; the state still names the most severe. The **5-hour window gates and nothing
+  there again; the state still names the most severe. A window whose own period has ended does
+  not gate at all — its percentage describes a week that is over, and it may no more raise a
+  verdict than lower one, so an eight-day-old snapshot no longer pins an account at `out` over a
+  week that has certainly reset. The **5-hour window gates and nothing
   more, at any percentage**: it refills within hours, and charging it against the week would
   move someone to another profile every session — a chat's context spent on a wait measured in
   minutes. Asking about exhaustion first read a full session as a spent week, which is that

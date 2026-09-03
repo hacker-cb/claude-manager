@@ -171,13 +171,14 @@ struct UsageOverviewCopyTests {
     }
 
     @Test
-    func anElapsedResetDropsTheCountdownRatherThanCountingBackwards() throws {
-        // The same discipline the panes apply: a window whose reset has passed prints no
-        // countdown at all, instead of a permanent "resetting…" or a negative figure.
+    func anElapsedWindowStopsBeingAVerdictAtAll() throws {
+        // Its percentage describes a week that is over, so it may no more raise a verdict than
+        // lower one: the account is not called `out` on it, and the row falls back to the figure
+        // with no countdown rather than a permanent "resetting…".
         let text = try reason(account("a", limits: [
             limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -3600)
         ]))
-        #expect(text == "7d 100%")
+        #expect(text == "0% of 7d left")
     }
 
     @Test
