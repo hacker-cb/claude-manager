@@ -21,6 +21,9 @@ enum PreferenceKeys {
     static let usageAdaptiveEnabled = "usageAdaptiveEnabled"
     /// Whether limit-approaching reminders are posted. On by default.
     static let usageNotificationsEnabled = "usageNotificationsEnabled"
+    /// The Limits page's work mode, as a `WorkMode` raw value. Unset reads as the scoped one:
+    /// the per-model week is the scarcer budget, so it is the more useful default to open on.
+    static let limitsMode = "limitsMode"
 
     /// Launcher+version keys whose "restart to update" notification has been posted. Persisted
     /// because it started mattering the moment notifications became visible while the app is

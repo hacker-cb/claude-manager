@@ -63,6 +63,14 @@ The first time you re-activate an *already-running* profile, macOS asks for
   closing the window keeps Claude Manager in the menu bar (reopen and quit from the menu
   bar icon). Launched at login, it starts quietly in the menu bar. Optional **Launch at
   login** in **Settings → Startup** (off by default).
+- **Limits — where to work now.** The window opens on a page that ranks your accounts
+  by which limit budget expires first, not by which shows the lowest percentage: a weekly
+  window's leftovers do not roll over, so the account whose remaining budget is about to
+  be lost is the one to spend. Separate answers for work that draws on a per-model weekly
+  limit and work that does not, a timeline of every account's week (a week behind, a week
+  ahead, with the projected trend), and a button to open the profile it recommends. The
+  same two answers sit at the top of the menu bar, needing no window at all. Requires
+  usage tracking (below).
 - **Doctor** — health checks for the real app, each launcher, orphaned profile
   dirs, version skew, and duplicate running instances.
 - **Rebuild launchers** — regenerate a launcher (script + Info.plist + badge icon)

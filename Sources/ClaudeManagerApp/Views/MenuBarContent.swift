@@ -14,6 +14,15 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
+            // The answer rows sit inside this branch on purpose, and a review asked why: the
+            // ranking is information, so why withhold it while the app is missing? Because every
+            // one of these rows *is* its button — the launchers `exec` that binary, so with it
+            // gone there is nowhere to send the work the row recommends. This menu in that state
+            // is a diagnostic, and a confident "take Fable work to Alice" above the line saying
+            // Claude.app was not found makes the state less legible rather than more. The page
+            // answers differently because it is a report rather than a two-row answer: it keeps
+            // the account on screen with its figures and marks the profile unopenable.
+            nowRows
             claudeUpdateItems
             // Profiles — the default profile first, then each clone, as one uniform list.
             // The default keeps its own person glyph (filled when running, mirroring the
@@ -100,7 +109,14 @@ struct MenuBarContent: View {
             // placeholder) — see #31 for why this isn't migrated to `activate()`.
             NSApp.activate(ignoringOtherApps: true)
         }
-        Button("Refresh") { Task { await model.refresh() } }
+        // Also refreshes usage, which is what makes the rows above reachable at all under
+        // "Manually only": nothing polls then, so after every launch `usageByBinding` is empty
+        // and the answers stay hidden with no windowless way to fill them. Interactive, because
+        // this is a user gesture — the one path allowed to raise the keychain prompt — and the
+        // service's own 60s floor keeps a mashed menu from hammering the API.
+        Button("Refresh") {
+            Task { await model.refreshAfterLocating() }
+        }
         // Gated like every other item that needs Claude: with the app missing there is no
         // version to compare a release against, and the item would answer a press with a
         // second banner about an unreadable *version* beside the one saying Claude.app was
@@ -112,6 +128,104 @@ struct MenuBarContent: View {
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    /// The answer, at the top of the menu: which profile to take work to, per mode.
+    ///
+    /// The menu is where this question is actually asked most of the time — it needs no window
+    /// and no Dock icon — so the page's headline lives here as two rows that open the profile
+    /// they name. The menu is rebuilt on every open, so what they say is as current as a ticker
+    /// would make it.
+    ///
+    /// Only where the two modes can differ: on a plan reporting no per-model window they would be
+    /// two rows with one answer between them.
+    @ViewBuilder
+    private var nowRows: some View {
+        if model.usageTrackingEnabled {
+            if model.limitsAccounts.isEmpty {
+                // Say it rather than vanish — the same rule the rows themselves follow when the
+                // ranking has no leader, applied one state further out. The page spells both of
+                // these cases out; the menu used to show nothing at all, and it is the surface
+                // with no other way to find out, since a menu-bar-only session has no window to
+                // open and no banner to read.
+                Text(nothingToRankNote)
+            } else {
+                let now = Date()
+                let modes: [WorkMode] = model.limitsHasScopedWindows
+                    ? WorkMode.allCases
+                    : [model.limitsEffectiveMode]
+                ForEach(modes, id: \.self) { mode in
+                    nowRow(mode: mode, now: now)
+                }
+            }
+            Divider()
+        }
+    }
+
+    /// Which of the two empty states this is. Refreshing fixes one of them and cannot touch the
+    /// other, so telling a signed-out fleet to Refresh would send it round the same loop — the
+    /// distinction the page's own empty state draws, in one line's worth of room.
+    private var nothingToRankNote: String {
+        guard let blocking = model.limitsBlockingFailures.first else {
+            return "Where to work: no usage read yet"
+        }
+        return "Where to work: \(blocking)"
+    }
+
+    @ViewBuilder
+    private func nowRow(mode: WorkMode, now: Date) -> some View {
+        let overview = model.limitsOverview(mode: mode, now: now)
+        let label = model.limitsModeLabel(mode)
+        // The two questions are asked separately on purpose. Folded into one `if let` chain, a
+        // leader whose profiles could not be resolved fell into the else and announced an
+        // exhausted fleet — reporting "nobody" where a recommendation actually existed.
+        if let leader = overview.leader {
+            let entries = model.limitsProfiles(of: leader.account)
+            let text = "\(label) → \(model.limitsAccountName(leader.account))"
+                + "  ·  \(UsageOverview.reason(for: leader, now: now))"
+            if entries.count == 1, let entry = entries.first {
+                Button { open(entry) } label: {
+                    Label(text, systemImage: "arrow.right.circle")
+                }
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
+            } else if entries.count > 1 {
+                // A login several launchers share: the ranking chose the *account*, and which
+                // window to open it in is the person's call — taking the first silently activated
+                // an arbitrary workspace.
+                Menu {
+                    ForEach(entries) { entry in
+                        Button(profileName(entry)) { open(entry) }
+                    }
+                } label: {
+                    Label(text, systemImage: "arrow.right.circle")
+                }
+                .disabled(model.claudeUpdateState.blocksProfileActivity)
+            } else {
+                Button {} label: { Label(text, systemImage: "arrow.right.circle") }
+                    .disabled(true)
+            }
+        } else {
+            // Nil is a real answer, and a menu row that silently vanished when the fleet ran out
+            // would read as the feature being broken rather than as the fleet being spent.
+            Button {} label: {
+                Label("\(label) → nobody right now", systemImage: "arrow.right.circle")
+            }
+            .disabled(true)
+        }
+    }
+
+    private func profileName(_ entry: ProfileEntry) -> String {
+        switch entry {
+        case .primary: "Default profile"
+        case let .clone(managed): managed.profile.displayName
+        }
+    }
+
+    private func open(_ entry: ProfileEntry) {
+        switch entry {
+        case .primary: Task { await model.openReal() }
+        case let .clone(managed): Task { await model.open(managed.profile) }
+        }
     }
 
     /// Ask for Claude's update from the menu bar, with a window open to answer in.

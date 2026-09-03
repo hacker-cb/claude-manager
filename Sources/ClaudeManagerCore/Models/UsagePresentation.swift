@@ -115,11 +115,39 @@ public enum UsagePresentation {
         for id in byBinding.keys.sorted() {
             guard let entry = byBinding[id] else { continue }
             let uuid = entry.identity.uuid
-            // Ascending ids plus `>=` settle a tie on fan-out width toward the lowest binding id.
-            if let held = best[uuid], held.bindingIDs.count >= entry.bindingIDs.count { continue }
+            guard let held = best[uuid] else {
+                best[uuid] = entry
+                continue
+            }
+            if held.bindingIDs.count != entry.bindingIDs.count {
+                if held.bindingIDs.count > entry.bindingIDs.count { continue }
+            } else if usefulness(held) != usefulness(entry) {
+                // Equal fan-out, so the tie falls to *usefulness*. Settled on the binding id
+                // alone, a transient per-binding failure sorting first could make the whole
+                // account read as needing a sign-in while a usable sibling sat right behind it.
+                if usefulness(held) > usefulness(entry) { continue }
+            } else {
+                // Ascending ids plus this `continue` settle what is left toward the lowest id.
+                continue
+            }
             best[uuid] = entry
         }
         return best.keys.sorted().compactMap { best[$0] }
+    }
+
+    /// How well an entry speaks for its login, at equal fan-out. Higher wins.
+    ///
+    /// **Three rungs, not two.** A single `.fresh` test looked sufficient and is not: a login
+    /// whose token failed to resolve on one binding while another returned `.stale`, `.offline`
+    /// or `.rateLimited` figures gives both entries the same fan-out and neither the top rung —
+    /// so the tie fell back to the lowest id, and a lexicographically earlier failure could carry
+    /// `.needsAttention` into the ranking while the sibling's perfectly readable retained
+    /// snapshot went unused. The middle rung is exactly `UsageOverview.needsUser`'s line: an
+    /// account waiting on a person has no figures anything will read, and one that is merely out
+    /// of date has.
+    private static func usefulness(_ usage: AccountUsage) -> Int {
+        guard !UsageOverview.needsUser(usage.state) else { return 0 }
+        return usage.state == .fresh ? 2 : 1
     }
 
     /// The member profile to name a login after, when the login itself has no name yet.
