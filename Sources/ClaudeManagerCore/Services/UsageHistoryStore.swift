@@ -71,10 +71,15 @@ public actor UsageHistoryStore {
     ///
     /// The handle stays **private**, and that is the point. Widening it to reach the timeline's
     /// read from another file also handed the whole module an `OpaquePointer` — which is
-    /// `Sendable` — so anything could have awaited it and then used the connection off the
-    /// actor, breaking the one-connection-per-thread rule that macOS `libsqlite3` imposes and
-    /// that the comment beside it merely asserted. A closure cannot escape the isolation the way
-    /// a returned pointer can.
+    /// `Sendable` — so any caller could await the property and then use the connection off the
+    /// actor, breaking the one-connection-per-thread rule macOS `libsqlite3` imposes.
+    ///
+    /// This does not make that impossible: `withConnection { $0 }` would hand the pointer
+    /// straight back out, and nothing in the type system stops it. What it does is remove the
+    /// module-wide handle and leave one narrow, documented way in, whose obvious use — run the
+    /// statements inside the closure — is the correct one. The invariant is still a convention;
+    /// this is what makes following it the path of least resistance rather than an extra thing
+    /// to remember.
     func withConnection<T>(_ body: (OpaquePointer) -> T) -> T? {
         guard let db else { return nil }
         return body(db)
