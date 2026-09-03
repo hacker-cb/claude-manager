@@ -242,6 +242,24 @@ struct UsageOverviewOrderingTests {
         #expect(candidate?.freesAt == now.addingTimeInterval(900))
     }
 
+    @Test
+    func anUnrateableAccountSortsBelowADatedConstraint() {
+        // `paceUnknown` is not gated, but it is the state where nothing can be vouched for. A
+        // profile briefly blocked that says exactly when it frees is more use in this list than
+        // one nobody can speak for — and the account that is *known* to be spent is below both.
+        let overview = rank([
+            account("unrateable", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: -600)]),
+            account("session", limits: [
+                limit(UsageLimit.kindSession, 0.95, resetsIn: 900),
+                limit(UsageLimit.kindWeeklyAll, 0.2, resetsIn: halfWeek)
+            ]),
+            account("spent", limits: [limit(UsageLimit.kindWeeklyAll, 1.0, resetsIn: 600)])
+        ])
+        #expect(overview.candidates.map(\.id) == ["session", "unrateable", "spent"])
+        #expect(overview.candidates[1].state == .paceUnknown)
+        #expect(overview.candidates[1].canLead == false)
+    }
+
     // MARK: - The ordering is a real ordering
 
     @Test

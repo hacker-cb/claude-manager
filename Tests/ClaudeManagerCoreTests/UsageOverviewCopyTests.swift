@@ -91,6 +91,27 @@ struct UsageOverviewCopyTests {
     }
 
     @Test
+    func anAccountNeedingAPersonCannotJustifyTheModeToggle() {
+        // It keeps its last snapshot, but the ranking answers `.needsAttention` before reading
+        // that snapshot — so its scoped windows move neither mode, and offering a toggle between
+        // two identical answers on their account is a control that does nothing.
+        let signedOut = AccountUsage(
+            identity: AccountIdentity(uuid: "a"),
+            snapshot: UsageSnapshot(limits: [
+                limit(UsageLimit.kindWeeklyScoped, 0.2, resetsIn: halfWeek, model: "Fable")
+            ], capturedAt: now),
+            state: .noSource(.signedOut),
+            bindingIDs: ["a"]
+        )
+        #expect(UsageOverview.hasScopedWindows(in: [signedOut]) == false)
+        // ...while a healthy account carrying the same window does justify it.
+        let healthy = account("b", limits: [
+            limit(UsageLimit.kindWeeklyScoped, 0.2, resetsIn: halfWeek, model: "Fable")
+        ])
+        #expect(UsageOverview.hasScopedWindows(in: [signedOut, healthy]) == true)
+    }
+
+    @Test
     func withNoScopedWindowTheModesCannotDiffer() {
         // A plan reporting no per-model window makes the toggle a control that does nothing —
         // the surfaces gate on this rather than offering two identical answers.

@@ -30,8 +30,16 @@ public extension UsageOverview {
     /// Whether the two modes can differ at all. On a plan that reports no scoped window, both
     /// count exactly the same windows — so a surface should show one answer, not a toggle
     /// between two identical ones.
+    ///
+    /// Only accounts whose snapshot the ranking actually reads count. A binding that needs a
+    /// person keeps its last snapshot, but `assess` answers `.needsAttention` before looking at
+    /// it, so its scoped windows cannot move either ranking — and where such an account was the
+    /// only one carrying them, the toggle offered a choice between two identical answers.
     static func hasScopedWindows(in accounts: [AccountUsage]) -> Bool {
-        !accounts.allSatisfy { ($0.snapshot?.weeklyScoped ?? []).isEmpty }
+        accounts.contains { account in
+            guard !needsUser(account.state) else { return false }
+            return !(account.snapshot?.weeklyScoped ?? []).isEmpty
+        }
     }
 
     /// What to call a mode: the reported model names for the scoped one ("Fable work"), and

@@ -43,7 +43,7 @@ public extension UsageHistoryStore {
     /// that is not a usable positive number, or an account with nothing recorded all return no
     /// points rather than failing the caller.
     func series(accountUUID: String, since: Date, step: TimeInterval) -> [UsageSeriesPoint] {
-        guard let db, step > 0 else { return [] }
+        guard step > 0 else { return [] }
         // `Int64(_:)` **traps** on a value it cannot represent, and `step > 0` lets `.infinity`
         // and anything past `Int64.max / 1000` through — so the obvious conversion takes the
         // process down on a caller's arithmetic slip, in a read whose whole contract is to
@@ -69,25 +69,27 @@ public extension UsageHistoryStore {
         ) WHERE rank=1
         ORDER BY captured_at
         """
-        guard let stmt = Self.prepare(db, sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        Self.bind(stmt, 1, text: accountUUID)
-        Self.bind(stmt, 2, int: Self.millis(since))
-        Self.bind(stmt, 3, int: bucket)
-        var points: [UsageSeriesPoint] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let json = Self.text(stmt, 1), let snapshot = Self.decodeSnapshot(json) else {
-                continue
-            }
-            points.append(
-                UsageSeriesPoint(
-                    at: Self.date(fromMillis: sqlite3_column_int64(stmt, 0)),
-                    session: snapshot.session?.utilization,
-                    weeklyAll: snapshot.weeklyAll?.utilization,
-                    weeklyScoped: snapshot.weeklyScoped.map(\.utilization).max()
+        return withConnection { db -> [UsageSeriesPoint] in
+            guard let stmt = Self.prepare(db, sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            Self.bind(stmt, 1, text: accountUUID)
+            Self.bind(stmt, 2, int: Self.millis(since))
+            Self.bind(stmt, 3, int: bucket)
+            var points: [UsageSeriesPoint] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let json = Self.text(stmt, 1), let snapshot = Self.decodeSnapshot(json) else {
+                    continue
+                }
+                points.append(
+                    UsageSeriesPoint(
+                        at: Self.date(fromMillis: sqlite3_column_int64(stmt, 0)),
+                        session: snapshot.session?.utilization,
+                        weeklyAll: snapshot.weeklyAll?.utilization,
+                        weeklyScoped: snapshot.weeklyScoped.map(\.utilization).max()
+                    )
                 )
-            )
-        }
-        return points
+            }
+            return points
+        } ?? []
     }
 }

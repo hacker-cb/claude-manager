@@ -46,20 +46,30 @@ public enum CandidateState: Sendable, Equatable, CaseIterable {
     /// Tracked, but nothing has been read for it yet.
     case noData
 
-    /// Ordering lane. Lower sorts first, and only lane 0 is a *ranking* — everything above it
-    /// is a reason to be out of the running, ordered by how soon it stops being one.
+    /// Ordering lane. Lower sorts first, and only lane 0 is a *ranking* — everything below it
+    /// is a reason to be out of the running, ordered by how much is known about when it stops
+    /// being one.
+    ///
+    /// `paceUnknown` sits below the two dated constraints on purpose. It is not gated, but it is
+    /// the state in which nothing can be vouched for — a window that rolled over leaves the
+    /// account's current standing unread — and a list answering "where should work go" is more
+    /// use with a profile that is briefly blocked and says exactly when it frees than with one
+    /// nobody can speak for. `out` still sits below it: that one is known to be spent.
     var order: Int {
         switch self {
-        case .spend, .onPace, .burningFast, .paceUnknown: 0
+        case .spend, .onPace, .burningFast: 0
         case .sessionNearlyFull: 1
         case .nearlyOut: 2
-        case .out: 3
-        case .needsAttention: 4
-        case .noData: 5
+        case .paceUnknown: 3
+        case .out: 4
+        case .needsAttention: 5
+        case .noData: 6
         }
     }
 
-    /// Whether this state describes an account work can actually go to.
+    /// Whether this state is a *rated* position — a budget measured against a clock — rather
+    /// than a constraint or an absence of information. This is what `canLead` gates on, so a
+    /// state that cannot be rated cannot become the answer.
     public var isUsable: Bool {
         order == 0
     }

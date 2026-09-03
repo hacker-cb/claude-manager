@@ -482,22 +482,24 @@ Six rules carry the weight, each with a test:
   remainder to zero read a spent quota as a full week of room, and a `.fresh` snapshot reaches
   that state routinely — it is the standing condition of a "Manually only" fleet and of
   anything re-served inside the poll floor. Such a window keeps its figure and loses its pace
-  claim; an elapsed *gate* reads as an unknown return rather than an imminent one, so it blocks
-  longest rather than shortest. **A window is measured against its own deadline, never a
-  sibling's, and never dropped.** Borrowing was tried in both directions and is wrong in both,
+  claim, and does not gate either. "Blocks longest" is then a rule about a window that reported
+  **no** reset at all: nothing said it frees, so nothing may promise it does. **A window is
+  measured against its own deadline, never a sibling's, and never dropped.** Borrowing was tried in both directions and is wrong in both,
   since these windows reset independently: an absent reset became a confident recommendation, an
   elapsed one put a spent week back into the ranking. Dropping is wrong too — a scoped window at
   89% with no deadline sat silently behind a live weekly-all at 10% while the account was
   recommended for exactly the work that would spend it. So a window that reported **no** reset is
   taken at its **worst case**, `-utilization`: with the whole week still to run that is precisely
   its headroom, every other clock it could have is roomier, and a lower bound never over-promises
-  where an omission does. A window whose reset has **elapsed** gets neither treatment and
-  withholds the recommendation for the whole account: its percentage belongs to a week that is
+  where an omission does. A window whose reset has **elapsed** gets neither treatment, does not
+  gate, and withholds the recommendation for the whole account: its percentage belongs to a week that is
   over, and the window that replaced it is *unknown* rather than untouched, so ranking on a live
   sibling would recommend work to a quota that may already be spent. Only a `.fresh` snapshot old
   enough to cross a reset reaches that — "Manually only" polling, or an app that slept through
   one — and everything staler is already barred from leading by its own state. There is likewise
-  no claim when nothing has a live clock at all. One reading of "is this
+  no claim when nothing has a live clock at all. Such a row is `paceUnknown`, and it sorts below
+  the two dated constraints — a profile briefly blocked that says exactly when it frees is more
+  use in this list than one nobody can speak for. One reading of "is this
   window still ahead" serves all of it (`UsagePresentation.showsReset`), the rule the panes
   already apply, and the copy re-asks it against the *rendering* clock so a row drawn after a
   reset does not say "back in now".

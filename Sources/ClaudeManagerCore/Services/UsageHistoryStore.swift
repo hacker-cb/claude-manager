@@ -40,10 +40,7 @@ public actor UsageHistoryStore {
     /// A failed open is remembered as a connection with a nil handle rather than retried on every
     /// call, so a broken path degrades once (to the in-memory fallbacks) instead of thrashing.
     ///
-    /// Non-private because the timeline's read lives in `UsageHistoryStore+Series` (another
-    /// file) — the same arrangement `UsageService` uses for its identity half. Still reached only
-    /// from inside the actor, so the one-connection-per-thread rule holds.
-    var db: OpaquePointer? {
+    private var db: OpaquePointer? {
         if let connection { return connection.handle }
         let opened = SQLiteConnection(handle: Self.open(path: path))
         connection = opened
@@ -67,6 +64,20 @@ public actor UsageHistoryStore {
     /// `SQLiteConnection.deinit` when the store is released.
     public init(path: String) {
         self.path = path
+    }
+
+    /// Run `body` with the open connection, on the actor's own executor; nil when the database
+    /// could not be opened, which every caller degrades to an empty result.
+    ///
+    /// The handle stays **private**, and that is the point. Widening it to reach the timeline's
+    /// read from another file also handed the whole module an `OpaquePointer` — which is
+    /// `Sendable` — so anything could have awaited it and then used the connection off the
+    /// actor, breaking the one-connection-per-thread rule that macOS `libsqlite3` imposes and
+    /// that the comment beside it merely asserted. A closure cannot escape the isolation the way
+    /// a returned pointer can.
+    func withConnection<T>(_ body: (OpaquePointer) -> T) -> T? {
+        guard let db else { return nil }
+        return body(db)
     }
 
     // MARK: - Samples

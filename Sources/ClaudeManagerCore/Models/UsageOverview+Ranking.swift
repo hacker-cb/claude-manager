@@ -63,7 +63,10 @@ extension UsageOverview {
 
     /// Whether this state means the binding is waiting on a person rather than on a window.
     /// Exhaustive on purpose — a future case must be classified here, not defaulted.
-    private static func needsUser(_ state: UsageState) -> Bool {
+    ///
+    /// Non-private because `hasScopedWindows` asks the same question: an account this returns
+    /// true for never has its snapshot read, so its windows cannot move either ranking.
+    static func needsUser(_ state: UsageState) -> Bool {
         switch state {
         case .loginNeeded, .noSource: true
         case .fresh, .stale, .rateLimited, .offline: false
