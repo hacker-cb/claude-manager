@@ -20,9 +20,9 @@ public enum UsageTrend {
     /// thinning can put the last pre-reset sample in a bucket whose representative is already the
     /// post-reset one. Both cases average across a boundary that is there.
     ///
-    /// Never negative, and by construction rather than by clamping: the baseline is the period's
-    /// lowest reading, so a decrease within it — the server correcting a figure, never the account
-    /// un-spending anything — cannot pull the rate below zero or draw a quota refilling.
+    /// Never negative, and by construction rather than by clamping: the baseline is never above
+    /// the endpoint, so a decrease within the period — the server correcting a figure, never the
+    /// account un-spending anything — cannot pull the rate below zero or draw a quota refilling.
     public static func rate(
         of window: KeyPath<UsageSeriesPoint, Double?>,
         in points: [UsageSeriesPoint],
@@ -33,7 +33,7 @@ public enum UsageTrend {
             guard let periodStart else { return true }
             return point.at >= periodStart
         }
-        guard usable.last?[keyPath: window] != nil else { return nil }
+        guard let end = usable.last, let latest = end[keyPath: window] else { return nil }
         // A **told** boundary is the boundary: running the drop heuristic inside it as well read
         // every server correction as a fresh period, collapsing a week of history to the hour
         // after one poll reported 0.49 instead of 0.50. The heuristic is the fallback for when
@@ -41,49 +41,75 @@ public enum UsageTrend {
         let period = periodStart == nil
             ? Array(usable[startIndex(of: window, in: usable)...])
             : usable
-        // **Peak to base, and neither is simply an end of the series.** A utilization only grows
-        // within its period, so every dip in one is the server correcting a figure — and a rate
-        // read off the raw endpoints is at the mercy of whichever end the correction lands on.
-        // Both mistakes were made here in turn: anchoring on the first sample let one spuriously
-        // *high* reading clamp the whole week to a flat zero, and anchoring on the period's
-        // lowest let one spuriously *low* one collapse the span to an hour while keeping the
-        // week's whole delta — a 60% account was then forecast to run out in forty minutes.
+        // **The last reading is the endpoint, and the baseline is the first reading not above
+        // it.** Three attempts were made at this before the rule was right, and each of the first
+        // two was undone by the *other* engine's counter-example.
         //
-        // So: drop a leading sample that stands above everything after it — it did not belong to
-        // this period, whether it leaked past a boundary shifted by DST or clock skew or was
-        // simply corrected away. Then measure from what is left, first sample to the **last**
-        // sample reaching its highest value, so a correction at the tail cannot lower the
-        // endpoint and the span stays as long as the evidence allows.
-        func value(_ point: UsageSeriesPoint) -> Double? {
-            point[keyPath: window]
-        }
-        let measured = withoutLeadingOutlier(period, of: window)
-        guard let base = measured.first, let first = value(base),
-              let top = measured.compactMap(value).max(),
-              let peak = measured.last(where: { value($0) == top })
-        else { return nil }
-        let seconds = peak.at.timeIntervalSince(base.at)
-        // Zero span is a period whose peak *is* its baseline — one reading is not a rate.
+        // What makes it hard: a utilization only grows within its period, so every dip in one is
+        // a figure the server has corrected — but from two samples alone there is no telling
+        // whether the earlier one was over-reported or the later one under-reported. Anchoring
+        // on the series' first sample let one spurious *high* reading clamp a whole week to a
+        // flat zero. Anchoring on the period's *lowest* let one spurious low reading collapse the
+        // span to an hour while keeping the week's whole delta, forecasting a 60% account to run
+        // out in forty minutes. Anchoring on the period's *highest* kept an interior spike that
+        // every later reading contradicts — `0.10 → 0.80 → 0.11 → 0.12` measured as if 0.80 had
+        // been real — and, since only a single leading sample was dropped, two leaked pre-reset
+        // samples in a row (`0.50, 0.55, 0.10, 0.15`) were measured entirely inside last week.
+        //
+        // The last reading escapes all of it, because it is the freshest statement of the very
+        // quantity being measured — nothing later contradicts it, and it is where the drawn line
+        // starts in any case. Everything above it is then something later evidence disagrees
+        // with: a corrected spike, or a sample that belongs to a period this one already
+        // replaced. Skipping past all of them leaves the longest run of readings consistent with
+        // where the window actually stands.
+        guard let base = period.first(where: { point in
+            guard let value = point[keyPath: window] else { return false }
+            return value <= latest
+        }), let first = base[keyPath: window] else { return nil }
+        let seconds = end.at.timeIntervalSince(base.at)
+        // Zero span is a period whose baseline *is* its last reading — one point is not a rate,
+        // and neither is a series every earlier sample of which sits above where it ended.
         guard seconds > 0 else { return nil }
-        // Non-negative by construction: the peak is never below the baseline.
-        return (top - first) / seconds
+        return (latest - first) / seconds
     }
 
-    /// The period without a leading sample that stands above everything after it.
+    /// The series split into the runs a line may actually be drawn through.
     ///
-    /// Such a sample is not a baseline: it belongs to the period before this one — leaked past a
-    /// boundary shifted by DST or clock skew — or is a figure the server has since corrected down.
-    /// Anchoring on it clamped a whole week's rate to zero.
-    private static func withoutLeadingOutlier(
-        _ period: [UsageSeriesPoint],
-        of window: KeyPath<UsageSeriesPoint, Double?>
-    ) -> [UsageSeriesPoint] {
-        let rest = period.dropFirst()
-        guard let opening = period.first?[keyPath: window],
-              let restPeak = rest.compactMap({ $0[keyPath: window] }).max(),
-              opening > restPeak
-        else { return period }
-        return Array(rest)
+    /// Two things break a run, and only one of them was obvious. A `nil` value is a window the
+    /// server did not report for a sample it did report — plainly a gap. The other is a stretch
+    /// with **no sample at all**: `UsageHistoryStore.series` emits one row per *populated* bucket
+    /// and nothing for an empty one, so a Mac asleep over a weekend, an app quit, or tracking
+    /// switched off for a day leaves two adjacent points days apart with nothing between them.
+    /// Splitting on `nil` alone therefore missed exactly the case it was written for, and a chart
+    /// drew a confident climb — shaded fill and all — across hours nobody observed.
+    ///
+    /// `maxGap` is what counts as "no sample at all" rather than a missed poll; a caller that
+    /// knows its own cadence should say so in terms of it.
+    public static func runs(
+        of window: KeyPath<UsageSeriesPoint, Double?>,
+        in points: [UsageSeriesPoint],
+        maxGap: TimeInterval
+    ) -> [[UsageSeriesPoint]] {
+        var out: [[UsageSeriesPoint]] = []
+        var current: [UsageSeriesPoint] = []
+        func close() {
+            if !current.isEmpty { out.append(current) }
+            current = []
+        }
+        for point in points {
+            guard point[keyPath: window] != nil else {
+                close()
+                continue
+            }
+            // `maxGap` itself is still a run: a caller expressing a tolerance of "three polls"
+            // means three polls are fine, not that the third one starts a new line.
+            if let last = current.last, point.at.timeIntervalSince(last.at) > maxGap {
+                close()
+            }
+            current.append(point)
+        }
+        close()
+        return out
     }
 
     /// Where the window lands at `target` if it keeps that rate — clamped to 0…1, because a

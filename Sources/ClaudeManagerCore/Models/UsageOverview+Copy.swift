@@ -67,6 +67,34 @@ public extension UsageOverview {
 
     // MARK: - Naming a state
 
+    /// The two or three words a chip prints for a candidate.
+    ///
+    /// Its ranking position where the figures are current, and the **account's own condition**
+    /// where they are not. A `.stale`, `.offline` or `.rateLimited` account keeps its last
+    /// snapshot, so `assess` still gives it a budget state — and a chip reading "Use it or lose
+    /// it" over figures that stopped moving yesterday is advice, dimmed or not. `canLead` already
+    /// refuses such a candidate the lead; this is that same fact where someone reads it.
+    static func stateLabel(for candidate: UsageCandidate, now: Date = Date()) -> String {
+        guard !candidate.isCurrent else { return stateLabel(candidate.state) }
+        switch candidate.state {
+        // Both already speak for the account rather than for a position in the ranking.
+        case .needsAttention, .noData: return stateLabel(candidate.state)
+        default: return condition(candidate.account, now: now)
+        }
+    }
+
+    /// The short form of what is wrong with an account's figures — the chip's width, where
+    /// `UsagePresentation.stateNote` gives the sentence.
+    private static func condition(_ account: AccountUsage, now: Date) -> String {
+        switch account.state {
+        case let .stale(since): "As of \(UsageFormat.age(since, now: now))"
+        case .rateLimited: "Rate limited"
+        case .offline: "Offline"
+        // `needsUser` sends both of these to `.needsAttention`, which never reaches here.
+        case .fresh, .loginNeeded, .noSource: stateLabel(.needsAttention)
+        }
+    }
+
     /// The two or three words a chip prints for a candidate's position.
     static func stateLabel(_ state: CandidateState) -> String {
         switch state {
@@ -93,19 +121,41 @@ public extension UsageOverview {
     static func reason(for candidate: UsageCandidate, now: Date) -> String {
         switch candidate.state {
         case .needsAttention:
-            UsagePresentation.stateNote(candidate.account, now: now)
+            return UsagePresentation.stateNote(candidate.account, now: now)
         case .noData:
             // `.offline` and `.rateLimited` reach this state too, on a first pass that never got
             // a snapshot — and `UsagePresentation` can name either. Only a genuinely `.fresh`
             // binding with nothing stored has no reason to give beyond the absence itself.
-            candidate.account.state == .fresh
-                ? "no usage read yet"
-                : UsagePresentation.stateNote(candidate.account, now: now)
+            guard candidate.account.state == .fresh else {
+                return UsagePresentation.stateNote(candidate.account, now: now)
+            }
+            return "no usage read yet"
         case .out, .nearlyOut, .sessionNearlyFull:
-            gatedReason(for: candidate, now: now)
+            guard candidate.isCurrent else {
+                return datedFigure(for: candidate, limit: candidate.gatingLimit, now: now)
+            }
+            return gatedReason(for: candidate, now: now)
         case .spend, .onPace, .burningFast, .paceUnknown:
-            budgetReason(for: candidate, now: now)
+            guard candidate.isCurrent else {
+                return datedFigure(for: candidate, limit: candidate.bindingWeekly, now: now)
+            }
+            return budgetReason(for: candidate, now: now)
         }
+    }
+
+    /// What is left to say about an account whose figures stopped moving: the last one read, and
+    /// when it was read.
+    ///
+    /// The verdict is what goes — "on pace", "burning fast", "back in 2h" are all claims about a
+    /// window as it stands *now*, and this account has not reported since. The figure survives
+    /// because it is still a fact, correctly dated; the reset survives too, in the list's own
+    /// column, which reads it from the window rather than from a pace.
+    private static func datedFigure(
+        for candidate: UsageCandidate, limit: UsageLimit?, now: Date
+    ) -> String {
+        let note = UsagePresentation.stateNote(candidate.account, now: now)
+        guard let limit else { return note }
+        return "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization)) · \(note)"
     }
 
     private static func gatedReason(for candidate: UsageCandidate, now: Date) -> String {

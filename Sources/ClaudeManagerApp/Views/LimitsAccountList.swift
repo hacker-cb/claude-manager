@@ -55,7 +55,7 @@ struct LimitsAccountList: View {
             Text(model.limitsAccountName(row.account))
                 .font(.callout).bold()
                 .lineLimit(1)
-            Text(UsageOverview.stateLabel(row.state))
+            Text(UsageOverview.stateLabel(for: row, now: now))
                 .font(.caption2)
                 .foregroundStyle(row.canLead ? Color.accentColor : .secondary)
             // Every profile on this login, so a shared account says which windows it means.

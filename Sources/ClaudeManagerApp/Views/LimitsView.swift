@@ -26,7 +26,11 @@ struct LimitsView: View {
             }
         }
         .navigationTitle("Limits")
-        .task {
+        // Keyed on the master switch, not fired once. Turning tracking on while this page is
+        // already the visible one otherwise left every lane empty: a plain `.task` does not re-run
+        // for a state change, and under "Manually only" no poll follows to fill it either — so
+        // the history sat in `usage.db` unread until the user navigated away and back.
+        .task(id: model.usageTrackingEnabled) {
             // The page owns the first load: the poll fills this in afterwards, but a window
             // opened between two ticks would otherwise draw an empty timeline for half an hour.
             await model.loadLimitsSeries()

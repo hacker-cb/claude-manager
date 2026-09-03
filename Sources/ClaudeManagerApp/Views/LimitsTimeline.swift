@@ -88,23 +88,22 @@ struct LimitsTimelineLane: View {
         let value: Double
     }
 
-    /// The drawn line, **split at every gap**. A `nil` sample is a window the server did not
-    /// report, and `UsageSeriesPoint` is explicit that this is a gap rather than a zero — but
-    /// dropping those points with `compactMap` left Charts joining the samples on either side,
-    /// drawing a straight run of usage through a stretch nothing was ever known about.
+    /// How long a hole in the history has to be before it stops being a missed poll and starts
+    /// being a stretch nothing is known about. The slowest configured cadence is hourly and the
+    /// history is thinned to the hour, so three of them tolerates a couple of skipped polls and
+    /// still breaks on a Mac asleep overnight.
+    private var maxGap: TimeInterval {
+        3 * AppModel.limitsHistoryStep
+    }
+
+    /// The drawn line, split at every gap — which `UsageTrend.runs` decides, under tests, because
+    /// what counts as a gap turned out to be a rule rather than a `nil` check.
     private func segments(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [[Plot]] {
-        var out: [[Plot]] = []
-        var current: [Plot] = []
-        for point in points {
-            guard let value = point[keyPath: window] else {
-                if !current.isEmpty { out.append(current) }
-                current = []
-                continue
+        UsageTrend.runs(of: window, in: points, maxGap: maxGap).map { run in
+            run.compactMap { point in
+                point[keyPath: window].map { Plot(at: point.at, value: $0) }
             }
-            current.append(Plot(at: point.at, value: value))
         }
-        if !current.isEmpty { out.append(current) }
-        return out
     }
 
     private func history(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
@@ -201,7 +200,7 @@ struct LimitsTimelineLane: View {
             Text(model.limitsAccountName(candidate.account))
                 .font(.caption).bold()
                 .lineLimit(1)
-            Text(UsageOverview.stateLabel(candidate.state))
+            Text(UsageOverview.stateLabel(for: candidate, now: now))
                 .font(.caption2)
                 .foregroundStyle(candidate.canLead ? Color.accentColor : .secondary)
             Spacer(minLength: 6)
@@ -236,6 +235,17 @@ struct LimitsTimelineLane: View {
                     )
                     .foregroundStyle(Color.accentColor)
                 }
+                // A run of one has no length, so a line draws nothing at all for it. Under
+                // "Manually only" nothing polls, and every refresh days apart is its own run —
+                // the whole lane would have come up blank with the history sitting right there.
+                if run.count == 1, let only = run.first {
+                    PointMark(
+                        x: .value("When", only.at),
+                        y: .value("Used", only.value)
+                    )
+                    .foregroundStyle(Color.accentColor)
+                    .symbolSize(18)
+                }
             }
             ForEach(Array(segments(\.weeklyScoped).enumerated()), id: \.offset) { index, run in
                 ForEach(run) { plot in
@@ -246,6 +256,14 @@ struct LimitsTimelineLane: View {
                     )
                     .foregroundStyle(Color.purple)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                }
+                if run.count == 1, let only = run.first {
+                    PointMark(
+                        x: .value("When", only.at),
+                        y: .value("Per-model", only.value)
+                    )
+                    .foregroundStyle(Color.purple)
+                    .symbolSize(18)
                 }
             }
             ForEach(projection(\.weeklyAll)) { plot in

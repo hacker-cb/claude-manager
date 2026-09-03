@@ -110,21 +110,44 @@ struct UsageTrendTests {
     }
 
     @Test
-    func aCorrectionAtTheTailCannotLowerTheEndpoint() {
+    func aCorrectionAtTheTailKeepsTheSpanItWasMeasuredOver() {
+        // The last reading is taken at its word — it is the freshest statement of the quantity —
+        // but a correction of a percentage point must not shorten what it is measured against.
         let series = points([(0, 0.10), (10, 0.50), (11, 0.49)])
         #expect(isClose(
-            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.40 / (10 * Self.hour)
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.39 / (11 * Self.hour)
         ))
     }
 
     @Test
     func oneHighReadingDoesNotPoisonTheWholePeriod() {
         // Taking the period's *first* sample as the baseline let a single spurious high reading
-        // clamp every honest one after it to a zero rate — for the rest of the week. The period's
-        // lowest reading is where it actually began.
+        // clamp every honest one after it to a zero rate — for the rest of the week.
         let series = points([(0, 0.85), (1, 0.10), (25, 0.34)])
         #expect(isClose(
             UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.24 / (24 * Self.hour)
+        ))
+    }
+
+    @Test
+    func aSpikeEveryLaterReadingContradictsIsNotAnEndpoint() {
+        // Taking the period's *highest* sample kept a figure the server had plainly corrected:
+        // `0.80` between readings of `0.10` and `0.12` was measured as though it had been real,
+        // drawing exhaustion hours out on a window with days left.
+        let series = points([(0, 0.10), (1, 0.80), (2, 0.11), (3, 0.12)])
+        #expect(isClose(
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.02 / (3 * Self.hour)
+        ))
+    }
+
+    @Test
+    func aRunOfLeakedPreResetSamplesIsNotMeasuredInside() {
+        // Dropping a single leading outlier was not the bound it looked like: two samples of the
+        // previous period in a row left the whole rate measured inside last week, so a window
+        // sitting at 15% was drawn running out by tomorrow.
+        let series = points([(0, 0.50), (1, 0.55), (2, 0.10), (3, 0.15)])
+        #expect(isClose(
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.05 / Self.hour
         ))
     }
 
@@ -159,6 +182,62 @@ struct UsageTrendTests {
         ]
         #expect(isClose(UsageTrend.rate(of: \.weeklyAll, in: mixed), 0.2 / (2 * Self.hour)))
         #expect(UsageTrend.rate(of: \.weeklyScoped, in: mixed) == nil)
+    }
+
+    // MARK: - Runs
+
+    @Test
+    func aMissingValueBreaksTheRun() {
+        let series = points([(0, 0.1), (1, nil), (2, 0.3)])
+        let runs = UsageTrend.runs(of: \.weeklyAll, in: series, maxGap: 3 * Self.hour)
+        #expect(runs.count == 2)
+        #expect(runs.map(\.count) == [1, 1])
+    }
+
+    @Test
+    func aStretchWithNoSampleAtAllBreaksTheRun() {
+        // The case splitting on `nil` alone could never catch: the store emits one row per
+        // *populated* bucket and nothing for an empty one, so a Mac asleep over a weekend leaves
+        // two adjacent points days apart — and the chart drew a confident climb between them.
+        let series = points([(0, 0.1), (1, 0.2), (60, 0.9), (61, 0.95)])
+        let runs = UsageTrend.runs(of: \.weeklyAll, in: series, maxGap: 3 * Self.hour)
+        #expect(runs.count == 2)
+        #expect(runs.map(\.count) == [2, 2])
+    }
+
+    @Test
+    func aGapOfExactlyTheToleranceStaysOneRun() {
+        // "Three polls of tolerance" means three polls are fine, not that the third starts a new
+        // line — an off-by-one here breaks a lane on every skipped poll.
+        let series = points([(0, 0.1), (3, 0.2)])
+        #expect(UsageTrend.runs(of: \.weeklyAll, in: series, maxGap: 3 * Self.hour).count == 1)
+    }
+
+    @Test
+    func runsFollowTheirOwnWindow() {
+        // A hole in one window is not a hole in the other: the scoped line breaks where the
+        // scoped value is missing, and the all-models line runs straight through.
+        let series = [
+            UsageSeriesPoint(at: start, session: nil, weeklyAll: 0.1, weeklyScoped: 0.4),
+            UsageSeriesPoint(
+                at: start.addingTimeInterval(Self.hour),
+                session: nil, weeklyAll: 0.2, weeklyScoped: nil
+            ),
+            UsageSeriesPoint(
+                at: start.addingTimeInterval(2 * Self.hour),
+                session: nil, weeklyAll: 0.3, weeklyScoped: 0.6
+            )
+        ]
+        #expect(UsageTrend.runs(of: \.weeklyAll, in: series, maxGap: 3 * Self.hour).count == 1)
+        #expect(UsageTrend.runs(of: \.weeklyScoped, in: series, maxGap: 3 * Self.hour).count == 2)
+    }
+
+    @Test
+    func anEmptySeriesHasNoRuns() {
+        #expect(UsageTrend.runs(of: \.weeklyAll, in: [], maxGap: 3 * Self.hour).isEmpty)
+        #expect(UsageTrend.runs(
+            of: \.weeklyScoped, in: points([(0, 0.1), (1, 0.2)]), maxGap: 3 * Self.hour
+        ).isEmpty)
     }
 
     // MARK: - Projection

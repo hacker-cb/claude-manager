@@ -14,6 +14,14 @@ struct MenuBarContent: View {
         if model.realClaude == nil {
             Text("Claude.app not found")
         } else {
+            // The answer rows sit inside this branch on purpose, and a review asked why: the
+            // ranking is information, so why withhold it while the app is missing? Because every
+            // one of these rows *is* its button — the launchers `exec` that binary, so with it
+            // gone there is nowhere to send the work the row recommends. This menu in that state
+            // is a diagnostic, and a confident "take Fable work to Alice" above the line saying
+            // Claude.app was not found makes the state less legible rather than more. The page
+            // answers differently because it is a report rather than a two-row answer: it keeps
+            // the account on screen with its figures and marks the profile unopenable.
             nowRows
             claudeUpdateItems
             // Profiles — the default profile first, then each clone, as one uniform list.
