@@ -23,12 +23,13 @@ struct LimitsAccountList: View {
         GridItem(.flexible(minimum: 74), alignment: .topLeading)
     ]
 
-    /// A window Anthropic has started reporting that this build has no column for.
+    /// The columns plus one for a window Anthropic has started reporting that this build has no
+    /// column for.
     ///
     /// The ranking counts every limit in a snapshot, known kind or not, so an unrecognised one
     /// can be exactly what gates an account — and the list whose whole job is to expose the
-    /// decision's inputs was the one place it could not be seen. The column appears only when
-    /// there is something to put in it, which on today's payloads is never.
+    /// decision's inputs was the one place it could not be seen. Used only when there is
+    /// something to put in it, which on today's payloads is never.
     ///
     /// Inserted before the last column rather than appended: the cells go out in the order the
     /// headings do, with "Week resets" last, so appending gave that column this one's width and
@@ -101,9 +102,6 @@ struct LimitsAccountList: View {
 
     // MARK: - Windows
 
-    /// One window as a bar plus its figure. `counted: false` dims the column rather than hiding
-    /// it — the row stays the same shape in both modes, and a window that is simply not being
-    /// counted right now is still a fact about the account.
     /// The age of figures whose chip does not already carry it.
     ///
     /// Every state that retains a snapshot indefinitely needs this, not just the ones waiting on
@@ -119,6 +117,10 @@ struct LimitsAccountList: View {
         }
     }
 
+    /// One window as a bar plus its figure. `counted: false` dims the column rather than hiding
+    /// it — the row stays the same shape in both modes, and a window that is simply not being
+    /// counted right now is still a fact about the account. `retained: true` dims it further: the
+    /// figure is the last one read, not the one in force.
     @ViewBuilder
     private func window(_ limit: UsageLimit?, counted: Bool, retained: Bool = false) -> some View {
         if let limit {

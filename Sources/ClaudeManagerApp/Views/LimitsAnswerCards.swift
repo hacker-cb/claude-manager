@@ -34,8 +34,12 @@ struct LimitsAnswerCard: View {
         model.limitsOverview(mode: mode, now: now)
     }
 
+    /// Against the *effective* mode, which is what everything else on the page reads. Compared
+    /// with the stored one, the lone card shown where the modes cannot differ drew itself
+    /// unselected whenever `.otherWork` was the persisted value — an inert grey border on the
+    /// only answer there is, with no control on screen able to change it.
     private var isSelected: Bool {
-        model.limitsMode == mode
+        model.limitsEffectiveMode == mode
     }
 
     var body: some View {
@@ -86,17 +90,15 @@ struct LimitsAnswerCard: View {
         }
     }
 
-    /// One button for a login with one profile; a menu for a login several launchers share, since
-    /// the account is the thing being recommended and only the person knows which window they
-    /// want it in.
-    /// Whether pressing anything here could work.
+    /// Why pressing anything here could not work, or nil when it can.
     ///
     /// The staged-update gate was only half of it. Every launcher `exec`s the installed Claude,
     /// so with it missing `AppModel.open` can do nothing but raise the missing-app error — and
     /// the *default* profile's row disappears from `profileEntries` in that state while clones do
     /// not, so the card fell back to its "unavailable" arm for one and offered a live button for
     /// the other, on the same fact.
-    /// Nil when it can. Two conditions, and the tooltip has to name the right one: folded into a
+    ///
+    /// A reason rather than a flag, because the tooltip has to name the right one: folded into a
     /// single "Claude.app was not found", a disabled button during an install diagnosed a problem
     /// the user did not have.
     private var openBlocked: String? {
@@ -109,6 +111,9 @@ struct LimitsAnswerCard: View {
         return nil
     }
 
+    /// One button for a login with one profile; a menu for a login several launchers share, since
+    /// the account is the thing being recommended and only the person knows which window they
+    /// want it in.
     @ViewBuilder
     private func openButtons(for leader: UsageCandidate) -> some View {
         let entries = model.limitsProfiles(of: leader.account)
