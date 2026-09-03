@@ -141,16 +141,35 @@ struct MenuBarContent: View {
     /// two rows with one answer between them.
     @ViewBuilder
     private var nowRows: some View {
-        if model.usageTrackingEnabled, !model.limitsAccounts.isEmpty {
-            let now = Date()
-            let modes: [WorkMode] = model.limitsHasScopedWindows
-                ? WorkMode.allCases
-                : [model.limitsEffectiveMode]
-            ForEach(modes, id: \.self) { mode in
-                nowRow(mode: mode, now: now)
+        if model.usageTrackingEnabled {
+            if model.limitsAccounts.isEmpty {
+                // Say it rather than vanish — the same rule the rows themselves follow when the
+                // ranking has no leader, applied one state further out. The page spells both of
+                // these cases out; the menu used to show nothing at all, and it is the surface
+                // with no other way to find out, since a menu-bar-only session has no window to
+                // open and no banner to read.
+                Text(nothingToRankNote)
+            } else {
+                let now = Date()
+                let modes: [WorkMode] = model.limitsHasScopedWindows
+                    ? WorkMode.allCases
+                    : [model.limitsEffectiveMode]
+                ForEach(modes, id: \.self) { mode in
+                    nowRow(mode: mode, now: now)
+                }
             }
             Divider()
         }
+    }
+
+    /// Which of the two empty states this is. Refreshing fixes one of them and cannot touch the
+    /// other, so telling a signed-out fleet to Refresh would send it round the same loop — the
+    /// distinction the page's own empty state draws, in one line's worth of room.
+    private var nothingToRankNote: String {
+        guard let blocking = model.limitsBlockingFailures.first else {
+            return "Where to work: no usage read yet"
+        }
+        return "Where to work: \(blocking)"
     }
 
     @ViewBuilder
