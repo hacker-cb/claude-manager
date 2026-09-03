@@ -53,9 +53,12 @@ struct RootView: View {
         .task {
             // Idempotent — `init` also kicks this off window-independently (a login /
             // menu-bar-only launch shows no window, so this `.task` may not run).
-            // Every appearance, not only the first: the scene outlives its window, so a window
-            // closed on a profile and reopened later would otherwise come back where it was left
-            // rather than on the page it is meant to open on.
+            // Every appearance, not only the first — and the `@State` default above does *not*
+            // already cover it. This is a `Window` scene, not a `WindowGroup`: the scene is a
+            // singleton whose state survives its window being closed, so a window closed on a
+            // profile and reopened later comes back where it was left rather than on the page it
+            // is meant to open on. Nothing in an open session re-runs this, so no selection made
+            // while the window stays open is discarded.
             selection = ProfileEntry.limitsID
             await model.performLaunchTasks()
             // Refresh on *every* appearance too: reopening the window after an external

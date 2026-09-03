@@ -68,6 +68,16 @@ struct LimitsTimeline: View {
     }
 }
 
+/// A deadline drawn on a lane, and what it belongs to.
+private struct ResetMark: Identifiable {
+    var id: String {
+        label
+    }
+
+    let at: Date
+    let label: String
+}
+
 /// One account's lane.
 struct LimitsTimelineLane: View {
     @EnvironmentObject private var model: AppModel
@@ -94,9 +104,17 @@ struct LimitsTimelineLane: View {
     }
 
     /// How long a hole in the history has to be before it stops being a missed poll and starts
-    /// being a stretch nothing is known about. The slowest configured cadence is hourly and the
-    /// history is thinned to the hour, so three of them tolerates a couple of skipped polls and
-    /// still breaks on a Mac asleep overnight.
+    /// being a stretch nothing is known about.
+    ///
+    /// Three hours, from the thinning step rather than from the poll interval, and deliberately
+    /// so. The slowest cadence the settings offer is hourly, which puts kept samples an hour
+    /// apart; the tolerance is inclusive, so one missed poll (2h) and two (3h) both stay one run
+    /// and it takes three to break a line. Deriving it from `usagePollIntervalMinutes` was
+    /// considered and lands on the same three hours at every setting the picker has — including
+    /// "Manually only", which has no cadence to derive from.
+    ///
+    /// It is also what `forecast` is given for `staleAfter`, which couples the two on purpose:
+    /// a hole the chart will not draw a line across is not one it should forecast from either.
     private var maxGap: TimeInterval {
         3 * AppModel.limitsHistoryStep
     }
@@ -168,6 +186,34 @@ struct LimitsTimelineLane: View {
         guard candidate.isCurrent else { return false }
         guard window == \.weeklyScoped else { return true }
         return (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1
+    }
+
+    /// The reset lines to draw, and what each belongs to.
+    ///
+    /// One unlabelled rule was right only while the two weekly windows turned over together.
+    /// These reset independently — this fleet reports two whose dates differ — so in scoped mode
+    /// the binding series had no mark at its own deadline while the only mark on the lane pointed
+    /// at the other one's, contradicting both the projection and the resets column beside it.
+    /// Drawn per *drawn* series, and named only where naming them apart is the point.
+    ///
+    /// Only a reset still ahead: one that has passed is not a countdown, and the ranking has
+    /// already stopped reasoning from it.
+    private var resetMarks: [ResetMark] {
+        var found: [ResetMark] = []
+        for (window, name) in [
+            (\UsageSeriesPoint.weeklyAll, "all"),
+            (\UsageSeriesPoint.weeklyScoped, "per-model")
+        ] {
+            guard !segments(window).isEmpty, let at = reset(for: window),
+                  at > now, range.contains(at) else { continue }
+            found.append(ResetMark(at: at, label: "resets · \(name)"))
+        }
+        // Named apart only where naming them apart is the point. Two windows turning over on the
+        // same date are one deadline, and two labels for it is noise on a 62pt lane.
+        guard found.count > 1, Set(found.map(\.at)).count > 1 else {
+            return found.first.map { [ResetMark(at: $0.at, label: "resets")] } ?? []
+        }
+        return found
     }
 
     var body: some View {
@@ -293,14 +339,12 @@ struct LimitsTimelineLane: View {
             RuleMark(x: .value("Now", now))
                 .foregroundStyle(.primary)
                 .lineStyle(StrokeStyle(lineWidth: 1))
-            // Only a reset still ahead is drawn: one that has passed is not a countdown, and the
-            // ranking has already stopped reasoning from it.
-            if let resetsAt = reset(for: \.weeklyAll), resetsAt > now, range.contains(resetsAt) {
-                RuleMark(x: .value("Resets", resetsAt))
+            ForEach(resetMarks) { mark in
+                RuleMark(x: .value("Resets", mark.at))
                     .foregroundStyle(.secondary)
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .annotation(position: .top, alignment: .leading) {
-                        Text("resets").font(.system(size: 8)).foregroundStyle(.secondary)
+                        Text(mark.label).font(.system(size: 8)).foregroundStyle(.secondary)
                     }
             }
         }

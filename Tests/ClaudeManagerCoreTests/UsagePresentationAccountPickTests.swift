@@ -23,6 +23,41 @@ extension UsagePresentationTests {
     }
 
     @Test
+    func aReadableSiblingOutranksOneWaitingOnAPerson() {
+        // Equal fan-out and neither `.fresh`: one binding's token failed to resolve while another
+        // came back offline with figures still on it. A single `.fresh` test left both on the
+        // same rung, so the tie fell to the lowest id — and the lexicographically earlier failure
+        // carried `.needsAttention` into the ranking while the sibling's perfectly readable
+        // retained snapshot went unused.
+        let failed = entry(
+            uuid: "A", state: .noSource(.signedOut), bindingIDs: ["aaa", "zzz"]
+        )
+        let readable = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let picked = UsagePresentation.onePerAccount(["aaa": failed, "zzz": readable])
+        #expect(picked.count == 1)
+        #expect(picked.first?.state == .offline)
+    }
+
+    @Test
+    func aFreshSiblingStillOutranksAReadableOne() {
+        // The top rung survives the middle one being added.
+        let offline = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let fresh = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
+        let picked = UsagePresentation.onePerAccount(["aaa": offline, "zzz": fresh])
+        #expect(picked.first?.state == .fresh)
+    }
+
+    @Test
+    func fanOutStillBeatsUsefulness() {
+        // Usefulness only settles a tie: a fresh row speaking for itself alone must not displace
+        // an offline one speaking for the whole login.
+        let wide = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let narrow = entry(uuid: "A", bindingIDs: ["zzz"])
+        let picked = UsagePresentation.onePerAccount(["aaa": wide, "zzz": narrow])
+        #expect(picked.first?.bindingIDs.count == 2)
+    }
+
+    @Test
     func aDetachedRowNeverSpeaksForALoginThatStillHasMembers() {
         // The Doctor inspector lists logins, so it picks one entry per uuid — and it used to take
         // whichever `Dictionary.values` yielded first, an order Swift reseeds every process. A

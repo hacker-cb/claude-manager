@@ -65,12 +65,26 @@ extension AppModel {
     /// to `.fresh`, a laptop going offline flipped every account to `.stale` and left the row
     /// falling through to "where to work now" as though nothing had ever been read — while
     /// clicking it showed a full board of bars and percentages from those very snapshots.
+    /// Two things the compact form has to carry that a bare percentage cannot. A window whose own
+    /// reset has **passed** is no claim about anything current — the ranking stops measuring
+    /// against it — and the row would otherwise advertise last week's 100% indefinitely. And a
+    /// figure from an account that is not `.fresh` is dated, for the reason every other surface
+    /// on this page dates one.
     var limitsWorstSummary: String? {
-        let worst = limitsAccounts
+        let now = Date()
+        let live = limitsAccounts
             .filter { !UsageOverview.needsUser($0.state) }
-            .compactMap(\.snapshot?.bindingLimit)
-            .max { $0.utilization < $1.utilization }
-        return worst.map(UsageFormat.limitSummary)
+            .compactMap { account -> (account: AccountUsage, limit: UsageLimit)? in
+                guard let limit = account.snapshot?.bindingLimit else { return nil }
+                if let resetsAt = limit.resetsAt, resetsAt <= now { return nil }
+                return (account, limit)
+            }
+        guard let worst = live.max(by: { $0.limit.utilization < $1.limit.utilization })
+        else { return nil }
+        let summary = UsageFormat.limitSummary(worst.limit)
+        guard worst.account.state != .fresh,
+              let capturedAt = worst.account.snapshot?.capturedAt else { return summary }
+        return "\(summary) · as of \(UsageFormat.age(capturedAt, now: now))"
     }
 
     /// What each binding is called, for naming an account after a profile where the login has no

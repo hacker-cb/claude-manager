@@ -48,7 +48,7 @@ struct LimitsAccountList: View {
                 if showsOther { heading("Other") }
                 heading("Week resets")
                 ForEach(rows) { row in
-                    let retained = UsageOverview.needsUser(row.account.state)
+                    let retained = row.account.state != .fresh
                     account(row)
                     window(row.account.snapshot?.session, counted: true, retained: retained)
                     window(row.account.snapshot?.weeklyAll, counted: true, retained: retained)
@@ -96,16 +96,25 @@ struct LimitsAccountList: View {
     /// One window as a bar plus its figure. `counted: false` dims the column rather than hiding
     /// it — the row stays the same shape in both modes, and a window that is simply not being
     /// counted right now is still a fact about the account.
+    /// The age of figures whose chip does not already carry it.
+    ///
+    /// Every state that retains a snapshot indefinitely needs this, not just the ones waiting on
+    /// a person: `.offline` and `.rateLimited` print their condition and no age at all, and this
+    /// row draws their bars at whatever they last said. `.stale` is the exception — its chip *is*
+    /// "As of 3h ago" — and repeating that directly beneath it says one thing twice.
     private func retainedAge(_ row: UsageCandidate) -> String? {
-        guard UsageOverview.needsUser(row.account.state),
-              let capturedAt = row.account.snapshot?.capturedAt else { return nil }
-        return "figures as of \(UsageFormat.age(capturedAt, now: now))"
+        switch row.account.state {
+        case .fresh, .stale: return nil
+        case .loginNeeded, .noSource, .offline, .rateLimited:
+            guard let capturedAt = row.account.snapshot?.capturedAt else { return nil }
+            return "figures as of \(UsageFormat.age(capturedAt, now: now))"
+        }
     }
 
     @ViewBuilder
     private func window(_ limit: UsageLimit?, counted: Bool, retained: Bool = false) -> some View {
         if let limit {
-            VStack(alignment: .leading, spacing: 3) {
+            let cell = VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Text(UsageFormat.percent(limit.utilization))
                         .font(.caption).bold().monospacedDigit()
@@ -114,15 +123,21 @@ struct LimitsAccountList: View {
                 UsageBar(fraction: limit.utilization, height: 5, level: limit.displaySeverity)
             }
             .opacity(counted ? (retained ? 0.55 : 1) : 0.4)
-            .help(helpText(counted: counted, retained: retained))
+            // Branched rather than passed an empty string: `.help("")` attaches a tooltip with
+            // nothing in it to the great majority of these cells.
+            if let help = helpText(counted: counted, retained: retained) {
+                cell.help(help)
+            } else {
+                cell
+            }
         } else {
             Text("—").font(.caption).foregroundStyle(.tertiary)
         }
     }
 
-    private func helpText(counted: Bool, retained: Bool) -> String {
+    private func helpText(counted: Bool, retained: Bool) -> String? {
         guard counted else { return "Not counted for \(model.limitsModeLabel(model.limitsMode))" }
-        return retained ? "The last figures read before this account needed you." : ""
+        return retained ? "The last figures read before this account stopped reporting." : nil
     }
 
     @ViewBuilder
@@ -165,21 +180,51 @@ struct LimitsAccountList: View {
             .replacingOccurrences(of: "resets ", with: "")
     }
 
+    /// The weekly reset an account still has on record when the ranking never got as far as
+    /// reading one.
+    ///
+    /// `weeklyResetsAt` is nil by construction for a candidate that needs a person or has no
+    /// figures at all — `assess` answers before it looks at the snapshot. But a profile signed
+    /// out an hour ago keeps a retained snapshot whose weekly window carries a perfectly good
+    /// date three days out, and this is the one surface whose stated job is to expose the
+    /// decision's inputs. Dimmed, because nothing measured against it.
+    private func retainedReset(_ row: UsageCandidate) -> Date? {
+        guard row.weeklyResetsAt == nil,
+              let resetsAt = row.account.snapshot?.weeklyAll?.resetsAt, resetsAt > now
+        else { return nil }
+        return resetsAt
+    }
+
+    private func countdown(_ resetsAt: Date) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("in \(UsageFormat.compactDuration(resetsAt.timeIntervalSince(now)))")
+                .font(.caption).bold().monospacedDigit()
+            if let absolute = absoluteReset(resetsAt) {
+                Text(absolute).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     @ViewBuilder
     private func resets(_ row: UsageCandidate) -> some View {
         // The clock the ranking actually measured against, not a window's own field — the two
         // can differ, and showing the other one would explain a pace nobody computed.
         if let resetsAt = row.weeklyResetsAt, resetsAt > now {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("in \(UsageFormat.compactDuration(resetsAt.timeIntervalSince(now)))")
-                    .font(.caption).bold().monospacedDigit()
-                if let absolute = absoluteReset(resetsAt) {
-                    Text(absolute).font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+            countdown(resetsAt)
+        } else if let retained = retainedReset(row) {
+            countdown(retained)
+                .opacity(0.55)
+                .help("From the last figures read. Nothing was measured against this.")
         } else {
+            // The tooltip used to say a reset had not been reported, which is only one of the two
+            // ways to arrive here — and the wrong one for an account whose snapshot the ranking
+            // declined to read at all.
             Text("unknown").font(.caption).foregroundStyle(.tertiary)
-                .help("No live reset was reported for the window that binds this account.")
+                .help(
+                    row.account.snapshot == nil
+                        ? "Nothing has been read for this account yet."
+                        : "No weekly reset still ahead was reported for this account."
+                )
         }
     }
 }
