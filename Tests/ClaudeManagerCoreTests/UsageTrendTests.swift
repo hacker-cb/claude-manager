@@ -278,6 +278,7 @@ struct UsageTrendTests {
             in: series,
             until: start.addingTimeInterval(72 * Self.hour),
             since: start,
+            staleAfter: 6 * Self.hour,
             now: now
         ))
         #expect(forecast.value == 1)
@@ -289,7 +290,12 @@ struct UsageTrendTests {
         let series = points([(0, 0.10), (10, 0.20)])
         let resetsAt = start.addingTimeInterval(30 * Self.hour)
         let forecast = UsageTrend.forecast(
-            of: \.weeklyAll, in: series, until: resetsAt, since: start, now: start
+            of: \.weeklyAll,
+            in: series,
+            until: resetsAt,
+            since: start,
+            staleAfter: 30 * Self.hour,
+            now: start.addingTimeInterval(10 * Self.hour)
         )
         #expect(forecast?.at == resetsAt)
         #expect(isClose(forecast?.value, 0.40))
@@ -303,7 +309,25 @@ struct UsageTrendTests {
             in: series,
             until: start.addingTimeInterval(Self.hour),
             since: start,
+            staleAfter: 6 * Self.hour,
             now: start.addingTimeInterval(2 * Self.hour)
+        ) == nil)
+    }
+
+    @Test
+    func nothingIsForecastFromAReadingTooOldToDrawALineFrom() {
+        // `.fresh` bounds nothing about age: under "Manually only" a Monday refresh leaves a
+        // perfectly fresh account whose last reading is three days behind by Thursday, and the
+        // forecast was drawn straight across them — through a hole the solid line, held to this
+        // same tolerance, refuses to bridge.
+        let series = points([(0, 0.10), (10, 0.20)])
+        #expect(UsageTrend.forecast(
+            of: \.weeklyAll,
+            in: series,
+            until: start.addingTimeInterval(100 * Self.hour),
+            since: start,
+            staleAfter: 3 * Self.hour,
+            now: start.addingTimeInterval(80 * Self.hour)
         ) == nil)
     }
 

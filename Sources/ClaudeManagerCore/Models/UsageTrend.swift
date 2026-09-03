@@ -161,10 +161,20 @@ public enum UsageTrend {
         in points: [UsageSeriesPoint],
         until resetsAt: Date,
         since periodStart: Date? = nil,
+        staleAfter: TimeInterval,
         now: Date
     ) -> (at: Date, value: Double)? {
         // A reset already behind us is not a horizon: the period this would forecast is over.
         guard resetsAt > now else { return nil }
+        // And a reading too old to extend. `.fresh` is not an age bound — a snapshot is carried
+        // forward untouched, and under "Manually only" nothing polls, so a refresh on Monday
+        // leaves a perfectly `.fresh` account whose last reading is three days behind by
+        // Thursday. Forecasting from it drew a confident dashed line across three days nobody
+        // observed — through a hole the *solid* line, held to this same tolerance, refuses to
+        // bridge. Whatever a caller will not draw a line across, it will not forecast from.
+        guard let last = points.last(where: { $0[keyPath: window] != nil }),
+              now.timeIntervalSince(last.at) <= staleAfter
+        else { return nil }
         if let runsOut = exhausts(of: window, in: points, before: resetsAt, since: periodStart) {
             return (max(runsOut, now), 1)
         }

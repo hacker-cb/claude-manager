@@ -40,7 +40,12 @@ struct LimitsTimeline: View {
     private var legend: some View {
         HStack(spacing: 12) {
             key(color: .accentColor, dash: nil, text: "All models")
-            key(color: .purple, dash: [4, 3], text: "Per-model")
+            // Only where such a window exists. On a plan reporting none the purple series is
+            // never drawn, so the key named a line nobody could find — the same condition the
+            // header's mode picker is already hidden for, two views apart.
+            if model.limitsHasScopedWindows {
+                key(color: .purple, dash: [4, 3], text: "Per-model")
+            }
             key(color: .accentColor.opacity(0.5), dash: [2, 3], text: "projected")
         }
         .font(.caption2)
@@ -139,6 +144,7 @@ struct LimitsTimelineLane: View {
                   in: points,
                   until: resetsAt,
                   since: resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow),
+                  staleAfter: maxGap,
                   now: now
               )
         else { return [] }
@@ -157,7 +163,8 @@ struct LimitsTimelineLane: View {
         // account keeps its snapshot and its history, and an unqualified dashed line drawn from
         // those extends days-old readings through hours nobody observed — presented exactly like
         // a live forecast. It is the same rule the ranking applies to whether such an account may
-        // lead at all.
+        // lead at all. It is only half the guard, though: `.fresh` bounds nothing about *age*,
+        // which is what `forecast`'s `staleAfter` is handed `maxGap` for.
         guard candidate.isCurrent else { return false }
         guard window == \.weeklyScoped else { return true }
         return (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1

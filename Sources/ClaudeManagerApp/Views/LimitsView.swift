@@ -94,11 +94,11 @@ struct LimitsView: View {
     /// its last snapshot indefinitely and `assess` answers before ever looking at it. Narrowing
     /// to `.fresh` then cut the opposite way: a stale, offline or rate-limited account still has
     /// its retained windows read and drawn, so "as of just now" stood over a candidate whose
-    /// figures were days old. `.needsAttention` is the line, and it is the ranking's own.
+    /// figures were days old. `UsageOverview.needsUser` is the line, and it is the ranking's own.
     private func freshness(now: Date) -> String? {
-        let captured = model.limitsOverview(mode: model.limitsMode, now: now).candidates
-            .filter { $0.state != .needsAttention }
-            .compactMap(\.account.snapshot?.capturedAt)
+        let captured = model.limitsAccounts
+            .filter { !UsageOverview.needsUser($0.state) }
+            .compactMap(\.snapshot?.capturedAt)
         guard let oldest = captured.min() else { return nil }
         return "as of \(UsageFormat.age(oldest, now: now))"
     }

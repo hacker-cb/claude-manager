@@ -13,7 +13,8 @@ struct LimitsAccountList: View {
     /// Minimums that fit the narrowest window the app supports. At its 760pt floor the 240pt
     /// sidebar and 48pt of page padding leave roughly 470pt here, and the previous set already
     /// totalled 510 before spacing — so the last column was clipped, inside a `ScrollView` that
-    /// only scrolls vertically and could not reach it.
+    /// only scrolls vertically and could not reach it. These total 364, which leaves room for the
+    /// conditional sixth below.
     private let columns = [
         GridItem(.flexible(minimum: 104), alignment: .topLeading),
         GridItem(.flexible(minimum: 62), alignment: .topLeading),
@@ -22,20 +23,37 @@ struct LimitsAccountList: View {
         GridItem(.flexible(minimum: 74), alignment: .topLeading)
     ]
 
+    /// A window Anthropic has started reporting that this build has no column for.
+    ///
+    /// The ranking counts every limit in a snapshot, known kind or not, so an unrecognised one
+    /// can be exactly what gates an account — and the list whose whole job is to expose the
+    /// decision's inputs was the one place it could not be seen. The column appears only when
+    /// there is something to put in it, which on today's payloads is never.
+    private let otherColumn = GridItem(.flexible(minimum: 62), alignment: .topLeading)
+
     var body: some View {
+        let rows = model.limitsOverview(mode: model.limitsMode, now: now).candidates
+        let showsOther = rows.contains { !($0.account.snapshot?.otherLimits ?? []).isEmpty }
         VStack(alignment: .leading, spacing: 10) {
             Text("Every account").font(.headline)
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+            LazyVGrid(
+                columns: showsOther ? columns + [otherColumn] : columns,
+                alignment: .leading,
+                spacing: 12
+            ) {
                 heading("Account")
                 heading("Session, 5h")
                 heading("Week, all models")
                 heading("Week, per-model")
+                if showsOther { heading("Other") }
                 heading("Week resets")
-                ForEach(model.limitsOverview(mode: model.limitsMode, now: now).candidates) { row in
+                ForEach(rows) { row in
+                    let retained = UsageOverview.needsUser(row.account.state)
                     account(row)
-                    window(row.account.snapshot?.session, counted: true)
-                    window(row.account.snapshot?.weeklyAll, counted: true)
-                    scoped(row)
+                    window(row.account.snapshot?.session, counted: true, retained: retained)
+                    window(row.account.snapshot?.weeklyAll, counted: true, retained: retained)
+                    scoped(row, retained: retained)
+                    if showsOther { others(row, retained: retained) }
                     resets(row)
                 }
             }
@@ -58,6 +76,13 @@ struct LimitsAccountList: View {
             Text(UsageOverview.stateLabel(for: row, now: now))
                 .font(.caption2)
                 .foregroundStyle(row.canLead ? Color.accentColor : .secondary)
+            // An account waiting on a person keeps its last snapshot indefinitely, and this row
+            // draws that snapshot's bars — while the header's age deliberately skips it, because
+            // the ranking never reads it. So the figures beside "Needs you" had no date on them
+            // anywhere. Every other state says its own age; this is the one that could not.
+            if let age = retainedAge(row) {
+                Text(age).font(.caption2).foregroundStyle(.tertiary)
+            }
             // Every profile on this login, so a shared account says which windows it means.
             if row.account.bindingIDs.count > 1 {
                 Text("shared with \(row.account.bindingIDs.count) profiles")
@@ -71,8 +96,14 @@ struct LimitsAccountList: View {
     /// One window as a bar plus its figure. `counted: false` dims the column rather than hiding
     /// it — the row stays the same shape in both modes, and a window that is simply not being
     /// counted right now is still a fact about the account.
+    private func retainedAge(_ row: UsageCandidate) -> String? {
+        guard UsageOverview.needsUser(row.account.state),
+              let capturedAt = row.account.snapshot?.capturedAt else { return nil }
+        return "figures as of \(UsageFormat.age(capturedAt, now: now))"
+    }
+
     @ViewBuilder
-    private func window(_ limit: UsageLimit?, counted: Bool) -> some View {
+    private func window(_ limit: UsageLimit?, counted: Bool, retained: Bool = false) -> some View {
         if let limit {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
@@ -82,25 +113,43 @@ struct LimitsAccountList: View {
                 }
                 UsageBar(fraction: limit.utilization, height: 5, level: limit.displaySeverity)
             }
-            .opacity(counted ? 1 : 0.4)
-            .help(counted ? "" : "Not counted for \(model.limitsModeLabel(model.limitsMode))")
+            .opacity(counted ? (retained ? 0.55 : 1) : 0.4)
+            .help(helpText(counted: counted, retained: retained))
         } else {
             Text("—").font(.caption).foregroundStyle(.tertiary)
         }
     }
 
+    private func helpText(counted: Bool, retained: Bool) -> String {
+        guard counted else { return "Not counted for \(model.limitsModeLabel(model.limitsMode))" }
+        return retained ? "The last figures read before this account needed you." : ""
+    }
+
     @ViewBuilder
-    private func scoped(_ row: UsageCandidate) -> some View {
-        let windows = row.account.snapshot?.weeklyScoped ?? []
+    private func stack(_ windows: [UsageLimit], counted: Bool, retained: Bool) -> some View {
         if windows.isEmpty {
             Text("—").font(.caption).foregroundStyle(.tertiary)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(windows.enumerated()), id: \.offset) { _, limit in
-                    window(limit, counted: model.limitsMode == .scopedModel)
+                    window(limit, counted: counted, retained: retained)
                 }
             }
         }
+    }
+
+    private func scoped(_ row: UsageCandidate, retained: Bool) -> some View {
+        stack(
+            row.account.snapshot?.weeklyScoped ?? [],
+            counted: model.limitsMode == .scopedModel,
+            retained: retained
+        )
+    }
+
+    /// Always counted: `countedLimits` filters the snapshot's whole list, and an unknown kind is
+    /// neither weekly-scoped nor excluded by either mode.
+    private func others(_ row: UsageCandidate, retained: Bool) -> some View {
+        stack(row.account.snapshot?.otherLimits ?? [], counted: true, retained: retained)
     }
 
     // MARK: - When

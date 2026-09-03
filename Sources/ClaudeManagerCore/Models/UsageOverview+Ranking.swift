@@ -64,9 +64,13 @@ extension UsageOverview {
     /// Whether this state means the binding is waiting on a person rather than on a window.
     /// Exhaustive on purpose — a future case must be classified here, not defaulted.
     ///
-    /// Non-private because `hasScopedWindows` asks the same question: an account this returns
-    /// true for never has its snapshot read, so its windows cannot move either ranking.
-    static func needsUser(_ state: UsageState) -> Bool {
+    /// Public because it *is* the question "does the ranking read this account's snapshot", and
+    /// three surfaces beyond `hasScopedWindows` need the answer. An account this returns true for
+    /// keeps its last snapshot indefinitely and never has it read, so its windows move no
+    /// ranking, date no header and belong in no summary — while a `.stale`, `.offline` or
+    /// `.rateLimited` one has its retained windows read and drawn, and every surface must agree
+    /// on which of those two things it is.
+    public static func needsUser(_ state: UsageState) -> Bool {
         switch state {
         case .loginNeeded, .noSource: true
         case .fresh, .stale, .rateLimited, .offline: false

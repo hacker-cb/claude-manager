@@ -60,9 +60,14 @@ extension AppModel {
     /// Read from `limitsAccounts` rather than `menuBarUsageSummary`, which walks every binding in
     /// the map: the row labels the page, and the two disagreed the moment one of them filtered a
     /// removed launcher out and the other did not.
+    ///
+    /// On exactly the accounts whose snapshots the ranking reads, for the same reason: narrowed
+    /// to `.fresh`, a laptop going offline flipped every account to `.stale` and left the row
+    /// falling through to "where to work now" as though nothing had ever been read — while
+    /// clicking it showed a full board of bars and percentages from those very snapshots.
     var limitsWorstSummary: String? {
         let worst = limitsAccounts
-            .filter { $0.state == .fresh }
+            .filter { !UsageOverview.needsUser($0.state) }
             .compactMap(\.snapshot?.bindingLimit)
             .max { $0.utilization < $1.utilization }
         return worst.map(UsageFormat.limitSummary)
