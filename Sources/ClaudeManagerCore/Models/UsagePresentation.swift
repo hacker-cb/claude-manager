@@ -147,15 +147,17 @@ public enum UsagePresentation {
     ///    snapshot went unused.
     /// 2. **Are there figures?** A `.fresh` state is not a promise of any: `UsageService` reports
     ///    "current with nothing yet" for a binding whose history is empty or unreadable. Ranking
-    ///    freshness above this put a snapshot-less entry ahead of an `.offline` sibling holding
+    ///    freshness above this put a figure-less entry ahead of an `.offline` sibling holding
     ///    real numbers, and the login then read as "not checked yet" while another binding could
-    ///    have shown its week.
+    ///    have shown its week. Asked of the snapshot's *contents*, never of its existence: the
+    ///    parser always succeeds, so an empty or odd response yields a snapshot carrying nothing
+    ///    — which would otherwise have outranked a sibling with a full week on it.
     /// 3. **Are they current?** Only here does `.fresh` decide anything — and where neither entry
     ///    has figures it still does, since that is the one the next pass will fill.
     private static func usefulness(_ usage: AccountUsage) -> Int {
         guard !UsageOverview.needsUser(usage.state) else { return 0 }
         var score = 1
-        if usage.snapshot != nil { score += 2 }
+        if usage.snapshot?.hasFigures == true { score += 2 }
         if usage.state == .fresh { score += 1 }
         return score
     }

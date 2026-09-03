@@ -40,7 +40,9 @@ extension UsagePresentationTests {
         let failed = entry(
             uuid: "A", state: .noSource(.signedOut), bindingIDs: ["aaa", "zzz"]
         )
-        let readable = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
+        let readable = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
         let picked = UsagePresentation.onePerAccount(["aaa": failed, "zzz": readable])
         #expect(picked.count == 1)
         #expect(picked.first?.state == .offline)
@@ -59,6 +61,27 @@ extension UsagePresentationTests {
         let picked = UsagePresentation.onePerAccount(["aaa": freshButEmpty, "zzz": offlineWithFigures])
         #expect(picked.count == 1)
         #expect(picked.first?.snapshot != nil)
+    }
+
+    @Test
+    func anEmptySnapshotIsNotFigures() {
+        // `UsageLimitsParser.parse(object:)` always succeeds — an empty or odd body yields a
+        // snapshot carrying no limits at all, so that a partial response cannot crash a poll.
+        // Asked as "is there a snapshot", that entry counted as having figures and outranked a
+        // sibling holding a full week.
+        let freshButEmpty = AccountUsage(
+            identity: AccountIdentity(uuid: "A"),
+            snapshot: UsageSnapshot(limits: []),
+            state: .fresh,
+            bindingIDs: ["aaa", "zzz"]
+        )
+        let offlineWithFigures = entry(
+            uuid: "A", state: .offline, hasFigures: true, bindingIDs: ["aaa", "zzz"]
+        )
+        let picked = UsagePresentation.onePerAccount(
+            ["aaa": freshButEmpty, "zzz": offlineWithFigures]
+        )
+        #expect(picked.first?.state == .offline)
     }
 
     @Test
