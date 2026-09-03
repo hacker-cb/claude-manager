@@ -30,8 +30,17 @@ public enum UsageFormat {
     ///
     /// A non-positive interval reads `now` rather than a negative figure — a countdown that has
     /// run out has, and the surfaces that print it gate on the window still being ahead anyway.
+    /// One beyond what an `Int` can hold reads `later`, which no real caller can reach: it is
+    /// there so a formatter never traps.
     public static func compactDuration(_ interval: TimeInterval) -> String {
         guard interval > 0 else { return "now" }
+        // `Int(_:)` **traps** on a value it cannot represent, and `> 0` admits `.infinity` and
+        // anything past `Int.max`. Every caller in this app hands it a difference between two
+        // parsed dates, so nothing reaches it today — but this is `public`, it is a *formatter*,
+        // and a formatter takes the process down for nobody. The same guard `series` puts on its
+        // own conversion. (`NaN` needs none: every comparison against it is false, so the line
+        // above has already returned.)
+        guard interval < Double(Int.max) else { return "later" }
         let seconds = Int(interval)
         if seconds < 60 { return "<1m" }
         let minutes = seconds / 60
