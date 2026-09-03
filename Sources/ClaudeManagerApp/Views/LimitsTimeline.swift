@@ -155,6 +155,12 @@ struct LimitsTimelineLane: View {
     /// would be a forecast about a series no single quota followed, so none is drawn. The server
     /// sends one scoped window today, where this is exact.
     private func projectable(_ window: KeyPath<UsageSeriesPoint, Double?>) -> Bool {
+        // Only from figures that are still moving. A stale, offline, rate-limited or signed-out
+        // account keeps its snapshot and its history, and an unqualified dashed line drawn from
+        // those extends days-old readings through hours nobody observed — presented exactly like
+        // a live forecast. It is the same rule the ranking applies to whether such an account may
+        // lead at all.
+        guard candidate.isCurrent else { return false }
         guard window == \.weeklyScoped else { return true }
         return (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1
     }

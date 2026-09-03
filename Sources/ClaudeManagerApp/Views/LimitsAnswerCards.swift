@@ -103,6 +103,13 @@ struct LimitsAnswerCard: View {
             }
             .fixedSize()
             .disabled(model.claudeUpdateState.blocksProfileActivity)
+        } else {
+            // The default account keeps its place in the ranking while Claude.app cannot be
+            // located — during an update's bundle swap, or after the app is moved — but its
+            // sidebar row is gone, so there is nothing to open. Say that, rather than printing a
+            // recommendation beside empty space.
+            Text("unavailable").font(.caption).foregroundStyle(.tertiary)
+                .help("Claude.app was not found, so this profile cannot be opened right now.")
         }
     }
 

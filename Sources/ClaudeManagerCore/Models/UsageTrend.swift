@@ -33,7 +33,7 @@ public enum UsageTrend {
             guard let periodStart else { return true }
             return point.at >= periodStart
         }
-        guard let last = usable.last, let latest = last[keyPath: window] else { return nil }
+        guard usable.last?[keyPath: window] != nil else { return nil }
         // A **told** boundary is the boundary: running the drop heuristic inside it as well read
         // every server correction as a fresh period, collapsing a week of history to the hour
         // after one poll reported 0.49 instead of 0.50. The heuristic is the fallback for when
@@ -41,23 +41,49 @@ public enum UsageTrend {
         let period = periodStart == nil
             ? Array(usable[startIndex(of: window, in: usable)...])
             : usable
-        // The baseline is the period's **lowest** reading, not its first. Within one period a
-        // utilization only grows, so the low point is where the period actually began — and
-        // taking the first sample instead let a single high one poison the whole week: every
-        // honest reading below it clamped the rate to zero, and the timeline drew a flat dashed
-        // line promising the account would finish the week exactly where it stood. It also
-        // absorbs a pre-reset sample that survives a boundary shifted by DST or clock skew.
-        // Earliest occurrence, so the span is the longest the evidence supports.
-        guard let base = period.min(by: { lhs, rhs in
-            let left = lhs[keyPath: window] ?? .infinity
-            let right = rhs[keyPath: window] ?? .infinity
-            return left != right ? left < right : lhs.at < rhs.at
-        }), let first = base[keyPath: window] else { return nil }
-        let seconds = last.at.timeIntervalSince(base.at)
-        // Zero span is the series ending on its own low point — one reading is not a rate.
+        // **Peak to base, and neither is simply an end of the series.** A utilization only grows
+        // within its period, so every dip in one is the server correcting a figure — and a rate
+        // read off the raw endpoints is at the mercy of whichever end the correction lands on.
+        // Both mistakes were made here in turn: anchoring on the first sample let one spuriously
+        // *high* reading clamp the whole week to a flat zero, and anchoring on the period's
+        // lowest let one spuriously *low* one collapse the span to an hour while keeping the
+        // week's whole delta — a 60% account was then forecast to run out in forty minutes.
+        //
+        // So: drop a leading sample that stands above everything after it — it did not belong to
+        // this period, whether it leaked past a boundary shifted by DST or clock skew or was
+        // simply corrected away. Then measure from what is left, first sample to the **last**
+        // sample reaching its highest value, so a correction at the tail cannot lower the
+        // endpoint and the span stays as long as the evidence allows.
+        func value(_ point: UsageSeriesPoint) -> Double? {
+            point[keyPath: window]
+        }
+        let measured = withoutLeadingOutlier(period, of: window)
+        guard let base = measured.first, let first = value(base),
+              let top = measured.compactMap(value).max(),
+              let peak = measured.last(where: { value($0) == top })
+        else { return nil }
+        let seconds = peak.at.timeIntervalSince(base.at)
+        // Zero span is a period whose peak *is* its baseline — one reading is not a rate.
         guard seconds > 0 else { return nil }
-        // Non-negative by construction now: nothing in the period is below the baseline.
-        return (latest - first) / seconds
+        // Non-negative by construction: the peak is never below the baseline.
+        return (top - first) / seconds
+    }
+
+    /// The period without a leading sample that stands above everything after it.
+    ///
+    /// Such a sample is not a baseline: it belongs to the period before this one — leaked past a
+    /// boundary shifted by DST or clock skew — or is a figure the server has since corrected down.
+    /// Anchoring on it clamped a whole week's rate to zero.
+    private static func withoutLeadingOutlier(
+        _ period: [UsageSeriesPoint],
+        of window: KeyPath<UsageSeriesPoint, Double?>
+    ) -> [UsageSeriesPoint] {
+        let rest = period.dropFirst()
+        guard let opening = period.first?[keyPath: window],
+              let restPeak = rest.compactMap({ $0[keyPath: window] }).max(),
+              opening > restPeak
+        else { return period }
+        return Array(rest)
     }
 
     /// Where the window lands at `target` if it keeps that rate — clamped to 0…1, because a

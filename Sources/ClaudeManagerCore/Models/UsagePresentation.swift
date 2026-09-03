@@ -121,12 +121,12 @@ public enum UsagePresentation {
             }
             if held.bindingIDs.count != entry.bindingIDs.count {
                 if held.bindingIDs.count > entry.bindingIDs.count { continue }
-                // Equal fan-out, so the tie falls to *usefulness*: an entry whose figures are current
-                // speaks for the login better than a sibling that happens to be failing this pass.
-                // Settled on the binding id alone, a transient per-binding failure sorting first
-                // could make the whole account read as needing a sign-in while a fresh sibling sat
-                // right behind it.
             } else if (held.state == .fresh) != (entry.state == .fresh) {
+                // Equal fan-out, so the tie falls to *usefulness*: an entry whose figures are
+                // current speaks for the login better than a sibling failing this pass. Settled
+                // on the binding id alone, a transient per-binding failure sorting first could
+                // make the whole account read as needing a sign-in while a fresh sibling sat
+                // right behind it.
                 if held.state == .fresh { continue }
             } else {
                 // Ascending ids plus this `continue` settle what is left toward the lowest id.

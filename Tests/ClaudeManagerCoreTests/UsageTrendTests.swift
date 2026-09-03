@@ -99,6 +99,25 @@ struct UsageTrendTests {
     }
 
     @Test
+    func oneLowReadingDoesNotCollapseTheSpan() {
+        // The mirror of the case below, and the one a minimum-baseline reintroduced: a corrected
+        // poll late in the week became the anchor, leaving an hour of span holding the whole
+        // week's delta — a 60% account forecast to run out within the hour.
+        let series = points([(0, 0.02), (130, 0.60), (131, 0.01), (132, 0.60)])
+        #expect(isClose(
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.58 / (132 * Self.hour)
+        ))
+    }
+
+    @Test
+    func aCorrectionAtTheTailCannotLowerTheEndpoint() {
+        let series = points([(0, 0.10), (10, 0.50), (11, 0.49)])
+        #expect(isClose(
+            UsageTrend.rate(of: \.weeklyAll, in: series, since: start), 0.40 / (10 * Self.hour)
+        ))
+    }
+
+    @Test
     func oneHighReadingDoesNotPoisonTheWholePeriod() {
         // Taking the period's *first* sample as the baseline let a single spurious high reading
         // clamp every honest one after it to a zero rate — for the rest of the week. The period's
