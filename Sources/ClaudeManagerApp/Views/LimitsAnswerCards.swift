@@ -110,11 +110,15 @@ struct LimitsAnswerCard: View {
     /// single "Claude.app was not found", a disabled button during an install diagnosed a problem
     /// the user did not have.
     private var openBlocked: String? {
-        if model.realClaude == nil {
-            return "Claude.app was not found, so no profile can be opened."
-        }
+        // The update is asked about **first**, because the two are not independent: `realClaude`
+        // goes nil *during* the bundle swap, so a `locate()` landing inside that window would
+        // otherwise report a missing app to someone whose app is being replaced as they read —
+        // the very misdiagnosis splitting the reason in two was meant to prevent.
         if model.claudeUpdateState.blocksProfileActivity {
             return "A Claude update is installing. Profiles reopen when it finishes."
+        }
+        if model.realClaude == nil {
+            return "Claude.app was not found, so no profile can be opened."
         }
         return nil
     }
