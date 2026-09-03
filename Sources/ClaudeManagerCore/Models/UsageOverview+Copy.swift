@@ -14,10 +14,14 @@ public extension UsageOverview {
     ///
     /// Read from the snapshots rather than assumed: the model behind a scoped window is data,
     /// and this is what lets the mode toggle name it without the name being compiled in.
+    ///
+    /// Only accounts the ranking actually reads, on the same rule `hasScopedWindows` applies: a
+    /// login-needed binding keeps its last snapshot, so an old `7d·Opus` window on it made the
+    /// mode call itself "Fable / Opus work" while nothing rankable reported Opus at all.
     static func scopedModelNames(in accounts: [AccountUsage]) -> [String] {
         var seen = Set<String>()
         var names: [String] = []
-        for account in accounts {
+        for account in accounts where !needsUser(account.state) {
             for limit in account.snapshot?.weeklyScoped ?? [] {
                 guard let name = limit.scopeModelName, !name.isEmpty, seen.insert(name).inserted
                 else { continue }

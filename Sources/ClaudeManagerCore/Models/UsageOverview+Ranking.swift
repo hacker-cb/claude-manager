@@ -302,8 +302,12 @@ extension UsageOverview {
     /// them. The uuid is the final tiebreak so the sequence is stable between passes.
     static func precedes(_ lhs: UsageCandidate, _ rhs: UsageCandidate) -> Bool {
         if lhs.state.order != rhs.state.order { return lhs.state.order < rhs.state.order }
+        // Current figures ahead of stale ones in **every** lane, not only the rated one. The
+        // lanes with neither headroom nor a return time — `paceUnknown`, `needsAttention`,
+        // `noData` — fell straight through to the uuid, so a week-old account at 95% was listed
+        // above a fresh one at 5% for no reason a reader could see.
+        if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
         if lhs.state.isUsable {
-            if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             let left = lhs.headroom ?? -.greatestFiniteMagnitude
             let right = rhs.headroom ?? -.greatestFiniteMagnitude
             if left != right { return left > right }
@@ -336,6 +340,11 @@ extension UsageOverview {
               let top = ordered.first, top.canLead, top.id != previousLeader,
               let index = ordered.firstIndex(where: { $0.id == previousLeader }),
               ordered[index].canLead,
+              // Damping is for churn between equals, so it stops at a state boundary the way it
+              // already stops at a gate. `paceThreshold` and `stickyMargin` are close enough
+              // together that a `burningFast` leader could otherwise be held over an `onPace`
+              // challenger — a recommendation its own chip contradicts.
+              ordered[index].state == top.state,
               let held = ordered[index].headroom,
               let challenger = top.headroom,
               challenger - held < stickyMargin

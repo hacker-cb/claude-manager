@@ -260,6 +260,35 @@ struct UsageOverviewOrderingTests {
         #expect(overview.candidates[1].canLead == false)
     }
 
+    @Test
+    func currentFiguresLeadStaleOnesInEveryLaneNotOnlyTheRatedOne() {
+        // The lanes with neither headroom nor a return time fell straight through to the uuid, so
+        // a week-old account at 95% was listed above a fresh one at 5% for no visible reason.
+        let overview = rank([
+            account("a-stale", limits: [limit(UsageLimit.kindWeeklyAll, 0.85)], state: .offline),
+            account("z-fresh", limits: [limit(UsageLimit.kindWeeklyAll, 0.05)])
+        ])
+        #expect(overview.candidates.map(\.id) == ["z-fresh", "a-stale"])
+        #expect(overview.candidates.allSatisfy { $0.state == .paceUnknown })
+    }
+
+    @Test
+    func dampingStopsAtAStateBoundary() {
+        // headroom: held −0.105 (`burningFast`), challenger −0.06 (`onPace`) — inside
+        // `stickyMargin`, so the damping would have held a recommendation its own chip
+        // contradicts, with an on-pace account sitting directly beneath it.
+        let overview = rank(
+            [
+                weeklyAccount("challenger", 0.56),
+                weeklyAccount("held", 0.605)
+            ],
+            previousLeader: "held"
+        )
+        #expect(overview.candidates.first?.id == "challenger")
+        #expect(overview.candidates.first?.state == .onPace)
+        #expect(overview.candidates.last?.state == .burningFast)
+    }
+
     // MARK: - The ordering is a real ordering
 
     @Test
