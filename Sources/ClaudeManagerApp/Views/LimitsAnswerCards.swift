@@ -89,12 +89,24 @@ struct LimitsAnswerCard: View {
     /// One button for a login with one profile; a menu for a login several launchers share, since
     /// the account is the thing being recommended and only the person knows which window they
     /// want it in.
+    /// Whether pressing anything here could work.
+    ///
+    /// The staged-update gate was only half of it. Every launcher `exec`s the installed Claude,
+    /// so with it missing `AppModel.open` can do nothing but raise the missing-app error — and
+    /// the *default* profile's row disappears from `profileEntries` in that state while clones do
+    /// not, so the card fell back to its "unavailable" arm for one and offered a live button for
+    /// the other, on the same fact.
+    private var canOpen: Bool {
+        model.realClaude != nil && !model.claudeUpdateState.blocksProfileActivity
+    }
+
     @ViewBuilder
     private func openButtons(for leader: UsageCandidate) -> some View {
         let entries = model.limitsProfiles(of: leader.account)
         if entries.count == 1, let entry = entries.first {
             Button(verb(entry)) { open(entry) }
-                .disabled(model.claudeUpdateState.blocksProfileActivity)
+                .disabled(!canOpen)
+                .help(canOpen ? "" : "Claude.app was not found, so no profile can be opened.")
         } else if entries.count > 1 {
             Menu("Open") {
                 ForEach(entries) { entry in
@@ -102,7 +114,8 @@ struct LimitsAnswerCard: View {
                 }
             }
             .fixedSize()
-            .disabled(model.claudeUpdateState.blocksProfileActivity)
+            .disabled(!canOpen)
+            .help(canOpen ? "" : "Claude.app was not found, so no profile can be opened.")
         } else {
             // The default account keeps its place in the ranking while Claude.app cannot be
             // located — during an update's bundle swap, or after the app is moved — but its
