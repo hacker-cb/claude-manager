@@ -88,10 +88,27 @@ struct LimitsTimelineLane: View {
         let value: Double
     }
 
-    private func history(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
-        points.compactMap { point in
-            point[keyPath: window].map { Plot(at: point.at, value: $0) }
+    /// The drawn line, **split at every gap**. A `nil` sample is a window the server did not
+    /// report, and `UsageSeriesPoint` is explicit that this is a gap rather than a zero — but
+    /// dropping those points with `compactMap` left Charts joining the samples on either side,
+    /// drawing a straight run of usage through a stretch nothing was ever known about.
+    private func segments(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [[Plot]] {
+        var out: [[Plot]] = []
+        var current: [Plot] = []
+        for point in points {
+            guard let value = point[keyPath: window] else {
+                if !current.isEmpty { out.append(current) }
+                current = []
+                continue
+            }
+            current.append(Plot(at: point.at, value: value))
         }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    private func history(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
+        segments(window).flatMap(\.self)
     }
 
     /// When *this* window turns over — not the candidate's `weeklyResetsAt`, which is only the
@@ -109,17 +126,37 @@ struct LimitsTimelineLane: View {
     /// The dashed continuation: from the last reading to that window's own reset, at the rate it
     /// has been spent since it last turned over — measured from the period boundary the reset
     /// itself gives, rather than from a drop `UsageTrend` might not be able to see.
+    ///
+    /// It **ends where the window would run out**, when that comes first. Drawn only to the reset
+    /// the endpoint is clamped to 1, so a quota heading for exhaustion on Friday was drawn
+    /// reaching 100% on Sunday — the line said the right thing about the level and the wrong
+    /// thing about the date, which is the half a timeline is read for.
     private func projection(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
-        guard let resetsAt = reset(for: window), resetsAt > now,
-              let last = history(window).last,
-              let ahead = UsageTrend.projected(
-                  of: window,
-                  in: points,
-                  at: resetsAt,
-                  since: resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow)
-              )
+        guard projectable(window), let resetsAt = reset(for: window), resetsAt > now,
+              let last = history(window).last
         else { return [] }
+        let periodStart = resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow)
+        if let runsOut = UsageTrend.exhausts(
+            of: window, in: points, before: resetsAt, since: periodStart
+        ) {
+            return [Plot(at: last.at, value: last.value), Plot(at: runsOut, value: 1)]
+        }
+        guard let ahead = UsageTrend.projected(
+            of: window, in: points, at: resetsAt, since: periodStart
+        ) else { return [] }
         return [Plot(at: last.at, value: last.value), Plot(at: resetsAt, value: ahead)]
+    }
+
+    /// Whether a forecast for this window would mean anything.
+    ///
+    /// `UsageSeriesPoint.weeklyScoped` is the highest scoped window **per sample**, so with more
+    /// than one per-model quota the plotted line can change which model it represents partway
+    /// through — and every such switch looks like a drop. Extrapolating that to one model's reset
+    /// would be a forecast about a series no single quota followed, so none is drawn. The server
+    /// sends one scoped window today, where this is exact.
+    private func projectable(_ window: KeyPath<UsageSeriesPoint, Double?>) -> Bool {
+        guard window == \.weeklyScoped else { return true }
+        return (candidate.account.snapshot?.weeklyScoped.count ?? 0) == 1
     }
 
     var body: some View {
@@ -167,28 +204,50 @@ struct LimitsTimelineLane: View {
 
     private var chart: some View {
         Chart {
-            ForEach(history(\.weeklyAll)) { plot in
-                AreaMark(x: .value("When", plot.at), y: .value("Used", plot.value))
-                    .foregroundStyle(Color.accentColor.opacity(0.12))
-            }
-            ForEach(history(\.weeklyAll)) { plot in
-                LineMark(x: .value("When", plot.at), y: .value("Used", plot.value))
+            ForEach(Array(segments(\.weeklyAll).enumerated()), id: \.offset) { index, run in
+                ForEach(run) { plot in
+                    AreaMark(x: .value("When", plot.at), y: .value("Used", plot.value))
+                        .foregroundStyle(Color.accentColor.opacity(0.12))
+                }
+                // A series per run, so Charts draws each as its own line instead of bridging the
+                // gap between them.
+                ForEach(run) { plot in
+                    LineMark(
+                        x: .value("When", plot.at),
+                        y: .value("Used", plot.value),
+                        series: .value("All", "all-\(index)")
+                    )
                     .foregroundStyle(Color.accentColor)
+                }
             }
-            ForEach(history(\.weeklyScoped)) { plot in
-                LineMark(x: .value("When", plot.at), y: .value("Per-model", plot.value))
+            ForEach(Array(segments(\.weeklyScoped).enumerated()), id: \.offset) { index, run in
+                ForEach(run) { plot in
+                    LineMark(
+                        x: .value("When", plot.at),
+                        y: .value("Per-model", plot.value),
+                        series: .value("Scoped", "scoped-\(index)")
+                    )
                     .foregroundStyle(Color.purple)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                }
             }
             ForEach(projection(\.weeklyAll)) { plot in
-                LineMark(x: .value("When", plot.at), y: .value("Projected", plot.value))
-                    .foregroundStyle(Color.accentColor.opacity(0.5))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+                LineMark(
+                    x: .value("When", plot.at),
+                    y: .value("Used", plot.value),
+                    series: .value("All", "all-projected")
+                )
+                .foregroundStyle(Color.accentColor.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
             }
             ForEach(projection(\.weeklyScoped)) { plot in
-                LineMark(x: .value("When", plot.at), y: .value("Projected per-model", plot.value))
-                    .foregroundStyle(Color.purple.opacity(0.5))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+                LineMark(
+                    x: .value("When", plot.at),
+                    y: .value("Per-model", plot.value),
+                    series: .value("Scoped", "scoped-projected")
+                )
+                .foregroundStyle(Color.purple.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
             }
             RuleMark(x: .value("Now", now))
                 .foregroundStyle(.primary)

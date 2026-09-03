@@ -77,6 +77,29 @@ struct UsageTrendTests {
     }
 
     @Test
+    func aToldBoundaryStopsACorrectionReadingAsANewPeriod() {
+        // A week climbing 0.10 → 0.50, then one poll reporting 0.49, then 0.50 again. Left to the
+        // drop heuristic the measurement collapses to that last hour and the rate is an order of
+        // magnitude too high — which is what the projection is drawn from.
+        let series = points([(0, 0.1), (144, 0.5), (145, 0.49), (146, 0.5)])
+        let told = UsageTrend.rate(of: \.weeklyAll, in: series, since: start)
+        #expect(isClose(told, 0.4 / (146 * Self.hour)))
+        let inferred = UsageTrend.rate(of: \.weeklyAll, in: series)
+        #expect(isClose(inferred, 0.01 / Self.hour))
+        // The told rate is the honest one, and far lower than what the heuristic reported.
+        #expect((told ?? 0) < (inferred ?? 0))
+    }
+
+    @Test
+    func aToldBoundaryClampsACorrectionToZeroRatherThanGoingNegative() {
+        // With the boundary told, the first sample of the period is fixed — so a figure the
+        // server later corrects downward can genuinely sit below it. That is what the clamp is
+        // for, and it was unreachable while the heuristic always restarted at the last dip.
+        let series = points([(0, 0.5), (1, 0.4)])
+        #expect(UsageTrend.rate(of: \.weeklyAll, in: series, since: start) == 0)
+    }
+
+    @Test
     func aPeriodStartAfterEverySampleLeavesNothingToMeasure() {
         let series = points([(0, 0.2), (1, 0.4)])
         #expect(UsageTrend.rate(

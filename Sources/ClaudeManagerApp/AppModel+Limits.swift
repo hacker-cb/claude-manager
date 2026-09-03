@@ -79,6 +79,21 @@ extension AppModel {
         return profileEntries.filter { ids.contains($0.id) }
     }
 
+    /// What a binding that produced no account needs from the user, one sentence per distinct
+    /// remedy, in a stable order.
+    ///
+    /// A fleet where every profile is signed out or has never been opened resolves no account at
+    /// all, so the page has nothing to rank — and telling that user to Refresh sends them back to
+    /// the same screen, since refreshing cannot sign anyone in. `UsagePresentation` already owns
+    /// the wording for each cause.
+    var limitsBlockingFailures: [String] {
+        var seen = Set<String>()
+        return usageBindingFailures.keys.sorted()
+            .compactMap { usageBindingFailures[$0] }
+            .compactMap { UsagePresentation.sentence(usage: nil, failure: $0)?.text }
+            .filter { seen.insert($0).inserted }
+    }
+
     // MARK: - Keeping the answer steady
 
     /// Record what each mode recommends now, so the next pass can damp a near-equal challenger.

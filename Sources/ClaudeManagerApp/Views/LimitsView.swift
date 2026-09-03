@@ -101,11 +101,26 @@ struct LimitsView: View {
         }
     }
 
+    /// Nothing to rank. Two very different reasons land here, and only one of them is fixed by
+    /// the button: a fleet that has simply not been read yet, and one where every profile is
+    /// signed out or has never been opened. Telling the second to Refresh sends them back to this
+    /// same screen, so it says what actually needs doing instead.
+    @ViewBuilder
     private var nothingRead: some View {
+        let blocking = model.limitsBlockingFailures
         ContentUnavailableView {
-            Label("No usage read yet", systemImage: "chart.bar.xaxis")
+            Label(
+                blocking.isEmpty ? "No usage read yet" : "No account to rank",
+                systemImage: "chart.bar.xaxis"
+            )
         } description: {
-            Text("Refresh to fetch each profile's plan usage.")
+            if blocking.isEmpty {
+                Text("Refresh to fetch each profile's plan usage.")
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(blocking, id: \.self) { Text($0) }
+                }
+            }
         } actions: {
             Button("Refresh") { Task { await model.refreshUsage(interactive: true) } }
                 .disabled(model.isRefreshingUsage)

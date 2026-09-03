@@ -115,8 +115,23 @@ public enum UsagePresentation {
         for id in byBinding.keys.sorted() {
             guard let entry = byBinding[id] else { continue }
             let uuid = entry.identity.uuid
-            // Ascending ids plus `>=` settle a tie on fan-out width toward the lowest binding id.
-            if let held = best[uuid], held.bindingIDs.count >= entry.bindingIDs.count { continue }
+            guard let held = best[uuid] else {
+                best[uuid] = entry
+                continue
+            }
+            if held.bindingIDs.count != entry.bindingIDs.count {
+                if held.bindingIDs.count > entry.bindingIDs.count { continue }
+                // Equal fan-out, so the tie falls to *usefulness*: an entry whose figures are current
+                // speaks for the login better than a sibling that happens to be failing this pass.
+                // Settled on the binding id alone, a transient per-binding failure sorting first
+                // could make the whole account read as needing a sign-in while a fresh sibling sat
+                // right behind it.
+            } else if (held.state == .fresh) != (entry.state == .fresh) {
+                if held.state == .fresh { continue }
+            } else {
+                // Ascending ids plus this `continue` settle what is left toward the lowest id.
+                continue
+            }
             best[uuid] = entry
         }
         return best.keys.sorted().compactMap { best[$0] }

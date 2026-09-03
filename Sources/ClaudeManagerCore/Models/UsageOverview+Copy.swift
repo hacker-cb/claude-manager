@@ -58,7 +58,10 @@ public extension UsageOverview {
         guard hasScopedWindows(in: accounts) else { return "All work" }
         guard mode == .scopedModel else { return "Other work" }
         let names = scopedModelNames(in: accounts)
-        guard !names.isEmpty else { return "All work" }
+        // Scoped windows exist here — `hasScopedWindows` just said so — but none reported a model
+        // name. "All work" would be the wrong half of a contradictory pair: this mode counts
+        // *more* windows than its sibling, which is still labelled "Other work".
+        guard !names.isEmpty else { return "Per-model work" }
         return "\(names.joined(separator: " / ")) work"
     }
 

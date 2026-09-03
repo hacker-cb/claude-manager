@@ -33,8 +33,15 @@ public enum UsageTrend {
             return point.at >= periodStart
         }
         guard let last = usable.last, let latest = last[keyPath: window] else { return nil }
-        let start = usable[startIndex(of: window, in: usable)...].first
-        guard let start, let first = start[keyPath: window] else { return nil }
+        // A **told** boundary is the boundary. Running the drop heuristic inside it as well read
+        // every server correction as a fresh period: one poll reporting 0.49 after 0.50 collapsed
+        // a week of history to the hour that followed it, and the projection built on that rate
+        // shot to 100% days early. The heuristic is the fallback for when nobody said, and only
+        // then — which is also what makes the `max(0, …)` below reachable at last, since a
+        // corrected figure can now legitimately sit below the period's first sample.
+        let first = periodStart == nil ? usable[startIndex(of: window, in: usable)...].first
+            : usable.first
+        guard let start = first, let first = start[keyPath: window] else { return nil }
         let seconds = last.at.timeIntervalSince(start.at)
         guard seconds > 0 else { return nil }
         return max(0, (latest - first) / seconds)

@@ -10,12 +10,16 @@ struct LimitsAccountList: View {
     @EnvironmentObject private var model: AppModel
     let now: Date
 
+    /// Minimums that fit the narrowest window the app supports. At its 760pt floor the 240pt
+    /// sidebar and 48pt of page padding leave roughly 470pt here, and the previous set already
+    /// totalled 510 before spacing — so the last column was clipped, inside a `ScrollView` that
+    /// only scrolls vertically and could not reach it.
     private let columns = [
-        GridItem(.flexible(minimum: 140), alignment: .topLeading),
-        GridItem(.flexible(minimum: 90), alignment: .topLeading),
-        GridItem(.flexible(minimum: 90), alignment: .topLeading),
-        GridItem(.flexible(minimum: 90), alignment: .topLeading),
-        GridItem(.flexible(minimum: 100), alignment: .topLeading)
+        GridItem(.flexible(minimum: 104), alignment: .topLeading),
+        GridItem(.flexible(minimum: 62), alignment: .topLeading),
+        GridItem(.flexible(minimum: 62), alignment: .topLeading),
+        GridItem(.flexible(minimum: 62), alignment: .topLeading),
+        GridItem(.flexible(minimum: 74), alignment: .topLeading)
     ]
 
     var body: some View {
