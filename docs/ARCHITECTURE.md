@@ -532,6 +532,34 @@ effect of being drawn would settle differently depending on how often the window
 open. Extra usage is deliberately
 outside all of this — it is money, not a window.
 
+**One question every surface must answer the same way: does the ranking read this account's
+snapshot?** `UsageOverview.needsUser` is that question, and it is public for exactly this reason.
+An account waiting on a *person* — signed out, or with no token source — keeps its last snapshot
+indefinitely and `assess` answers before ever looking at it, so its windows move no ranking, date
+no header and belong in no summary. An account that is merely `.stale`, `.offline` or
+`.rateLimited` has its retained windows read, ranked and drawn. Six surfaces need that line and
+each of them answered it slightly differently at some point in review: the ranking itself, the
+page header's "as of", the sidebar subtitle, the account grid's dating and dimming, the timeline's
+projection gate, and `UsagePresentation.onePerAccount`'s choice of which profile speaks for a
+shared login. Every difference showed up as the page contradicting itself — a row saying "as of
+just now" over figures three days old, or a login represented by the one binding that failed while
+a readable sibling sat behind it. Ask the function; never re-derive the set.
+
+Riding on it: **a retained figure is always dated**. Only `.stale` names its own age, so
+`.offline` and `.rateLimited` have it appended, and a figure with no date at all reads as current
+— which is the whole failure this page exists to avoid.
+
+**`UsageTrend.rate` anchors on the last reading, and the baseline is the first reading not above
+it.** This is the most-revised rule in the feature and the one most likely to be "simplified" back
+into a defect. A utilization only grows within its period, so every dip in one is a figure the
+server has corrected — but from two samples alone there is no telling whether the earlier was
+over-reported or the later under-reported. Three anchors were tried: the series' first sample (one
+spurious *high* reading clamped a week to a flat zero), the period's *lowest* (one spurious low
+reading collapsed the span to an hour while keeping the week's whole delta — a 60% account
+forecast to run out in forty minutes), and the period's *highest* (an interior spike every later
+reading contradicts was kept as real). The last reading escapes all three: nothing later
+contradicts it, and it is where the drawn line starts anyway. Both counter-examples are tests.
+
 `UsageHistoryStore.series(accountUUID:since:step:)` is the matching read: history thinned to one
 point per bucket **by taking the last sample in each**, never a mean. Averaging across a reset
 boundary reports a value the account never held and smears the very event a timeline exists to
