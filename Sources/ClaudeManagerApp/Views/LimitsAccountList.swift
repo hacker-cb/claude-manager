@@ -29,7 +29,15 @@ struct LimitsAccountList: View {
     /// can be exactly what gates an account — and the list whose whole job is to expose the
     /// decision's inputs was the one place it could not be seen. The column appears only when
     /// there is something to put in it, which on today's payloads is never.
-    private let otherColumn = GridItem(.flexible(minimum: 62), alignment: .topLeading)
+    ///
+    /// Inserted before the last column rather than appended: the cells go out in the order the
+    /// headings do, with "Week resets" last, so appending gave that column this one's width and
+    /// this one that column's.
+    private var gridColumns: [GridItem] {
+        var out = columns
+        out.insert(GridItem(.flexible(minimum: 62), alignment: .topLeading), at: out.count - 1)
+        return out
+    }
 
     var body: some View {
         let rows = model.limitsOverview(mode: model.limitsMode, now: now).candidates
@@ -37,7 +45,7 @@ struct LimitsAccountList: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Every account").font(.headline)
             LazyVGrid(
-                columns: showsOther ? columns + [otherColumn] : columns,
+                columns: showsOther ? gridColumns : columns,
                 alignment: .leading,
                 spacing: 12
             ) {
@@ -189,10 +197,14 @@ struct LimitsAccountList: View {
     /// date three days out, and this is the one surface whose stated job is to expose the
     /// decision's inputs. Dimmed, because nothing measured against it.
     private func retainedReset(_ row: UsageCandidate) -> Date? {
-        guard row.weeklyResetsAt == nil,
-              let resetsAt = row.account.snapshot?.weeklyAll?.resetsAt, resetsAt > now
-        else { return nil }
-        return resetsAt
+        guard row.weeklyResetsAt == nil, let snapshot = row.account.snapshot else { return nil }
+        // Both weekly windows, not just the all-models one. A snapshot can carry a per-model
+        // weekly whose reset is the only date in it — and the cell then said "unknown" over a
+        // perfectly good deadline sitting in the very snapshot it was reading, which is the one
+        // thing this fallback exists to prevent. The soonest still ahead, since that is the
+        // deadline the column's own countdown would mean.
+        let weekly = [snapshot.weeklyAll].compactMap(\.self) + snapshot.weeklyScoped
+        return weekly.compactMap(\.resetsAt).filter { $0 > now }.min()
     }
 
     private func countdown(_ resetsAt: Date) -> some View {

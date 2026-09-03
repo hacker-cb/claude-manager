@@ -75,7 +75,7 @@ struct LimitsView: View {
                 .fixedSize()
             }
             Button {
-                Task { await model.refreshUsage(interactive: true) }
+                Task { await refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -103,6 +103,21 @@ struct LimitsView: View {
         return "as of \(UsageFormat.age(oldest, now: now))"
     }
 
+    /// Re-detect, *then* read usage — the order the menu's own Refresh uses, and the reason it
+    /// is not a dead button here either.
+    ///
+    /// `refreshUsage` returns immediately while Claude.app cannot be located, before it so much
+    /// as sets `isRefreshingUsage`: nothing ran, nothing spun, nothing was reported. And this
+    /// page is deliberately reachable in exactly that state — `limitsAccounts` keeps the default
+    /// account whether or not the row for it exists — so its Refresh was the one that could be
+    /// pressed forever with no effect. Looking for Claude first is what makes the press mean
+    /// something: find it, and the usage read behind it now succeeds.
+    private func refresh() async {
+        await model.refresh()
+        guard model.usageTrackingEnabled else { return }
+        await model.refreshUsage(interactive: true)
+    }
+
     // MARK: - Empty states
 
     private var trackingOff: some View {
@@ -122,13 +137,16 @@ struct LimitsView: View {
     @ViewBuilder
     private var nothingRead: some View {
         let blocking = model.limitsBlockingFailures
+        // Three reasons now, not two. Usage is read through the installed Claude, so with it
+        // missing no amount of refreshing fetches anything — and telling that user to Refresh
+        // was the same mistake as telling a signed-out one to, one state further out.
+        let noClaude = model.realClaude == nil
         ContentUnavailableView {
-            Label(
-                blocking.isEmpty ? "No usage read yet" : "No account to rank",
-                systemImage: "chart.bar.xaxis"
-            )
+            Label(headline(noClaude: noClaude, blocking: blocking), systemImage: "chart.bar.xaxis")
         } description: {
-            if blocking.isEmpty {
+            if noClaude {
+                Text("Usage is read through the installed Claude, and it could not be located.")
+            } else if blocking.isEmpty {
                 Text("Refresh to fetch each profile's plan usage.")
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -136,8 +154,13 @@ struct LimitsView: View {
                 }
             }
         } actions: {
-            Button("Refresh") { Task { await model.refreshUsage(interactive: true) } }
+            Button(noClaude ? "Look for Claude" : "Refresh") { Task { await refresh() } }
                 .disabled(model.isRefreshingUsage)
         }
+    }
+
+    private func headline(noClaude: Bool, blocking: [String]) -> String {
+        if noClaude { return "Claude.app not found" }
+        return blocking.isEmpty ? "No usage read yet" : "No account to rank"
     }
 }

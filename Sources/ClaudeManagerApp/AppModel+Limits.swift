@@ -75,9 +75,18 @@ extension AppModel {
         let live = limitsAccounts
             .filter { !UsageOverview.needsUser($0.state) }
             .compactMap { account -> (account: AccountUsage, limit: UsageLimit)? in
-                guard let limit = account.snapshot?.bindingLimit else { return nil }
-                if let resetsAt = limit.resetsAt, resetsAt <= now { return nil }
-                return (account, limit)
+                // The elapsed *window* is dropped, never the account carrying it. Asking
+                // `bindingLimit` and discarding the whole account when its reset had passed threw
+                // away everything else in the same snapshot — and `bindingLimit` is the server's
+                // headline, frequently the 5-hour session, so a session resetting in ten minutes
+                // took a live 95% week off the row with it.
+                let live = (account.snapshot?.limits ?? []).filter { limit in
+                    guard let resetsAt = limit.resetsAt else { return true }
+                    return resetsAt > now
+                }
+                guard let worst = live.max(by: { $0.utilization < $1.utilization })
+                else { return nil }
+                return (account, worst)
             }
         guard let worst = live.max(by: { $0.limit.utilization < $1.limit.utilization })
         else { return nil }

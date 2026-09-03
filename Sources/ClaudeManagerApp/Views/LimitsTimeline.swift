@@ -37,13 +37,24 @@ struct LimitsTimeline: View {
         }
     }
 
+    /// Whether any lane carries a per-model line — asked of the history the lanes are drawn from
+    /// as well as of the snapshots, since either can have one without the other.
+    private var showsScoped: Bool {
+        if model.limitsHasScopedWindows { return true }
+        return model.limitsSeries.values.contains { points in
+            points.contains { $0.weeklyScoped != nil }
+        }
+    }
+
     private var legend: some View {
         HStack(spacing: 12) {
             key(color: .accentColor, dash: nil, text: "All models")
-            // Only where such a window exists. On a plan reporting none the purple series is
-            // never drawn, so the key named a line nobody could find — the same condition the
-            // header's mode picker is already hidden for, two views apart.
-            if model.limitsHasScopedWindows {
+            // Only where such a window is *drawn*, which is not the same question as whether one
+            // is reported now. The lanes come from history, so an account that has since gone
+            // signed-out, or a plan that stopped reporting a per-model window a few days ago,
+            // still draws purple — and gating the key on current snapshots alone left those lines
+            // with nothing explaining them, the exact inverse of the mismatch it was added for.
+            if showsScoped {
                 key(color: .purple, dash: [4, 3], text: "Per-model")
             }
             key(color: .accentColor.opacity(0.5), dash: [2, 3], text: "projected")
