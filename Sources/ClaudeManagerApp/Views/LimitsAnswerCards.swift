@@ -67,7 +67,15 @@ struct LimitsAnswerCard: View {
         // The card is the affordance for its own mode: reading one and then hunting for the
         // toggle to act on it is a step the card can absorb.
         .contentShape(Rectangle())
-        .onTapGesture { model.limitsMode = mode }
+        // Guarded, because on the lone-card path `mode` is not a choice: it is
+        // `limitsEffectiveMode`, fixed to `.scopedModel` by the fallback. A stray click there
+        // wrote that over a persisted `.otherWork` — so the picker came back on the wrong mode
+        // when the account that had hidden it signed back in, having discarded a choice the user
+        // never revisited. Where there is only one mode there is nothing for a tap to select.
+        .onTapGesture {
+            guard model.limitsHasScopedWindows else { return }
+            model.limitsMode = mode
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(model.limitsModeLabel(mode)): \(answerSummary(overview))")
     }
