@@ -17,7 +17,14 @@ extension UsagePresentationTests {
     ) -> AccountUsage {
         AccountUsage(
             identity: AccountIdentity(uuid: uuid, email: email),
-            snapshot: hasFigures ? UsageSnapshot(limits: []) : nil,
+            // A real window, not an empty snapshot: the rule under test asks whether there is
+            // anything to *show*, and a test whose "figures" are an empty array would pass just
+            // as happily against a rule that had stopped asking.
+            snapshot: hasFigures
+                ? UsageSnapshot(limits: [
+                    UsageLimit(rawKind: UsageLimit.kindWeeklyAll, utilization: 0.42)
+                ])
+                : nil,
             state: state,
             bindingIDs: bindingIDs
         )
@@ -55,18 +62,9 @@ extension UsagePresentationTests {
     }
 
     @Test
-    func freshnessStillDecidesWhenNeitherSideHasFigures() {
-        // The third question is only reached once the second is a tie — and there it still
-        // answers, since a fresh binding is the one the next pass will fill.
-        let offline = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
-        let fresh = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
-        let picked = UsagePresentation.onePerAccount(["aaa": offline, "zzz": fresh])
-        #expect(picked.first?.state == .fresh)
-    }
-
-    @Test
     func aFreshSiblingStillOutranksAReadableOne() {
-        // The top rung survives the middle one being added.
+        // Neither side has figures, so the question above is a tie and freshness is what is left
+        // to decide on — and it should, since a fresh binding is the one the next pass will fill.
         let offline = entry(uuid: "A", state: .offline, bindingIDs: ["aaa", "zzz"])
         let fresh = entry(uuid: "A", bindingIDs: ["aaa", "zzz"])
         let picked = UsagePresentation.onePerAccount(["aaa": offline, "zzz": fresh])
