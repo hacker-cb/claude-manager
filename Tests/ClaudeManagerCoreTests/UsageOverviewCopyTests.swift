@@ -243,5 +243,10 @@ struct UsageOverviewCopyTests {
         #expect(UsageFormat.compactDuration(10320) == "2h 52m")
         #expect(UsageFormat.compactDuration(86400) == "1d 0h")
         #expect(UsageFormat.compactDuration(506_400) == "5d 20h")
+        // `Int(_:)` traps on these, and a formatter must not take the process down. `NaN` needs
+        // no guard of its own: every comparison against it is false, so it lands on `now`.
+        #expect(UsageFormat.compactDuration(.infinity) == "later")
+        #expect(UsageFormat.compactDuration(1e30) == "later")
+        #expect(UsageFormat.compactDuration(.nan) == "now")
     }
 }
