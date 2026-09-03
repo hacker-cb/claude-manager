@@ -126,24 +126,23 @@ struct LimitsTimelineLane: View {
     /// has been spent since it last turned over — measured from the period boundary the reset
     /// itself gives, rather than from a drop `UsageTrend` might not be able to see.
     ///
-    /// It **ends where the window would run out**, when that comes first. Drawn only to the reset
-    /// the endpoint is clamped to 1, so a quota heading for exhaustion on Friday was drawn
-    /// reaching 100% on Sunday — the line said the right thing about the level and the wrong
-    /// thing about the date, which is the half a timeline is read for.
+    /// Where it ends is `UsageTrend.forecast`'s call, not this view's: it **ends where the window
+    /// would run out**, when that comes first. Drawn only to the reset, the endpoint is clamped
+    /// to 1, so a quota heading for exhaustion on Friday was drawn reaching 100% on Sunday — the
+    /// line said the right thing about the level and the wrong thing about the date, which is the
+    /// half a timeline is read for.
     private func projection(_ window: KeyPath<UsageSeriesPoint, Double?>) -> [Plot] {
-        guard projectable(window), let resetsAt = reset(for: window), resetsAt > now,
-              let last = history(window).last
+        guard projectable(window), let resetsAt = reset(for: window),
+              let last = history(window).last,
+              let end = UsageTrend.forecast(
+                  of: window,
+                  in: points,
+                  until: resetsAt,
+                  since: resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow),
+                  now: now
+              )
         else { return [] }
-        let periodStart = resetsAt.addingTimeInterval(-LimitEvaluator.sevenDayWindow)
-        if let runsOut = UsageTrend.exhausts(
-            of: window, in: points, before: resetsAt, since: periodStart
-        ) {
-            return [Plot(at: last.at, value: last.value), Plot(at: runsOut, value: 1)]
-        }
-        guard let ahead = UsageTrend.projected(
-            of: window, in: points, at: resetsAt, since: periodStart
-        ) else { return [] }
-        return [Plot(at: last.at, value: last.value), Plot(at: resetsAt, value: ahead)]
+        return [Plot(at: last.at, value: last.value), Plot(at: end.at, value: end.value)]
     }
 
     /// Whether a forecast for this window would mean anything.

@@ -77,8 +77,13 @@ public extension UsageOverview {
     static func stateLabel(for candidate: UsageCandidate, now: Date = Date()) -> String {
         guard !candidate.isCurrent else { return stateLabel(candidate.state) }
         switch candidate.state {
-        // Both already speak for the account rather than for a position in the ranking.
-        case .needsAttention, .noData: return stateLabel(candidate.state)
+        // Already the account's own condition rather than a position in the ranking.
+        case .needsAttention: return stateLabel(candidate.state)
+        // `.noData` is *not* one of those, which is easy to read the wrong way round: a first
+        // pass that never got a snapshot lands here whether nothing was asked or the network was
+        // down, and "Not checked yet" over an offline account states the one thing that is not
+        // true. It keeps that label only where the account really is `.fresh` — which the guard
+        // above has already sent home.
         default: return condition(candidate.account, now: now)
         }
     }
@@ -153,9 +158,25 @@ public extension UsageOverview {
     private static func datedFigure(
         for candidate: UsageCandidate, limit: UsageLimit?, now: Date
     ) -> String {
-        let note = UsagePresentation.stateNote(candidate.account, now: now)
+        let note = dated(UsagePresentation.stateNote(candidate.account, now: now), candidate, now)
         guard let limit else { return note }
         return "\(limit.shortLabel) \(UsageFormat.percent(limit.utilization)) · \(note)"
+    }
+
+    /// The age of the figures, where saying what is wrong has not already given it.
+    ///
+    /// `.stale` carries its own "as of …"; `.offline` and `.rateLimited` do not, and a snapshot is
+    /// retained under those indefinitely — so "7d 60% · offline" was a percentage with no date on
+    /// it at all, which is the one thing this sentence exists to supply. `headerNote` dates them
+    /// the same way, for the same reason.
+    private static func dated(_ note: String, _ candidate: UsageCandidate, _ now: Date) -> String {
+        switch candidate.account.state {
+        case .offline, .rateLimited:
+            guard let capturedAt = candidate.account.snapshot?.capturedAt else { return note }
+            return "\(note) · as of \(UsageFormat.age(capturedAt, now: now))"
+        case .fresh, .stale, .loginNeeded, .noSource:
+            return note
+        }
     }
 
     private static func gatedReason(for candidate: UsageCandidate, now: Date) -> String {

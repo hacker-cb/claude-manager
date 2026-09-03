@@ -46,6 +46,52 @@ struct UsageOverviewCopyTests {
         return try UsageOverview.reason(for: #require(overview.candidates.first), now: now)
     }
 
+    private func chip(_ account: AccountUsage, mode: WorkMode = .scopedModel) throws -> String {
+        let overview = UsageOverview.rank(accounts: [account], mode: mode, now: now)
+        return try UsageOverview.stateLabel(for: #require(overview.candidates.first), now: now)
+    }
+
+    // MARK: - Figures that stopped moving never speak as pacing
+
+    @Test
+    func aRetainedFigureIsShownWithItsConditionRatherThanAPace() throws {
+        // A stale account keeps its snapshot, so `assess` still gives it a budget state — and a
+        // dimmed "Use it or lose it" over yesterday's numbers is advice all the same. The figure
+        // survives, correctly dated; the verdict does not.
+        let windows = [limit(UsageLimit.kindWeeklyAll, 0.6, resetsIn: halfWeek)]
+        let since = now.addingTimeInterval(-6 * 3600)
+        let stale = account("a", limits: windows, state: .stale(since: since))
+        #expect(try chip(stale) == "As of \(UsageFormat.age(since, now: now))")
+        let text = try reason(stale)
+        #expect(text.contains(UsageFormat.percent(0.6)))
+        #expect(!text.contains("on pace"))
+        #expect(!text.contains("use it or lose it"))
+    }
+
+    @Test
+    func anOfflineFigureCarriesItsOwnAgeBecauseTheConditionDoesNot() throws {
+        // `.stale` says how old it is; `.offline` and `.rate limited` do not, and a snapshot is
+        // retained under those indefinitely — so the figure has to date itself or read as current.
+        let windows = [limit(UsageLimit.kindWeeklyAll, 0.6, resetsIn: halfWeek)]
+        let text = try reason(account("a", limits: windows, state: .offline))
+        #expect(text.contains("offline"))
+        #expect(text.contains("as of"))
+    }
+
+    @Test
+    func aFirstPassThatFailedNamesTheFailureRatherThanCallingItUnchecked() throws {
+        // Nothing stored *and* the account offline lands in `.noData`, whose own label —
+        // "Not checked yet" — states the one thing that is not true.
+        #expect(try chip(account("a", limits: [], state: .offline)) == "Offline")
+        #expect(try chip(account("b", limits: [], state: .rateLimited)) == "Rate limited")
+        // Genuinely nothing asked yet keeps the generic label. Built directly, because the
+        // helper gives a `.fresh` account an empty snapshot rather than none.
+        let unread = AccountUsage(
+            identity: AccountIdentity(uuid: "c"), snapshot: nil, state: .fresh, bindingIDs: ["c"]
+        )
+        #expect(try chip(unread) == "Not checked yet")
+    }
+
     // MARK: - Naming the mode from data, never from a literal
 
     @Test

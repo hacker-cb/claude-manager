@@ -19,12 +19,22 @@ struct ProfileListView: View {
                 // The default-profile row keeps the list from ever being empty, so the
                 // "create a launcher" nudge is an inline, non-selectable hint below it rather
                 // than a full-list overlay that would float over the default row.
-                if model.profiles.isEmpty, model.realClaude != nil {
-                    Text("Create a launcher to run another Claude profile side by side.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
-                        .listRowBackground(Color.clear)
+                //
+                // Except that the default row is *gone* while Claude.app cannot be located, and
+                // with no clones either the section was a "Profiles" header over nothing —
+                // introduced by the section itself, which the flat list had no way to show. So
+                // the hint stands in for the row as well as for the nudge, and says which of the
+                // two situations this is.
+                if model.profiles.isEmpty {
+                    Text(
+                        model.realClaude == nil
+                            ? "No profiles: Claude.app was not found."
+                            : "Create a launcher to run another Claude profile side by side."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+                    .listRowBackground(Color.clear)
                 }
             }
         }

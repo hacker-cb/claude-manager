@@ -146,6 +146,33 @@ public enum UsageTrend {
         return hit < limit ? hit : nil
     }
 
+    /// Where the dashed continuation ends: the moment the window runs out, or the level it
+    /// reaches by its reset — whichever comes first. Nil when there is nothing to forecast.
+    ///
+    /// The whole decision, rather than the two halves of it, because the *drawing* rule turned
+    /// out to be part of the arithmetic. `exhausts` answers from the last reading, and under
+    /// "Manually only" that reading can be hours old while the account is still perfectly
+    /// `.fresh` — a window read an hour ago at 96% and climbing lands its crossing *before* now,
+    /// so the entire "projected" segment was drawn to the left of the `now` rule with the moment
+    /// it hits 100% sitting in the past. A crossing already behind the clock is reported at the
+    /// clock: by this reckoning the window is out, and "out now" is the honest way to draw that.
+    public static func forecast(
+        of window: KeyPath<UsageSeriesPoint, Double?>,
+        in points: [UsageSeriesPoint],
+        until resetsAt: Date,
+        since periodStart: Date? = nil,
+        now: Date
+    ) -> (at: Date, value: Double)? {
+        // A reset already behind us is not a horizon: the period this would forecast is over.
+        guard resetsAt > now else { return nil }
+        if let runsOut = exhausts(of: window, in: points, before: resetsAt, since: periodStart) {
+            return (max(runsOut, now), 1)
+        }
+        guard let ahead = projected(of: window, in: points, at: resetsAt, since: periodStart)
+        else { return nil }
+        return (resetsAt, ahead)
+    }
+
     /// Index of the first point of the current period: just after the last drop, or 0.
     ///
     /// A "drop" is any decrease — the reset is the only thing that lowers a utilization, and a

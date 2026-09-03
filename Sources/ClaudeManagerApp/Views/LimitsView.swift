@@ -88,14 +88,17 @@ struct LimitsView: View {
     /// How old the figures behind the answer are — the oldest of them, since the page speaks for
     /// the fleet and a single stale account is what would make its ranking wrong.
     ///
-    /// Only accounts the ranking actually reads. A signed-out profile keeps its last snapshot
-    /// indefinitely and `assess` answers before ever looking at it, so counting those made the
-    /// header say "as of 3 weeks ago" over figures every ranked account had refreshed a minute
-    /// earlier.
+    /// Exactly the accounts whose snapshots the ranking reads, which is neither of the two
+    /// obvious sets. Counting *every* account made the header say "as of 3 weeks ago" over
+    /// figures each ranked account had refreshed a minute earlier — a signed-out profile keeps
+    /// its last snapshot indefinitely and `assess` answers before ever looking at it. Narrowing
+    /// to `.fresh` then cut the opposite way: a stale, offline or rate-limited account still has
+    /// its retained windows read and drawn, so "as of just now" stood over a candidate whose
+    /// figures were days old. `.needsAttention` is the line, and it is the ranking's own.
     private func freshness(now: Date) -> String? {
-        let captured = model.limitsAccounts
-            .filter { $0.state == .fresh }
-            .compactMap(\.snapshot?.capturedAt)
+        let captured = model.limitsOverview(mode: model.limitsMode, now: now).candidates
+            .filter { $0.state != .needsAttention }
+            .compactMap(\.account.snapshot?.capturedAt)
         guard let oldest = captured.min() else { return nil }
         return "as of \(UsageFormat.age(oldest, now: now))"
     }

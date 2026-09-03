@@ -263,6 +263,50 @@ struct UsageTrendTests {
         #expect(UsageTrend.projected(of: \.weeklyAll, in: series, at: start) == nil)
     }
 
+    // MARK: - Forecast
+
+    @Test
+    func aCrossingAlreadyBehindTheClockIsReportedAtTheClock() throws {
+        // Under "Manually only" the last reading can be hours old on an account that is still
+        // perfectly `.fresh`. Read an hour ago at 96% and climbing, the crossing lands *before*
+        // now — and the whole "projected" segment was drawn to the left of the `now` mark, with
+        // the moment it hits 100% sitting in the past.
+        let series = points([(0, 0.90), (1, 0.96)])
+        let now = start.addingTimeInterval(3 * Self.hour)
+        let forecast = try #require(UsageTrend.forecast(
+            of: \.weeklyAll,
+            in: series,
+            until: start.addingTimeInterval(72 * Self.hour),
+            since: start,
+            now: now
+        ))
+        #expect(forecast.value == 1)
+        #expect(forecast.at == now)
+    }
+
+    @Test
+    func aWindowStillClimbingIsForecastToItsReset() {
+        let series = points([(0, 0.10), (10, 0.20)])
+        let resetsAt = start.addingTimeInterval(30 * Self.hour)
+        let forecast = UsageTrend.forecast(
+            of: \.weeklyAll, in: series, until: resetsAt, since: start, now: start
+        )
+        #expect(forecast?.at == resetsAt)
+        #expect(isClose(forecast?.value, 0.40))
+    }
+
+    @Test
+    func nothingIsForecastPastAResetThatHasPassed() {
+        let series = points([(0, 0.10), (10, 0.20)])
+        #expect(UsageTrend.forecast(
+            of: \.weeklyAll,
+            in: series,
+            until: start.addingTimeInterval(Self.hour),
+            since: start,
+            now: start.addingTimeInterval(2 * Self.hour)
+        ) == nil)
+    }
+
     // MARK: - Running out
 
     @Test
