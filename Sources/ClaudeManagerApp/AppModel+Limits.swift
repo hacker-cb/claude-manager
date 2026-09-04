@@ -52,7 +52,15 @@ extension AppModel {
             trimmed.bindingIDs = usage.bindingIDs.filter(live.contains)
             scoped[binding] = trimmed
         }
-        return UsagePresentation.onePerAccount(scoped)
+        // **Sorted here, once.** Everything downstream — the ranking, the table, the timeline,
+        // the sidebar subtitle, the header's age — reads this one sequence, and `rank` carries
+        // the order through to `UsageOverview.listed` rather than applying an order of its own.
+        // `onePerAccount` settles ties toward the lowest uuid, which is stable but arbitrary on
+        // screen; the fleet order is the one a reader already knows from the sidebar.
+        return UsagePresentation.inFleetOrder(
+            UsagePresentation.onePerAccount(scoped),
+            bindingOrder: profileEntries.map(\.id)
+        )
     }
 
     /// The worst window across the ranked fleet, for the sidebar row's subtitle.

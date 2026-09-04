@@ -104,6 +104,53 @@ extension UsagePresentationTests {
         #expect(picked.first?.bindingIDs.count == 2)
     }
 
+    // MARK: - Fleet order
+
+    @Test
+    func anAccountTakesThePositionOfItsFirstProfile() {
+        // Accounts are not profiles: a login shared by several launchers has no position of its
+        // own, so it takes its earliest one — where a reader's eye looks for it.
+        let shared = entry(uuid: "A", bindingIDs: ["work", "spare"])
+        let solo = entry(uuid: "B", bindingIDs: ["alpha"])
+        let ordered = UsagePresentation.inFleetOrder(
+            [shared, solo], bindingOrder: ["__default__", "alpha", "spare", "work"]
+        )
+        #expect(ordered.map(\.identity.uuid) == ["B", "A"])
+    }
+
+    @Test
+    func theOrderIsTheOneHandedInNotOneDerivedHere() {
+        // Case and locale are settled by whoever built `bindingOrder` — re-deriving them here is
+        // how two orders that must agree start disagreeing. Given a deliberately un-alphabetical
+        // sequence, this follows it rather than sorting the names again.
+        let a = entry(uuid: "A", bindingIDs: ["zebra"])
+        let b = entry(uuid: "B", bindingIDs: ["alpha"])
+        let ordered = UsagePresentation.inFleetOrder([b, a], bindingOrder: ["zebra", "alpha"])
+        #expect(ordered.map(\.identity.uuid) == ["A", "B"])
+    }
+
+    @Test
+    func anAccountOnNoListedBindingKeepsAPlace() {
+        // A fleet is never silently short a row: an unplaceable account sorts after everything
+        // known rather than disappearing from the table.
+        let placed = entry(uuid: "A", bindingIDs: ["alpha"])
+        let orphan = entry(uuid: "B", bindingIDs: ["vanished"])
+        let ordered = UsagePresentation.inFleetOrder(
+            [orphan, placed], bindingOrder: ["alpha"]
+        )
+        #expect(ordered.map(\.identity.uuid) == ["A", "B"])
+    }
+
+    @Test
+    func twoUnplaceableAccountsStillHaveAStableOrder() {
+        let x = entry(uuid: "X", bindingIDs: ["gone"])
+        let m = entry(uuid: "M", bindingIDs: ["also-gone"])
+        #expect(
+            UsagePresentation.inFleetOrder([x, m], bindingOrder: []).map(\.identity.uuid)
+                == ["M", "X"]
+        )
+    }
+
     @Test
     func aDetachedRowNeverSpeaksForALoginThatStillHasMembers() {
         // The Doctor inspector lists logins, so it picks one entry per uuid — and it used to take
