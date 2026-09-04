@@ -119,6 +119,14 @@ commit on `master` that `dev` never took back, and `strict_required_status_check
 on — so GitHub requires the branch to be up to date even when the two carry identical
 content.
 
+**Read "can" as "always", and do not measure it early.** The merge commit is not an accident
+some releases leave behind: it is what merging the release PR *as a merge commit* produces, on
+`master`, every time. So this sync is the first step of every release rather than a conditional
+one — and a check of whether it is needed answers correctly only **after the previous release
+PR has merged**. Taken any earlier — right after the previous sync landed, say — it reports the
+two branches level and stays wrong from the moment the release merges. v0.15.0 nearly shipped on
+exactly such a stale reading.
+
 Two things make that awkward to fix, and both are worth knowing before you hit them:
 
 - **`dev` cannot be pushed to directly** (repository rules require status checks on any
