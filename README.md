@@ -68,7 +68,9 @@ The first time you re-activate an *already-running* profile, macOS asks for
   window's leftovers do not roll over, so the account whose remaining budget is about to
   be lost is the one to spend. Separate answers for work that draws on a per-model weekly
   limit and work that does not, a timeline of every account's week (a week behind, a week
-  ahead, with the projected trend), and a button to open the profile it recommends. The
+  ahead, with the projected trend), and a button to open the profile it recommends. The table
+  and the timeline list your accounts in the same order as the sidebar, so a row stays where you
+  last saw it; the recommendation itself is on the card. The
   same two answers sit at the top of the menu bar, needing no window at all. Requires
   usage tracking (below).
 - **Doctor** — health checks for the real app, each launcher, orphaned profile

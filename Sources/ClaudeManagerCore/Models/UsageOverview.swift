@@ -152,11 +152,23 @@ public struct UsageCandidate: Sendable, Equatable, Identifiable {
 /// stored state — which is what lets `swift test` cover every rule in it, and what keeps the
 /// page and the menu bar drawing one decision instead of two similar ones.
 public struct UsageOverview: Sendable, Equatable {
+    /// The fleet **ranked** — best place for work first. This is the answer, and what `leader`,
+    /// `chain` and the damping are built from. It is *not* what a table draws.
     public var candidates: [UsageCandidate]
+    /// The same candidates in the order the fleet is listed **everywhere else in the app**:
+    /// whatever order the accounts were handed to `rank` in.
+    ///
+    /// Two different jobs that were being done by one sequence. A ranked table re-sorts itself
+    /// under the reader on every poll — a row moves because some *other* account's week ticked
+    /// over — so an account is never twice in the same place, and scanning for one means reading
+    /// every row. A table is read by position; the recommendation is carried by the answer card,
+    /// which is the surface that exists to carry it, and by each row's own state chip.
+    public var listed: [UsageCandidate]
     public var mode: WorkMode
 
-    public init(candidates: [UsageCandidate], mode: WorkMode) {
+    public init(candidates: [UsageCandidate], listed: [UsageCandidate], mode: WorkMode) {
         self.candidates = candidates
+        self.listed = listed
         self.mode = mode
     }
 
@@ -191,6 +203,11 @@ public struct UsageOverview: Sendable, Equatable {
     /// `previousLeader` is the account uuid this overview last recommended, and it exists only to
     /// damp the answer (see `stickyMargin`); the app layer holds it, so this stays a function of
     /// its arguments. Pass nil for an undamped ranking.
+    ///
+    /// **`accounts` arrives in the order the surfaces will list it in** — `listed` is exactly
+    /// that sequence, assessed. Callers hand over the fleet already sorted (see
+    /// `UsagePresentation.inFleetOrder`) rather than this function taking an ordering rule of its
+    /// own, so the table, the timeline and the sidebar cannot drift apart.
     public static func rank(
         accounts: [AccountUsage],
         mode: WorkMode,
@@ -201,6 +218,10 @@ public struct UsageOverview: Sendable, Equatable {
         let ordered = assessed.sorted(by: precedes)
         return UsageOverview(
             candidates: applyStickiness(ordered, previousLeader: previousLeader),
+            // **The input order is the display order**, and that is the whole mechanism: there is
+            // one sorted sequence of accounts, the caller's, and this preserves it rather than
+            // taking a second ordering rule that could drift from the first.
+            listed: assessed,
             mode: mode
         )
     }

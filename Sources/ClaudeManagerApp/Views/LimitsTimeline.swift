@@ -18,20 +18,20 @@ struct LimitsTimeline: View {
     }
 
     var body: some View {
-        let ranked = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).candidates
+        let lanes = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).listed
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text("This week").font(.headline)
                 Spacer()
-                legend(ranked)
+                legend(lanes)
             }
-            ForEach(Array(ranked.enumerated()), id: \.element.id) { index, candidate in
+            ForEach(Array(lanes.enumerated()), id: \.element.id) { index, candidate in
                 LimitsTimelineLane(
                     candidate: candidate,
                     points: model.limitsSeries[candidate.id] ?? [],
                     range: range,
                     now: now,
-                    showsAxis: index == ranked.count - 1
+                    showsAxis: index == lanes.count - 1
                 )
             }
         }
@@ -40,19 +40,19 @@ struct LimitsTimeline: View {
     /// Whether any lane carries a per-model line — asked of the history the lanes are drawn from
     /// as well as of the snapshots, since either can have one without the other.
     ///
-    /// Of the **ranked** accounts' history, not of every key in `limitsSeries`. That map is
+    /// Of the **listed** accounts' history, not of every key in `limitsSeries`. That map is
     /// rebuilt only by `loadLimitsSeries`, while the lanes drop a deleted launcher on the very
     /// next render — so a deleted account's series lingered under its uuid (under "Manually only",
     /// possibly for ever) and kept a key on screen for a line nobody could find: the exact inverse
     /// of the mismatch this fallback was added for.
-    private func showsScoped(_ ranked: [UsageCandidate]) -> Bool {
+    private func showsScoped(_ lanes: [UsageCandidate]) -> Bool {
         if model.limitsHasScopedWindows { return true }
-        return ranked.contains { candidate in
+        return lanes.contains { candidate in
             (model.limitsSeries[candidate.id] ?? []).contains { $0.weeklyScoped != nil }
         }
     }
 
-    private func legend(_ ranked: [UsageCandidate]) -> some View {
+    private func legend(_ lanes: [UsageCandidate]) -> some View {
         HStack(spacing: 12) {
             key(color: .accentColor, dash: nil, text: "All models")
             // Only where such a window is *drawn*, which is not the same question as whether one
@@ -60,7 +60,7 @@ struct LimitsTimeline: View {
             // signed-out, or a plan that stopped reporting a per-model window a few days ago,
             // still draws purple — and gating the key on current snapshots alone left those lines
             // with nothing explaining them, the exact inverse of the mismatch it was added for.
-            if showsScoped(ranked) {
+            if showsScoped(lanes) {
                 key(color: .purple, dash: [4, 3], text: "Per-model")
             }
             key(color: .accentColor.opacity(0.5), dash: [2, 3], text: "projected")
