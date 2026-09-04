@@ -130,6 +130,32 @@ extension UsagePresentationTests {
     }
 
     @Test
+    func aBindingPrefixedIntoTheOrderTakesTheFirstPlace() {
+        // The app prepends the default binding because its sidebar row disappears while
+        // Claude.app cannot be located, and the default account keeps ranking regardless. Read
+        // off the rows alone it matched nothing and sorted to the bottom of the table — a row at
+        // the far end and back again, which is the churn this ordering exists to stop.
+        let other = entry(uuid: "B", bindingIDs: ["alpha"])
+        let defaulted = entry(uuid: "A", bindingIDs: ["__default__"])
+        let ordered = UsagePresentation.inFleetOrder(
+            [other, defaulted], bindingOrder: ["__default__", "alpha"]
+        )
+        #expect(ordered.map(\.identity.uuid) == ["A", "B"])
+    }
+
+    @Test
+    func aRepeatedBindingKeepsItsEarliestPlace() {
+        // The prefix is harmless where the row is present: the earliest occurrence wins, so
+        // prepending a binding the list already opens with changes nothing.
+        let a = entry(uuid: "A", bindingIDs: ["__default__"])
+        let b = entry(uuid: "B", bindingIDs: ["zed"])
+        let ordered = UsagePresentation.inFleetOrder(
+            [b, a], bindingOrder: ["__default__", "__default__", "zed"]
+        )
+        #expect(ordered.map(\.identity.uuid) == ["A", "B"])
+    }
+
+    @Test
     func anAccountOnNoListedBindingKeepsAPlace() {
         // A fleet is never silently short a row: an unplaceable account sorts after everything
         // known rather than disappearing from the table.
