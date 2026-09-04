@@ -521,7 +521,8 @@ model is data (above), so a `.fable` case would hard-code the one thing this cod
 window reopened later would otherwise come back where it was left. It carries an answer card per
 mode (with the button that opens the profile it names), a Swift Charts timeline of every account's
 weekly windows on one axis — a week behind, a week ahead, `now` down the middle, with the dashed
-continuation `UsageTrend` projects — and the ranked list the cards read their leader from. Two
+continuation `UsageTrend` projects — and a list of the whole fleet, with the bars each decision
+was made from. Two
 **"Now" rows** at the top of the menu bar say the same thing where it is actually asked most
 often, needing neither a window nor a Dock icon. The menu-bar *status item* is untouched: it shows
 the worst window across the fleet, which is a warning rather than an answer to "where".
@@ -531,6 +532,22 @@ The damping state lives in `AppModel` and is settled once per usage pass
 effect of being drawn would settle differently depending on how often the window happened to be
 open. Extra usage is deliberately
 outside all of this — it is money, not a window.
+
+**The ranking answers, the list enumerates, and they are two orders of one sequence.**
+`UsageOverview` carries both: `candidates` is ranked and is what `leader`, the "then A → B" chain
+and the damping are built from; `listed` is the fleet in the order the sidebar shows it — default
+profile first, then clones by name — and is what the table and the timeline lanes draw. A ranked
+*table* re-sorts itself under the reader on every poll, since a row moves when some **other**
+account's week ticks over, so an account is never twice in the same place and finding one means
+reading every row. Position is what a table is scanned by.
+
+The mechanism is deliberately not a second sorting rule: `rank` takes `accounts` **already in the
+order the surfaces will list them** and `listed` is exactly that sequence, assessed.
+`AppModel.limitsAccounts` sorts once, through `UsagePresentation.inFleetOrder`, and everything
+downstream reads that one sequence. Accounts are not profiles — a login shared by several
+launchers takes the position of its first one — and case and locale belong to whoever built the
+binding order (`LauncherBundle.scan`, `localizedCaseInsensitiveCompare`), never to a second
+derivation that could drift from it.
 
 **One question every surface must answer the same way: does the ranking read this account's
 snapshot?** `UsageOverview.needsUser` is that question, and it is public for exactly this reason.

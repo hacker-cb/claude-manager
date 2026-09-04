@@ -162,6 +162,45 @@ public enum UsagePresentation {
         return score
     }
 
+    /// The fleet in the order every surface lists it in: by where each account's profiles sit in
+    /// the sidebar, which is the default profile first and then the clones by name.
+    ///
+    /// **Accounts are not profiles**, which is the whole difficulty. A login can be shared by
+    /// several launchers, so an account has no position of its own — it takes the position of its
+    /// *first* profile, since that is where a reader's eye will look for it. An account whose
+    /// bindings are none of the listed ones keeps a place rather than vanishing: it sorts after
+    /// everything known, by uuid, so a fleet is never silently short a row.
+    ///
+    /// What that buys is stability against **other** accounts moving, which is the churn worth
+    /// stopping: a row no longer travels because someone else's week ticked over. It is not
+    /// stability against an account's own membership changing — a login shared by the first and
+    /// fifth profiles moves to the fifth if the first stops speaking for it. That is the honest
+    /// answer rather than a gap: position follows where the account actually lives, and taking
+    /// the minimum over bindings that are no longer live would seat it at a launcher that is
+    /// not there.
+    ///
+    /// Case and locale are not decided here. `bindingOrder` is already in the order the app
+    /// computed — `LauncherBundle.scan` sorts launchers with `localizedCaseInsensitiveCompare` —
+    /// and re-deriving that from names here is exactly how two orders that must agree start
+    /// disagreeing.
+    public static func inFleetOrder(
+        _ accounts: [AccountUsage],
+        bindingOrder: [String]
+    ) -> [AccountUsage] {
+        var position: [String: Int] = [:]
+        for (index, id) in bindingOrder.enumerated() where position[id] == nil {
+            position[id] = index
+        }
+        func rank(_ account: AccountUsage) -> Int {
+            account.bindingIDs.compactMap { position[$0] }.min() ?? bindingOrder.count
+        }
+        return accounts.sorted {
+            let left = rank($0), right = rank($1)
+            if left != right { return left < right }
+            return $0.identity.uuid < $1.identity.uuid
+        }
+    }
+
     /// The member profile to name a login after, when the login itself has no name yet.
     ///
     /// The default profile wins where it is a member, and that precedence is load-bearing rather
