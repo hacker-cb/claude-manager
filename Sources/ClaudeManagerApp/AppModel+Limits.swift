@@ -30,7 +30,22 @@ extension AppModel {
     /// the ranking exactly when the missing-Claude banner was already on screen, taking the menu
     /// rows and the timeline with it on a single-profile setup.
     var liveBindingIDs: Set<String> {
-        Set(profileEntries.map(\.id)).union([TokenBinding.defaultID])
+        Set(fleetBindingOrder)
+    }
+
+    /// The same bindings, in the order the sidebar lists them — which is what an account's row
+    /// position is read off.
+    ///
+    /// The default binding is **prepended**, not assumed to be in `profileEntries`: that row
+    /// disappears while Claude.app cannot be located, and the paired set above adds it back for
+    /// exactly that reason — the account still ranks. Taken from the rows alone, the default
+    /// account matched no listed binding during an update's bundle swap and sorted to the bottom
+    /// of the table and the timeline, then back to the top when the install finished. A row
+    /// jumping to the far end and back is the one thing ordering by fleet position exists to
+    /// prevent. Where the row *is* present it already comes first, and `inFleetOrder` keeps the
+    /// earliest occurrence, so the prefix changes nothing in the ordinary case.
+    var fleetBindingOrder: [String] {
+        [TokenBinding.defaultID] + profileEntries.map(\.id)
     }
 
     // One entry per Claude account, not per profile.
@@ -52,7 +67,15 @@ extension AppModel {
             trimmed.bindingIDs = usage.bindingIDs.filter(live.contains)
             scoped[binding] = trimmed
         }
-        return UsagePresentation.onePerAccount(scoped)
+        // **Sorted here, once.** Everything downstream — the ranking, the table, the timeline,
+        // the sidebar subtitle, the header's age — reads this one sequence, and `rank` carries
+        // the order through to `UsageOverview.listed` rather than applying an order of its own.
+        // `onePerAccount` settles ties toward the lowest uuid, which is stable but arbitrary on
+        // screen; the fleet order is the one a reader already knows from the sidebar.
+        return UsagePresentation.inFleetOrder(
+            UsagePresentation.onePerAccount(scoped),
+            bindingOrder: fleetBindingOrder
+        )
     }
 
     /// The worst window across the ranked fleet, for the sidebar row's subtitle.

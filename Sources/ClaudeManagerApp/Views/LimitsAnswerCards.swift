@@ -185,6 +185,10 @@ struct LimitsAnswerCard: View {
 
     /// The order after the leader, as names — the "and then?" the card would otherwise provoke.
     ///
+    /// Reads `candidates`, the **ranked** order, and must keep doing so: "then" is a question
+    /// about standing, and answering it from `listed` would name whichever account happens to sit
+    /// next in the sidebar. The table beside it lists; this ranks. They are meant to differ.
+    ///
     /// Only accounts work could actually go to. Listing the ranking's tail unfiltered put "then
     /// Alice → Bob" directly beneath "Nobody right now", offering three addresses one line after
     /// saying there were none — and named signed-out and exhausted accounts as the next option

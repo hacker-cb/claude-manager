@@ -1,11 +1,14 @@
 import ClaudeManagerCore
 import SwiftUI
 
-/// The fleet in ranked order, with every window it has.
+/// The whole fleet, in the order the sidebar lists it, with every window each account has.
 ///
-/// The order *is* the answer — the same ranking the cards read their leader from — so this is the
-/// place someone checks the recommendation rather than takes it on trust: the bars beside each row
-/// are what the decision was made from.
+/// This is where someone checks the recommendation rather than taking it on trust: the bars beside
+/// each row are what the decision was made from, and each row's chip says where that account
+/// stands. The *answer* is the card's job, not this table's — a table sorted by rank re-orders
+/// itself under the reader on every poll, so an account is never twice in the same place and
+/// finding one means reading every row. Position is what a table is scanned by, so position is
+/// what stays put.
 struct LimitsAccountList: View {
     @EnvironmentObject private var model: AppModel
     let now: Date
@@ -41,7 +44,7 @@ struct LimitsAccountList: View {
     }
 
     var body: some View {
-        let rows = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).candidates
+        let rows = model.limitsOverview(mode: model.limitsEffectiveMode, now: now).listed
         let showsOther = rows.contains { !($0.account.snapshot?.otherLimits ?? []).isEmpty }
         VStack(alignment: .leading, spacing: 10) {
             Text("Every account").font(.headline)
