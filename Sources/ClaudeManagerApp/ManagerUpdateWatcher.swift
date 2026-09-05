@@ -102,9 +102,33 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
     ) -> Bool {
+        // A critical update is the one case Sparkle escalates by itself — it presents that one
+        // immediately rather than waiting to be found — and taking it over would trade an
+        // escalation for a control the user has to go looking for. Handed straight back.
+        guard !item.isCriticalUpdate else { return false }
         installStagedBuild = immediateInstallHandler
         remember(version: item.displayVersionString, build: item.versionString, staged: true)
+        // Claim the install only where the offer actually stands. `remember` drops a release
+        // this build has caught up with — an unreadable version reads as exactly that — which
+        // leaves no control on screen at all: answering `true` there would stall Sparkle's
+        // cycle for the rest of the session in exchange for nothing.
+        guard state.isWaitingForAPress else {
+            installStagedBuild = nil
+            return false
+        }
         return true
+    }
+
+    /// The update cycle gave up after the build was staged.
+    ///
+    /// The handler kept from `willInstallUpdateOnQuit:` holds its driver weakly, so once
+    /// Sparkle releases that driver the press is a silent no-op — and a panel still saying
+    /// "ready to install" over a dead button is worse than one admitting the release has to be
+    /// fetched again. Falls back to `.available`, whose press opens Sparkle's window and starts
+    /// the download over.
+    func updater(_: SPUUpdater, didAbortWithError _: Error) {
+        installStagedBuild = nil
+        if case let .downloaded(version) = state { state = .available(version: version) }
     }
 
     /// Install the staged build now and relaunch. No-op with nothing staged — the control that
@@ -141,11 +165,11 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
             remember(
                 version: updateItem.displayVersionString,
                 build: updateItem.versionString,
-                // `self.`, because the parameter Sparkle passes is also called `state` and this
-                // is deliberately *not* it: what matters is whether a build is staged *here*,
-                // with a live handler behind it. Sparkle's own `.downloaded` stage is reached
-                // on paths that hand this class no handler, and a panel offering an install it
-                // cannot perform is the one thing to avoid.
+                // This class's own `state`, not the `SPUUserUpdateState` above — that parameter
+                // is `_`, and the distinction matters: what counts is whether a build is staged
+                // *here*, with a live handler behind it. Sparkle's own `.downloaded` stage is
+                // reached on paths that hand this class no handler at all, and a panel offering
+                // an install it cannot perform is the one thing to avoid.
                 staged: state.isWaitingForAPress
             )
         @unknown default:
