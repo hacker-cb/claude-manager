@@ -136,10 +136,11 @@ struct MenuBarContent: View {
             Button("Install Claude Manager \(version) and Relaunch") {
                 managerUpdate.installStagedUpdate()
             }
-            // Gated like every other item that could disturb a Claude install: that swap runs
-            // in *this* process, and relaunching mid-swap leaves every profile closed with
-            // nothing alive to reopen them.
-            .disabled(model.claudeUpdateState.blocksProfileActivity)
+            // Gated on `isBusy`, so a Claude download as well as a swap: both run in *this*
+            // process, and a relaunch either loses a third-of-a-gigabyte transfer with no
+            // resume data or leaves the swap half-done with every profile closed and nothing
+            // alive to reopen them.
+            .disabled(model.claudeUpdateState.isBusy)
         }
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }

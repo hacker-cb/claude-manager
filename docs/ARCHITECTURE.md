@@ -766,10 +766,13 @@ Sparkle fetches each release in the background, and `willInstallUpdateOnQuit:` a
 The staged build then waits in the toolbar's panel and in the menu bar until pressed — both
 controls gated on `blocksProfileActivity`, since relaunching this app in the middle of *its
 own* swap of `/Applications/Claude.app` would leave the profiles closed with nothing alive to
-reopen them — and Sparkle installs it anyway whenever the app next quits. Two answers go back
-to Sparkle unchanged: a critical update (`isCriticalUpdate`), which it escalates by itself,
-and a release this build has already caught up with, where claiming the install would stall
-its cycle in exchange for a control that is not shown. A cycle that aborts after staging
+reopen them — and Sparkle installs it anyway whenever the app next quits. One answer goes back to Sparkle unchanged: a
+critical update (`isCriticalUpdate`), which it escalates by itself. Everything else Sparkle
+reports is taken as given — its comparator decided the build is newer, and a second opinion
+here can only disagree with a staged build that will be installed at the next quit regardless
+(an unreadable `CFBundleVersion` makes every release compare as "not news"), which would
+install it having shown nothing. The version check belongs to `restored`, which reads a
+record off disk where this app may genuinely have moved on. A cycle that aborts after staging
 drops back to `.available`: the handler holds its driver weakly, so it would be a dead
 button. The handler cannot outlive its
 session, which is why `.downloaded` is never restored from the record: a relaunch comes back

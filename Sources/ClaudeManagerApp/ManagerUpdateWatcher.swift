@@ -108,14 +108,6 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
         guard !item.isCriticalUpdate else { return false }
         installStagedBuild = immediateInstallHandler
         remember(version: item.displayVersionString, build: item.versionString, staged: true)
-        // Claim the install only where the offer actually stands. `remember` drops a release
-        // this build has caught up with — an unreadable version reads as exactly that — which
-        // leaves no control on screen at all: answering `true` there would stall Sparkle's
-        // cycle for the rest of the session in exchange for nothing.
-        guard state.isWaitingForAPress else {
-            installStagedBuild = nil
-            return false
-        }
         return true
     }
 
@@ -179,18 +171,16 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
 
     // MARK: - Remembering
 
-    /// Publish and persist a release, through `restored` rather than by assignment so the one
-    /// guard that matters — never offer a build this app has already caught up with — has a
-    /// single home.
+    /// Publish and persist what Sparkle has just said.
+    ///
+    /// **Sparkle's answer is taken as given here.** Its own comparator decided this build is
+    /// newer, and second-guessing that with `AvailableUpdate.isUpgrade` buys nothing and can
+    /// disagree — an unreadable `CFBundleVersion` makes *every* release compare as "not news",
+    /// and a staged build that goes in at the next quit regardless would then have been
+    /// installed with the user shown nothing at all. The version check belongs to `restored`,
+    /// which reads a record off disk where the app may genuinely have moved on since.
     private func remember(version: String, build: String, staged: Bool) {
-        let news = ManagerUpdateState.restored(
-            version: version, build: build, installedBuild: installedBuild
-        )
-        guard news != .idle else { return forget() }
-        // `restored` never answers `.downloaded` — it cannot, since the handler that installs
-        // a staged build dies with its session — so the staged case is applied here, where the
-        // handler is in hand, over the same guard.
-        state = staged ? .downloaded(version: version) : news
+        state = staged ? .downloaded(version: version) : .available(version: version)
         defaults.set(version, forKey: PreferenceKeys.managerUpdateVersion)
         defaults.set(build, forKey: PreferenceKeys.managerUpdateBuild)
     }

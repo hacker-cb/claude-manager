@@ -185,8 +185,20 @@ struct UpdateStatusButton: View {
             EmptyView()
         case let .available(version):
             detail("Claude Manager \(version) is available.") {
-                Text("It has not been fetched yet. Updating replaces this app and relaunches "
-                    + "it; profiles that are open keep running — they are Claude, not this.")
+                // Which of the two it is turns on the same flag the button below is gated on,
+                // and it has to: with background downloads, `.available` is published at the
+                // *start* of the session that fetches the build, so for the whole transfer
+                // this section would otherwise read "not fetched yet" over a greyed-out
+                // button, explaining neither.
+                if updaterReadiness.canCheckForUpdates {
+                    Text("It has not been fetched yet. Updating replaces this app and "
+                        + "relaunches it; profiles that are open keep running — they are "
+                        + "Claude, not this.")
+                } else {
+                    Text("Sparkle is fetching it now. This says \"ready to install\" when the "
+                        + "build is on disk, and installing it replaces this app and relaunches "
+                        + "it; profiles that are open keep running — they are Claude, not this.")
+                }
             } actions: {
                 Button("Update…") {
                     act {
@@ -215,13 +227,16 @@ struct UpdateStatusButton: View {
                 // handler belongs to.
                 Button("Install and Relaunch") { act { managerUpdate.installStagedUpdate() } }
                     .buttonStyle(.borderedProminent)
-                    // Never while Claude's own swap is in flight. `installClaudeUpdate` runs in
-                    // *this* process: it closes every open profile, replaces
-                    // `/Applications/Claude.app`, and reopens the set it closed. Relaunching
-                    // Claude Manager in the middle of that leaves the swap half-done and the
-                    // profiles closed with nothing alive to reopen them — the same reason every
-                    // other control that could disturb an install is gated on this.
-                    .disabled(model.claudeUpdateState.blocksProfileActivity)
+                    // Never while Claude's own update is in flight — `isBusy`, so a download
+                    // as well as a swap. Both run in *this* process: the swap closes every
+                    // open profile, replaces `/Applications/Claude.app` and reopens the set it
+                    // closed, and relaunching in the middle of that leaves it half-done with
+                    // the profiles closed and nothing alive to reopen them; a relaunch during
+                    // the download throws away a third of a gigabyte that has no resume data
+                    // (`FileDownloader` keeps that only for a deliberate cancel). This button
+                    // sits directly under that progress bar, which is exactly where the
+                    // mistake would be made.
+                    .disabled(model.claudeUpdateState.isBusy)
             }
         }
     }
