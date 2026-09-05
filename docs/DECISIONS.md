@@ -242,3 +242,33 @@ worse than saying so. If people do sit in it, the check to restore is
 What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
 closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
 restart cycle this exists to remove.
+
+## Taking Sparkle's own reminder, for this app's update
+
+Claude Manager fetches its **own** release in the background (`SUAutomaticallyUpdate` in the
+Info.plist, so the Settings toggle still overrides it) and answers `true` to
+`willInstallUpdateOnQuit:`, which hands over Sparkle's immediate-install handler and stalls
+its reminder schedule. The staged build is then offered in the window's toolbar and in the
+menu bar, and installs on a press.
+
+The reason is symmetry with the rest of the app. Claude's updates already work this way —
+downloading is the part that can happen unattended, installing is the part that waits for a
+deliberate press — and the model earns its keep here for the same reason: this is a menu-bar
+app people leave running for days, and Sparkle's default is a modal window that appears over
+whatever is on screen to ask about a restart. Answering `true` is what replaces that modal
+with a control that waits.
+
+**A critical update is handed back.** The delegate method answers `false` for an item whose
+`isCriticalUpdate` is set, so Sparkle keeps the one escalation it has for the case that needs
+it — presenting the update immediately rather than waiting to be found. Taking that over would
+trade an escalation for a control the user has to go looking for.
+
+**The cost, stated plainly.** For every *other* release, Sparkle's reminder schedule
+(`SUScheduledImpatientCheckInterval`, which brings an ordinary update back for a user who
+never quits) is switched off, so an offer nobody presses waits on two surfaces instead: the
+toolbar button, which needs a window open, and the menu-bar item, which needs the menu opened.
+Answering `true` also holds Sparkle's update session for the rest of the run — no further
+check happens until the app is relaunched, and **Check for Claude Manager Updates…** greys out
+while a build is staged. Three things narrow all of it: Sparkle installs a staged build
+whenever the app quits, press or no press; the staged build *is* the newest one the feed had;
+and this is a menu-bar app, quit more often than most.

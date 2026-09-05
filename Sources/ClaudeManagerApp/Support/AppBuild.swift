@@ -19,9 +19,26 @@ enum AppBuild {
     /// placeholder) and the login item (macOS only honours `SMAppService` registration for
     /// a Developer ID signed + notarized app — see docs/RELEASING.md § Launch at login).
     static var isDistribution: Bool {
-        let marketingVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        CoreConstants.isDistributionBuild(marketingVersion: marketingVersion)
+    }
+
+    /// What this bundle calls itself — `CFBundleShortVersionString`, or the dev placeholder
+    /// when the plist has none. The input to ``isDistribution``, and the version a person
+    /// reads.
+    static var marketingVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             ?? CoreConstants.devMarketingVersion
-        return CoreConstants.isDistributionBuild(marketingVersion: marketingVersion)
+    }
+
+    /// `CFBundleVersion` — the CI run number for a release, the `1` placeholder locally.
+    ///
+    /// The baseline a remembered Sparkle release is measured against, and deliberately not
+    /// ``marketingVersion``: the build number is what Sparkle itself compares, and it is the
+    /// only one that is monotonic. A re-dispatched tag ships the same marketing version at a
+    /// higher build (docs/RELEASING.md § the version SSoT), which Sparkle offers as an update
+    /// and a marketing comparison would discard.
+    static var buildVersion: String? {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String
     }
 
     /// Whether this bundle may act as the system `claude://` handler — true only when it

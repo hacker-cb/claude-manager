@@ -114,6 +114,13 @@ targets:
         # release if this still holds the placeholder, so no build ships unable to update.
         SUFeedURL: "https://hacker-cb.github.io/claude-manager/appcast.xml"
         SUPublicEDKey: "c5fpSpOdyIhwZHAl5c1x59GLzSpRUB1ChnP2A5p5vrc="
+        # Fetch each release in the background, the way this app already treats Claude's
+        # updates: the download is the part that can happen unattended, and installing is
+        # the part that waits for a press. Sparkle reads its settings from user defaults
+        # first and this plist second (`SUHost.boolForKey`), so this is a *default* — the
+        # Settings toggle still turns it off, and Sparkle only honours it while automatic
+        # checks are on (`allowsAutomaticUpdates`).
+        SUAutomaticallyUpdate: true
         # The deep-link broker: declaring the claude:// scheme makes Claude Manager an
         # eligible default handler. The broker is ON by default, so CM becomes the default
         # handler and forwards links to a chosen profile; disabling it in Settings hands

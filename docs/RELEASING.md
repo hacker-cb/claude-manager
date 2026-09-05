@@ -185,6 +185,15 @@ Two more things learned cutting v0.10.1:
   bypass). Giving the PR something real to review is the path that needs no special rights —
   and a sync PR cut this way has a natural candidate: whatever you just learned about this
   procedure, which is how both of these bullets got here.
+- **A push here is slow, and a second one lies about it** (v0.16.0). `.githooks/pre-push` runs
+  SwiftFormat, SwiftLint and the whole test suite, so a plain `git push` of a branch takes
+  minutes — past the point where an agent session's command timeout moves it to the background.
+  What comes back then is *not* a failure, and the natural next move makes it look like one:
+  running the push again answers `! [remote rejected] … (cannot lock ref …: reference already
+  exists)`, because the backgrounded first push had already created it. Check
+  `git ls-remote --heads origin <branch>` against your local `HEAD` before believing either
+  message — a rejected re-push over an already-published ref is the success case, not a
+  problem to fix.
 
 ### The release PR itself
 

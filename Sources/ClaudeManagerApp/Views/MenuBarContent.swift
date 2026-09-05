@@ -9,6 +9,7 @@ struct MenuBarContent: View {
 
     /// The app-scoped Sparkle updater (see ClaudeManagerApp) — shared, never re-created.
     let updater: SPUUpdater
+    @EnvironmentObject private var managerUpdate: ManagerUpdateWatcher
 
     var body: some View {
         if model.realClaude == nil {
@@ -119,12 +120,28 @@ struct MenuBarContent: View {
         }
         // Gated like every other item that needs Claude: with the app missing there is no
         // version to compare a release against, and the item would answer a press with a
-        // second banner about an unreadable *version* beside the one saying Claude.app was
+        // second notice about an unreadable *version* beside the banner saying Claude.app was
         // not found — and send the user to Re-detect, which cannot conjure a missing app.
         if model.realClaude != nil {
             Button("Check for Claude Updates…") { checkForClaudeUpdates() }
         }
         CheckForUpdatesView(updater: updater)
+        // The staged build's own item, and the reason it has to exist: with background
+        // downloads on, `ManagerUpdateWatcher` takes Sparkle's install over so its modal
+        // reminder stops interrupting — which leaves the window's toolbar as the only place
+        // that says so, and this app is used for days at a time with no window open. One
+        // press, named for what it does: the relaunch is this app's alone, and profiles that
+        // are open are Claude's processes, untouched by it.
+        if case let .downloaded(version) = managerUpdate.state {
+            Button("Install Claude Manager \(version) and Relaunch") {
+                managerUpdate.installStagedUpdate(claudeIsBusy: model.claudeUpdateState.isBusy)
+            }
+            // Gated on `isBusy`, so a Claude download as well as a swap: both run in *this*
+            // process, and a relaunch either loses a third-of-a-gigabyte transfer with no
+            // resume data or leaves the swap half-done with every profile closed and nothing
+            // alive to reopen them.
+            .disabled(model.claudeUpdateState.isBusy)
+        }
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
@@ -310,8 +327,8 @@ struct MenuBarContent: View {
             }
             Divider()
         case .failed:
-            // The reason itself stays in the window's banner: a menu row is one line, and a
-            // verification failure does not fit in one line.
+            // The reason itself stays in the window's toolbar popover: a menu row is one line,
+            // and a verification failure does not fit in one line.
             Button {
                 checkForClaudeUpdates()
             } label: {

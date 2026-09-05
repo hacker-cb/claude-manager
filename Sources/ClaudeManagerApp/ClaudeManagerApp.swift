@@ -19,17 +19,30 @@ struct ClaudeManagerApp: App {
     /// would read as older than every published release and nag a developer to overwrite
     /// their own working build. `startingUpdater: false` leaves the updater dormant (checks
     /// disabled) for those.
-    private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: AppBuild.isDistribution,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
+    private let updaterController: SPUStandardUpdaterController
+
+    /// Sparkle's delegate, kept as observable state so the window can show a release the way it
+    /// shows Claude's. The controller takes its delegate at construction, so this is built
+    /// first and handed over second.
+    @StateObject private var managerUpdate: ManagerUpdateWatcher
+
+    init() {
+        let watcher = ManagerUpdateWatcher()
+        _managerUpdate = StateObject(wrappedValue: watcher)
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: AppBuild.isDistribution,
+            updaterDelegate: watcher,
+            userDriverDelegate: nil
+        )
+        updaterController = controller
+    }
 
     var body: some Scene {
         Window("Claude Manager", id: WindowID.main) {
-            RootView()
+            RootView(updater: updaterController.updater)
                 .environmentObject(model)
                 .environmentObject(launchAtLogin)
+                .environmentObject(managerUpdate)
                 .frame(minWidth: 760, minHeight: 480)
                 .modifier(MainWindowLaunchBinder(delegate: appDelegate))
         }
@@ -47,6 +60,7 @@ struct ClaudeManagerApp: App {
         MenuBarExtra {
             MenuBarContent(updater: updaterController.updater)
                 .environmentObject(model)
+                .environmentObject(managerUpdate)
         } label: {
             MenuBarLabel()
                 .environmentObject(model)
