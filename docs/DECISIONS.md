@@ -258,10 +258,10 @@ app people leave running for days, and Sparkle's default is a modal window that 
 whatever is on screen to ask about a restart. Answering `true` is what replaces that modal
 with a control that waits.
 
-**A critical update is handed back.** `isCriticalUpdate` returns `false` from that delegate
-method, so Sparkle keeps the one escalation it has for the case that needs it — presenting the
-update immediately rather than waiting to be found. Taking that over would trade an escalation
-for a control the user has to go looking for.
+**A critical update is handed back.** The delegate method answers `false` for an item whose
+`isCriticalUpdate` is set, so Sparkle keeps the one escalation it has for the case that needs
+it — presenting the update immediately rather than waiting to be found. Taking that over would
+trade an escalation for a control the user has to go looking for.
 
 **The cost, stated plainly.** For every *other* release, Sparkle's reminder schedule
 (`SUScheduledImpatientCheckInterval`, which brings an ordinary update back for a user who
