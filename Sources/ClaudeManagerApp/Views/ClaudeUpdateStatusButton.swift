@@ -208,7 +208,15 @@ struct ClaudeUpdateStatusButton: View {
     /// `ClaudeUpdateAnnouncement` exists to prevent.
     private func act(_ action: @escaping () -> Void) {
         showingDetails = false
-        Task { @MainActor in action() }
+        Task { @MainActor in
+            // The yield is the hop. A `Task` created on the main actor is scheduled rather
+            // than run inline, but its first resumption can still land in the same drain of
+            // the main actor's queue that is dismissing the popover — which is the window
+            // this is here to step over. Yielding puts the continuation behind whatever is
+            // already queued, so the dismissal's transaction commits first.
+            await Task.yield()
+            action()
+        }
     }
 
     /// `142 MB of 335 MB`, formatted the way the Finder would.
