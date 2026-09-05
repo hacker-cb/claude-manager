@@ -48,6 +48,11 @@ enum PreferenceKeys {
     /// Tuesday's launch and not offered again until Wednesday's check.
     static let managerUpdateVersion = "managerUpdateVersion"
 
+    /// That release's `CFBundleVersion`, kept beside its marketing version because the two
+    /// answer different questions: the marketing one is what a person reads, the build number
+    /// is what Sparkle compares and the only one that is monotonic across a re-dispatched tag.
+    static let managerUpdateBuild = "managerUpdateBuild"
+
     /// When the feed last answered *successfully*, as epoch seconds. Distinct from
     /// `lastClaudeUpdateCheck`, which is stamped when an attempt starts: with Claude's own
     /// updater switched off, a feed that has been failing for weeks means nothing is updating

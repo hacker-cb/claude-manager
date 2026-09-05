@@ -31,16 +31,29 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
     @Published private(set) var state: ManagerUpdateState
 
     private let defaults: UserDefaults
-    /// This build's own version — the baseline a remembered release is measured against.
-    private let installedVersion: String?
+    /// This build's `CFBundleVersion` — the baseline a remembered release is measured against.
+    private let installedBuild: String?
 
-    init(defaults: UserDefaults = .standard, installedVersion: String? = AppBuild.marketingVersion) {
+    init(
+        defaults: UserDefaults = .standard,
+        installedBuild: String? = AppBuild.buildVersion,
+        isDistribution: Bool = AppBuild.isDistribution
+    ) {
         self.defaults = defaults
-        self.installedVersion = installedVersion
-        state = .restored(
-            savedVersion: defaults.string(forKey: PreferenceKeys.managerUpdateVersion),
-            installedVersion: installedVersion
-        )
+        self.installedBuild = installedBuild
+        // A local build shares the released app's defaults domain when it carries the shipping
+        // identity (`make run CONFIG=Release`), and its `0.0.0` / `1` placeholders read as
+        // older than everything — so it would restore the release's record and show an offer
+        // its own dormant updater (`startingUpdater: AppBuild.isDistribution`) can do nothing
+        // about, with no callback able to clear it. The record itself is left alone: it is the
+        // released app's, and this build has no business deleting it.
+        state = isDistribution
+            ? .restored(
+                version: defaults.string(forKey: PreferenceKeys.managerUpdateVersion),
+                build: defaults.string(forKey: PreferenceKeys.managerUpdateBuild),
+                installedBuild: installedBuild
+            )
+            : .idle
         super.init()
     }
 
@@ -48,10 +61,11 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
 
     nonisolated func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         MainActor.assumeIsolated {
-            // `displayVersionString` is what the appcast means for humans (`0.16.0`);
-            // `versionString` is the build number, which is what the feed sorts on and not
-            // what any other surface in this app prints.
-            remember(item.displayVersionString)
+            // Both, because they answer different questions: `displayVersionString` is what
+            // the appcast means for humans (`0.16.0`) and the only one worth printing, while
+            // `versionString` is `CFBundleVersion` — what Sparkle itself compares, and the
+            // only one that is monotonic across a re-dispatched tag.
+            remember(version: item.displayVersionString, build: item.versionString)
         }
     }
 
@@ -79,16 +93,15 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
             switch choice {
             case .skip:
                 forget()
-            case .install:
-                // The app is about to be replaced and relaunched; the fresh build reads its own
-                // version and `restored` drops the record. Clearing here too means an install
-                // that is cancelled or fails does not leave the offer standing either — the
-                // next check re-finds it, and that one is not a skip.
-                forget()
-            case .dismiss:
-                // Dismissed, not refused: the release still exists, and the toolbar is exactly
-                // where it should go on saying so.
-                remember(updateItem.displayVersionString)
+            case .install, .dismiss:
+                // Neither is a refusal, so the record stands. Install least of all: Sparkle
+                // reports this choice from the *found-update alert*, and a download cancelled
+                // or failed afterwards aborts without another choice callback — clearing here
+                // would leave the toolbar silent about a release nothing has declined, until a
+                // scheduled check a day away, or never with automatic checks switched off.
+                // A successful install relaunches into a build whose own `CFBundleVersion` is
+                // the newer one, and `restored` drops the record there.
+                remember(version: updateItem.displayVersionString, build: updateItem.versionString)
             @unknown default:
                 break
             }
@@ -98,22 +111,23 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
     // MARK: - Remembering
 
     /// Publish and persist a release, through `restored` rather than by assignment so the one
-    /// guard that matters — never offer a version this build has already caught up with — has
-    /// a single home.
+    /// guard that matters — never offer a build this app has already caught up with — has a
+    /// single home.
     @MainActor
-    private func remember(_ version: String) {
-        let news = ManagerUpdateState.restored(savedVersion: version, installedVersion: installedVersion)
+    private func remember(version: String, build: String) {
+        let news = ManagerUpdateState.restored(
+            version: version, build: build, installedBuild: installedBuild
+        )
         state = news
-        if let version = news.version {
-            defaults.set(version, forKey: PreferenceKeys.managerUpdateVersion)
-        } else {
-            defaults.removeObject(forKey: PreferenceKeys.managerUpdateVersion)
-        }
+        guard news != .idle else { return forget() }
+        defaults.set(version, forKey: PreferenceKeys.managerUpdateVersion)
+        defaults.set(build, forKey: PreferenceKeys.managerUpdateBuild)
     }
 
     @MainActor
     private func forget() {
         state = .idle
         defaults.removeObject(forKey: PreferenceKeys.managerUpdateVersion)
+        defaults.removeObject(forKey: PreferenceKeys.managerUpdateBuild)
     }
 }

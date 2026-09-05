@@ -28,7 +28,7 @@ struct RootView: View {
     var body: some View {
         // App-global banners (missing-Claude, Dock-refresh) are a full-width strip at the top of
         // the window. A Claude update is *not* one of them any more: it is the toolbar's
-        // `ClaudeUpdateStatusButton`, because an offer that stands for days must not spend a strip
+        // `UpdateStatusButton`, because an offer that stands for days must not spend a strip
         // of every page for as long as it stands, and a strip is cut in two by the sidebar divider
         // — sentence in one column, button in the other.
         // Getting the strip right on macOS took two tries — both single-structure approaches

@@ -751,10 +751,21 @@ reminder, so "keep the toolbar fresh" would also be a switch that quietly turns
 delegate callbacks fire for Sparkle's own scheduled and user-initiated checks, which is
 where the state comes from instead; the record is what makes it outlive the window.
 
+The record keeps **both** versions, because they answer different questions: the marketing
+one (`0.16.0`) is what the panel prints, and `CFBundleVersion` — the CI run number — is what
+the comparison uses, since that is what Sparkle itself compares and the only one that is
+monotonic. A re-dispatched tag ships the same marketing version at a higher build, which
+Sparkle offers and a marketing comparison would discard. A non-distribution build restores
+nothing at all: `make run CONFIG=Release` shares the released app's defaults domain while its
+own updater is dormant, so the offer would stand with nothing able to act on it or clear it.
+
 Skip is handled separately, because it is not "no update": `updaterDidNotFindUpdate` is not
 called for it, and a skipped release is filtered out only on the *next* check, so
 `userDidMake:` clears the record on `.skip` — otherwise the toolbar would keep advertising a
-version the user has just declined. Pressing the control hands straight back to
+version the user has just declined. `.install` and `.dismiss` both keep it: Sparkle reports
+that choice from the found-update alert, and a download cancelled afterwards aborts without
+another callback, so clearing on `.install` would silence the toolbar about a release nobody
+declined. Pressing the control hands straight back to
 `updater.checkForUpdates()` (gated on `canCheckForUpdates`, which is false during a session
 and would make the press a silent no-op), so the install path is Sparkle's from end to end
 and this app never downloads, verifies or installs its own build.

@@ -41,13 +41,24 @@ public enum ManagerUpdateState: Equatable, Sendable {
     /// found on Monday would be forgotten by Tuesday's launch and not found again until
     /// Wednesday.
     ///
-    /// The installed version is the guard: a remembered release the app has since caught up
-    /// with — updated by hand, or by Sparkle itself — is not news, and an offer to install a
-    /// version already running is worse than no offer at all. Unreadable either way answers
-    /// `.idle`, since `isUpgrade` is false for a baseline it cannot compare.
-    public static func restored(savedVersion: String?, installedVersion: String?) -> ManagerUpdateState {
-        guard let savedVersion, AvailableUpdate.isUpgrade(savedVersion, over: installedVersion)
+    /// The installed build is the guard: a remembered release this build has caught up with —
+    /// updated by hand, or by Sparkle itself — is not news, and an offer to install what is
+    /// already running is worse than no offer at all.
+    ///
+    /// **Two versions, and they answer different questions.** `version` is the marketing one
+    /// (`0.16.0`), which is what a person reads; `build` is `CFBundleVersion` — the CI run
+    /// number — which is what Sparkle itself compares and the only one that is monotonic. The
+    /// difference is not academic here: a re-dispatched tag publishes the *same* marketing
+    /// version at a higher build, which Sparkle offers and a marketing-version comparison would
+    /// throw away. Unreadable either way answers `.idle`: `isUpgrade` is false for a baseline
+    /// it cannot compare, which is the safe direction — an offer withheld, never one invented.
+    public static func restored(
+        version: String?,
+        build: String?,
+        installedBuild: String?
+    ) -> ManagerUpdateState {
+        guard let version, let build, AvailableUpdate.isUpgrade(build, over: installedBuild)
         else { return .idle }
-        return .available(version: savedVersion)
+        return .available(version: version)
     }
 }

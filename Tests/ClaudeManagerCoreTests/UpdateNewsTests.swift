@@ -97,22 +97,34 @@ struct UpdateNewsTests {
     @Test
     func remembersAReleaseThisBuildHasNotCaughtUpWith() {
         #expect(
-            ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: "0.15.0")
+            ManagerUpdateState.restored(version: "0.16.0", build: "64", installedBuild: "63")
                 == .available(version: "0.16.0")
         )
     }
 
-    /// Every way the record can be stale or unusable answers `.idle`: an offer to install the
-    /// version already running is worse than no offer at all.
+    /// The build number decides, and the marketing version is only what gets printed. A
+    /// re-dispatched tag ships the same `0.16.0` at a higher CI run number, which Sparkle
+    /// offers as an update — comparing the marketing versions would throw it away.
+    @Test
+    func judgesByTheBuildNumberAndPrintsTheMarketingVersion() {
+        #expect(
+            ManagerUpdateState.restored(version: "0.16.0", build: "64", installedBuild: "63")
+                == .available(version: "0.16.0")
+        )
+        #expect(ManagerUpdateState.restored(version: "0.16.0", build: "63", installedBuild: "63") == .idle)
+    }
+
+    /// Every way the record can be stale or unusable answers `.idle`: an offer to install what
+    /// is already running is worse than no offer at all.
     @Test
     func dropsARecordThatIsNoLongerNews() {
-        #expect(ManagerUpdateState.restored(savedVersion: "0.15.0", installedVersion: "0.15.0") == .idle)
-        #expect(ManagerUpdateState.restored(savedVersion: "0.14.0", installedVersion: "0.15.0") == .idle)
-        #expect(ManagerUpdateState.restored(savedVersion: nil, installedVersion: "0.15.0") == .idle)
-        #expect(ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: nil) == .idle)
+        #expect(ManagerUpdateState.restored(version: "0.15.0", build: "62", installedBuild: "63") == .idle)
+        #expect(ManagerUpdateState.restored(version: nil, build: "64", installedBuild: "63") == .idle)
+        #expect(ManagerUpdateState.restored(version: "0.16.0", build: nil, installedBuild: "63") == .idle)
+        #expect(ManagerUpdateState.restored(version: "0.16.0", build: "64", installedBuild: nil) == .idle)
         // An unreadable baseline is not a licence to offer anything: `isUpgrade` answers false
         // for a version it cannot compare, and this follows it rather than guessing.
-        #expect(ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: "") == .idle)
+        #expect(ManagerUpdateState.restored(version: "0.16.0", build: "64", installedBuild: "") == .idle)
     }
 
     @Test
