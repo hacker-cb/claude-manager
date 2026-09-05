@@ -30,20 +30,50 @@ struct UpdateNewsTests {
     func speaksForEitherUpdaterAlone() {
         #expect(UpdateNews.hasNews(claude: .available(update), manager: .idle))
         #expect(UpdateNews.hasNews(claude: .idle, manager: .available(version: "0.16.0")))
+        #expect(UpdateNews.hasNews(claude: .idle, manager: .downloaded(version: "0.16.0")))
         #expect(UpdateNews.hasNews(claude: .ready(verified), manager: .available(version: "0.16.0")))
     }
 
     // MARK: - The version printed beside the icon
 
-    /// Only the prepared Claude build, which is the one state that waits indefinitely.
+    /// A prepared build earns the label — the one state that waits indefinitely — and every
+    /// state that moves on its own or is answered by opening the panel does not.
     @Test
-    func printsAVersionOnlyForAPreparedClaudeBuild() {
-        #expect(UpdateNews.buttonLabel(claude: .ready(verified)) == "1.37937.1")
-        #expect(UpdateNews.buttonLabel(claude: .available(update)) == nil)
-        #expect(UpdateNews.buttonLabel(claude: .downloading(version: "1.2.3", received: 1, total: 2)) == nil)
-        #expect(UpdateNews.buttonLabel(claude: .installing(version: "1.2.3")) == nil)
-        #expect(UpdateNews.buttonLabel(claude: .failed(reason: "nope")) == nil)
-        #expect(UpdateNews.buttonLabel(claude: .idle) == nil)
+    func printsAVersionOnlyForAPreparedBuild() {
+        let label = { (claude: ClaudeUpdateState) in UpdateNews.buttonLabel(claude: claude, manager: .idle) }
+        #expect(label(.ready(verified)) == "1.37937.1")
+        #expect(label(.available(update)) == nil)
+        #expect(label(.downloading(version: "1.2.3", received: 1, total: 2)) == nil)
+        #expect(label(.installing(version: "1.2.3")) == nil)
+        #expect(label(.failed(reason: "nope")) == nil)
+        #expect(label(.idle) == nil)
+    }
+
+    /// The manager's staged build is prepared in exactly the same sense, and gets the same
+    /// treatment: a release merely *found* does not, since pressing that one only opens a
+    /// window which asks again.
+    @Test
+    func printsTheManagersVersionOnlyOnceItIsStaged() {
+        #expect(
+            UpdateNews.buttonLabel(claude: .idle, manager: .downloaded(version: "0.16.0")) == "0.16.0"
+        )
+        #expect(UpdateNews.buttonLabel(claude: .idle, manager: .available(version: "0.16.0")) == nil)
+    }
+
+    /// Two prepared builds print nothing at all. Either number alone would be read as the
+    /// other's, and both together read as one number that changed — the panel is where each
+    /// release gets its name.
+    @Test
+    func printsNothingWhenBothAppsAreWaiting() {
+        #expect(
+            UpdateNews.buttonLabel(claude: .ready(verified), manager: .downloaded(version: "0.16.0")) == nil
+        )
+        // One waiting, the other merely available: still exactly one press pending, so the
+        // label stands.
+        #expect(
+            UpdateNews.buttonLabel(claude: .ready(verified), manager: .available(version: "0.16.0"))
+                == "1.37937.1"
+        )
     }
 
     // MARK: - The tooltip
@@ -93,7 +123,10 @@ struct UpdateNewsTests {
 
     /// The record is what survives a relaunch — Sparkle asks its feed once a day and this app
     /// deliberately does not ask on its behalf, so without it a release found on Monday is
-    /// forgotten by Tuesday's launch.
+    /// forgotten by Tuesday's launch. It comes back `.available` and never `.downloaded`, even
+    /// for a build Sparkle has staged: the handler that installs one dies with the session it
+    /// was handed to, and an offer that cannot be honoured is worse than a press that opens
+    /// Sparkle's window and finds the staged build there.
     @Test
     func remembersAReleaseThisBuildHasNotCaughtUpWith() {
         #expect(
@@ -131,8 +164,20 @@ struct UpdateNewsTests {
     func reportsTheReleaseItIsAbout() {
         #expect(ManagerUpdateState.idle.version == nil)
         #expect(ManagerUpdateState.available(version: "0.16.0").version == "0.16.0")
+        #expect(ManagerUpdateState.downloaded(version: "0.16.0").version == "0.16.0")
         #expect(ManagerUpdateState.available(version: "0.16.0")
             .statusLine == "Claude Manager 0.16.0 is available.")
+        #expect(ManagerUpdateState.downloaded(version: "0.16.0")
+            .statusLine == "Claude Manager 0.16.0 is ready to install.")
         #expect(ManagerUpdateState.idle.statusLine.isEmpty)
+    }
+
+    /// Only a staged build waits on a press. A release merely found is answered by opening
+    /// Sparkle's window, which asks again — so it is not the same kind of standing offer.
+    @Test
+    func knowsWhichStateIsWaitingOnAPress() {
+        #expect(ManagerUpdateState.downloaded(version: "0.16.0").isWaitingForAPress)
+        #expect(!ManagerUpdateState.available(version: "0.16.0").isWaitingForAPress)
+        #expect(!ManagerUpdateState.idle.isWaitingForAPress)
     }
 }

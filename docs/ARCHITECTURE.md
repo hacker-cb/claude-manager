@@ -759,6 +759,28 @@ Sparkle offers and a marketing comparison would discard. A non-distribution buil
 nothing at all: `make run CONFIG=Release` shares the released app's defaults domain while its
 own updater is dormant, so the offer would stand with nothing able to act on it or clear it.
 
+**The download is unattended; the install waits.** `SUAutomaticallyUpdate` is on in the
+Info.plist (a default — user defaults win, so the Settings toggle still switches it off), so
+Sparkle fetches each release in the background, and `willInstallUpdateOnQuit:` answers `true`
+— which hands over the immediate-install handler and stalls Sparkle's own reminder schedule.
+The staged build then waits in the toolbar's panel and in the menu bar until pressed — both
+controls gated on `ClaudeUpdateState.isBusy`, and the install method checks it again at the
+press, since Claude's own download starts on a schedule of its own: relaunching this app
+during that transfer throws away a third of a gigabyte with no resume data, and doing it
+during the swap of `/Applications/Claude.app` leaves the profiles closed with nothing alive to
+reopen them — and Sparkle installs it anyway whenever the app next quits. One answer goes back to Sparkle unchanged: a
+critical update (`isCriticalUpdate`), which it escalates by itself. Everything else Sparkle
+reports is taken as given — its comparator decided the build is newer, and a second opinion
+here can only disagree with a staged build that will be installed at the next quit regardless
+(an unreadable `CFBundleVersion` makes every release compare as "not news"), which would
+install it having shown nothing. The version check belongs to `restored`, which reads a
+record off disk where this app may genuinely have moved on. A cycle that aborts after staging
+drops back to `.available`: the handler holds its driver weakly, so it would be a dead
+button. The handler cannot outlive its
+session, which is why `.downloaded` is never restored from the record: a relaunch comes back
+to `.available`, whose press opens Sparkle's window and finds the staged build there. What
+that trade costs is in [DECISIONS.md](DECISIONS.md) § Taking Sparkle's own reminder.
+
 Skip is handled separately, because it is not "no update": `updaterDidNotFindUpdate` is not
 called for it, and a skipped release is filtered out only on the *next* check, so
 `userDidMake:` clears the record on `.skip` — otherwise the toolbar would keep advertising a

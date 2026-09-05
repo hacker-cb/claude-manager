@@ -60,6 +60,7 @@ struct ClaudeManagerApp: App {
         MenuBarExtra {
             MenuBarContent(updater: updaterController.updater)
                 .environmentObject(model)
+                .environmentObject(managerUpdate)
         } label: {
             MenuBarLabel()
                 .environmentObject(model)

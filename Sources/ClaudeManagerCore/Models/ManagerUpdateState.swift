@@ -4,23 +4,36 @@ import Foundation
 ///
 /// Deliberately thinner than ``ClaudeUpdateState``, and for a reason worth stating: this app
 /// does not fetch, verify or install its own updates — Sparkle does all of it, including the
-/// download, the signature check and the relaunch. What is left for this type to carry is the
-/// one fact Sparkle keeps to itself between its own dialogs: that a release is out there.
+/// download, the signature check and the relaunch. What is left for this type to carry is what
+/// Sparkle keeps to itself between its own dialogs: that a release is out there, and whether
+/// it is already on disk waiting for a press.
 ///
-/// So there is no `.downloading`, no `.ready` and no `.failed` here. A failure belongs to
-/// Sparkle's own reporting, and a download that is in flight is behind its window.
+/// There is still no `.downloading` and no `.failed`. A transfer in flight is behind Sparkle's
+/// own window and finishes on its own; a failure belongs to Sparkle's reporting, which this
+/// app has no better words for.
 public enum ManagerUpdateState: Equatable, Sendable {
     /// Nothing found, or nothing asked yet.
     case idle
-    /// Sparkle's probe found a release newer than this build.
+    /// Sparkle found a release newer than this build, and has not fetched it (yet).
     case available(version: String)
+    /// Fetched, verified by Sparkle, and staged to install. Installing it is one press —
+    /// and, press or not, it goes in when the app next quits.
+    case downloaded(version: String)
 
     /// The release this state is about, when it is about one.
     public var version: String? {
         switch self {
         case .idle: nil
-        case let .available(version): version
+        case let .available(version), let .downloaded(version): version
         }
+    }
+
+    /// Whether the release is on disk, waiting only for someone to say so — the state that
+    /// stands indefinitely, and the one whose control does something rather than opening a
+    /// window that asks again.
+    public var isWaitingForAPress: Bool {
+        if case .downloaded = self { return true }
+        return false
     }
 
     /// One line for a tooltip or a heading. Empty for `.idle`, which has nothing to say —
@@ -29,6 +42,7 @@ public enum ManagerUpdateState: Equatable, Sendable {
         switch self {
         case .idle: ""
         case let .available(version): "Claude Manager \(version) is available."
+        case let .downloaded(version): "Claude Manager \(version) is ready to install."
         }
     }
 
@@ -44,6 +58,12 @@ public enum ManagerUpdateState: Equatable, Sendable {
     /// The installed build is the guard: a remembered release this build has caught up with —
     /// updated by hand, or by Sparkle itself — is not news, and an offer to install what is
     /// already running is worse than no offer at all.
+    ///
+    /// **It never answers `.downloaded`, even for a build Sparkle has already staged.** That
+    /// state carries a promise this side of a relaunch cannot keep: the handler that installs
+    /// it lives in the session Sparkle handed it to, and nothing persisted can call it. So a
+    /// remembered release comes back as `.available`, whose press opens Sparkle's window —
+    /// which finds the staged build and offers it, at the cost of one extra click and no lies.
     ///
     /// **Two versions, and they answer different questions.** `version` is the marketing one
     /// (`0.16.0`), which is what a person reads; `build` is `CFBundleVersion` — the CI run
