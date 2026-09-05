@@ -22,6 +22,18 @@ struct ClaudeUpdateStatusButton: View {
     @State private var showingDetails = false
 
     var body: some View {
+        // Stated here as well as in `RootView`, which leaves the item out for `.idle`: a
+        // `Button` whose label renders nothing is still a button, so a toolbar item that
+        // outlives the state change by a frame would be an invisible, clickable control
+        // opening an empty panel. `EmptyView` has nothing to click.
+        if case .idle = model.claudeUpdateState {
+            EmptyView()
+        } else {
+            button
+        }
+    }
+
+    private var button: some View {
         Button { showingDetails = true } label: { indicator }
             .help(helpText)
             .accessibilityLabel(helpText)
@@ -35,6 +47,25 @@ struct ClaudeUpdateStatusButton: View {
                     .padding(16)
                     .frame(width: 320)
             }
+            // An open panel is rendered from a state the updater keeps moving: a download that
+            // finishes swaps an empty action row for "Close profiles and install", under a
+            // cursor that was aimed at neither. So a change of *case* closes the panel and the
+            // press has to be made again, against what the state actually is now. Keyed on the
+            // case rather than the state: progress arrives many times a second, and every one
+            // of those is a change to `.downloading`'s payload.
+            .onChange(of: phase) { showingDetails = false }
+    }
+
+    /// The state's case with its payload dropped — what the panel's shape depends on.
+    private var phase: String {
+        switch model.claudeUpdateState {
+        case .idle: "idle"
+        case .available: "available"
+        case .downloading: "downloading"
+        case .ready: "ready"
+        case .installing: "installing"
+        case .failed: "failed"
+        }
     }
 
     // MARK: - The button itself
@@ -163,15 +194,21 @@ struct ClaudeUpdateStatusButton: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Run a button's action with the popover closed first.
+    /// Run a button's action with the popover closed first, and on the next turn of the loop.
     ///
     /// Closing it is the point: every action here changes the state the popover is rendered
     /// from, so one left open would redraw into a different sentence under the cursor —
     /// and the install, which closes every profile, would do it behind a panel still offering
     /// to start it.
-    private func act(_ action: () -> Void) {
+    ///
+    /// The hop is the other half. `checkForClaudeUpdateNow` can answer *synchronously* with an
+    /// alert — "already working on it", an unreadable installed version — and an alert raised
+    /// in the same transaction as a dismissing popover is the classic way to have it swallowed
+    /// on macOS: the press would then look like it did nothing, which is the one outcome
+    /// `ClaudeUpdateAnnouncement` exists to prevent.
+    private func act(_ action: @escaping () -> Void) {
         showingDetails = false
-        action()
+        Task { @MainActor in action() }
     }
 
     /// `142 MB of 335 MB`, formatted the way the Finder would.

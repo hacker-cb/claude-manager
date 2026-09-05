@@ -233,10 +233,19 @@ extension AppModel {
                 message: "Could not confirm every Claude window had closed, so the installed app "
                     + "was not touched. Profiles that were closed have been reopened."
             )
+        // The two outcomes that are actually failures, and the only two that used to be read
+        // off a strip in the window. The offer lives in the toolbar now, where a failure is an
+        // icon and its reason is a click away — so a swap that fell over says so here as well,
+        // like every postponement above it. The state keeps the reason too: the alert is
+        // dismissed once, the button stays until something changes it.
         case .differentVolume:
-            setClaudeUpdateState(.failed(reason: "The prepared build is on a different volume."))
+            let reason = "The prepared build ended up on a different volume, so the swap could "
+                + "not be atomic. The installed app was not touched."
+            setClaudeUpdateState(.failed(reason: reason))
+            presentInfo(title: "Update failed", message: reason)
         case let .swapFailed(reason):
             setClaudeUpdateState(.failed(reason: reason))
+            presentInfo(title: "Update failed", message: reason)
         }
     }
 
