@@ -95,9 +95,19 @@ struct UpdateStatusButton: View {
         switch model.claudeUpdateState {
         case .idle:
             // Reached whenever the news is the *manager's* — Sparkle found a release while
-            // Claude is current. The hollow arrow is the same one Claude's un-fetched release
-            // gets: something exists, nothing has been done about it yet.
-            Image(systemName: "arrow.down.circle")
+            // Claude is current. Same two arrows as Claude's own states mean: hollow for a
+            // release that exists, filled for one on disk waiting to be let in, with its
+            // version beside it since nothing else is competing for the space.
+            if managerUpdate.state.isWaitingForAPress {
+                Label(
+                    UpdateNews
+                        .buttonLabel(claude: model.claudeUpdateState, manager: managerUpdate.state) ?? "",
+                    systemImage: "arrow.down.circle.fill"
+                )
+                .labelStyle(.titleAndIcon)
+            } else {
+                Image(systemName: "arrow.down.circle")
+            }
         case .available:
             Image(systemName: "arrow.down.circle")
         case let .downloading(_, received, total):
@@ -112,11 +122,11 @@ struct UpdateStatusButton: View {
                 ProgressView().controlSize(.small)
             }
         case .ready:
-            // The one state that carries its version in the button (`UpdateNews.buttonLabel`
-            // owns that rule). It is also the only one that waits indefinitely — nothing moves
-            // until someone presses — and a bare arrow is easy to walk past for days.
+            // A prepared build carries its version in the button — unless the *other* updater
+            // is holding one too, where `UpdateNews.buttonLabel` answers nil and the label
+            // collapses to the icon alone. Two numbers side by side read as one that changed.
             Label(
-                UpdateNews.buttonLabel(claude: model.claudeUpdateState) ?? "",
+                UpdateNews.buttonLabel(claude: model.claudeUpdateState, manager: managerUpdate.state) ?? "",
                 systemImage: "arrow.down.circle.fill"
             )
             .labelStyle(.titleAndIcon)
@@ -152,31 +162,48 @@ struct UpdateStatusButton: View {
         VStack(alignment: .leading, spacing: 14) {
             if model.claudeUpdateState != .idle { claudeDetails }
             if model.claudeUpdateState != .idle, managerUpdate.state != .idle { Divider() }
-            if case let .available(version) = managerUpdate.state { managerDetails(version) }
+            managerDetails
         }
     }
 
-    /// What Sparkle found, and the one press that hands back to it.
-    private func managerDetails(_ version: String) -> some View {
-        detail("Claude Manager \(version) is available.") {
-            Text("Updating replaces this app and relaunches it. Profiles that are open keep "
-                + "running — they are Claude, not this.")
-        } actions: {
-            Button("Update…") {
-                act {
-                    // Sparkle's window is modal and opens wherever the app is; the press often
-                    // comes with another app frontmost (this is a menu-bar app), where
-                    // cooperative activation can leave the dialog behind it. Forceful on
-                    // purpose, and warning-free — see #31, and `CheckForUpdatesView`, which
-                    // opens the same flow from the menu.
-                    NSApp.activate(ignoringOtherApps: true)
-                    updater.checkForUpdates()
+    /// What Sparkle has, and the one press that acts on it.
+    @ViewBuilder private var managerDetails: some View {
+        switch managerUpdate.state {
+        case .idle:
+            EmptyView()
+        case let .available(version):
+            detail("Claude Manager \(version) is available.") {
+                Text("It has not been fetched yet. Updating replaces this app and relaunches "
+                    + "it; profiles that are open keep running — they are Claude, not this.")
+            } actions: {
+                Button("Update…") {
+                    act {
+                        // Sparkle's window is modal and opens wherever the app is; the press
+                        // often comes with another app frontmost (this is a menu-bar app),
+                        // where cooperative activation can leave the dialog behind it. Forceful
+                        // on purpose, and warning-free — see #31, and `CheckForUpdatesView`,
+                        // which opens the same flow from the menu.
+                        NSApp.activate(ignoringOtherApps: true)
+                        updater.checkForUpdates()
+                    }
                 }
+                // `checkForUpdates()` returns without a word while a session is in progress — a
+                // background download, another window already up — so an enabled button there
+                // is a press that does nothing. Same gate as the menu item's.
+                .disabled(!updaterReadiness.canCheckForUpdates)
             }
-            // `checkForUpdates()` returns without a word while a session is in progress — a
-            // background download, another window already up — so an enabled button there is a
-            // press that does nothing. Same gate as the menu item's.
-            .disabled(!updaterReadiness.canCheckForUpdates)
+        case let .downloaded(version):
+            detail("Claude Manager \(version) is ready to install.") {
+                Text("It was fetched in the background and checked by Sparkle. Installing "
+                    + "relaunches this app; profiles that are open keep running, and the "
+                    + "update goes in by itself the next time Claude Manager quits.")
+            } actions: {
+                // No `canCheckForUpdates` gate here: this presses Sparkle's own staged-install
+                // handler rather than starting a check, and it is exactly the session that
+                // handler belongs to.
+                Button("Install and Relaunch") { act { managerUpdate.installStagedUpdate() } }
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 

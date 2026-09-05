@@ -152,12 +152,19 @@ profile or your default profile. That profile then opens the link itself.
 ## Updates
 
 **Claude Manager** updates itself via [Sparkle](https://sparkle-project.org) — each
-update download is EdDSA-signed. Once Sparkle's own check has found a release, it shows up in
-the window's toolbar beside Claude's updates, under the same button, and stays there until it
-is installed or skipped — press it and the panel says which release it is, and **Update…**
-hands over to Sparkle's usual window. **Check for Claude Manager Updates…** in
-the menu bar opens that window directly, whether or not anything was found. This is separate
-from Claude Desktop's own update mechanism.
+update download is EdDSA-signed — and it does it the same way it treats Claude's: the build
+is fetched in the background, and installing waits for you. A staged release shows up in the
+window's toolbar beside Claude's updates, under the same button; **Install and Relaunch**
+there puts it in and restarts the app, which takes a second and leaves every open profile
+running (they are Claude's processes, not this one's). The same item is in the menu bar, for
+the days the window stays closed. Press nothing and it still lands — Sparkle installs a
+staged build the next time Claude Manager quits.
+
+Both halves are yours to change under **Settings → Updates**: turn off automatic downloads
+and a release is only *announced* (the panel's **Update…** then hands over to Sparkle's own
+window), or turn off automatic checks and nothing is fetched at all. **Check for Claude
+Manager Updates…** in the menu bar asks right away either way. This is separate from Claude
+Desktop's own update mechanism.
 
 **Claude Desktop** is updated by Claude Manager, not by Claude. Every profile runs the one
 on-disk `Claude.app`, and Claude's own updater cannot install anything while a profile is

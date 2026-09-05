@@ -759,6 +759,16 @@ Sparkle offers and a marketing comparison would discard. A non-distribution buil
 nothing at all: `make run CONFIG=Release` shares the released app's defaults domain while its
 own updater is dormant, so the offer would stand with nothing able to act on it or clear it.
 
+**The download is unattended; the install waits.** `SUAutomaticallyUpdate` is on in the
+Info.plist (a default — user defaults win, so the Settings toggle still switches it off), so
+Sparkle fetches each release in the background, and `willInstallUpdateOnQuit:` answers `true`
+— which hands over the immediate-install handler and stalls Sparkle's own reminder schedule.
+The staged build then waits in the toolbar's panel and in the menu bar until pressed, and
+Sparkle installs it anyway whenever the app next quits. The handler cannot outlive its
+session, which is why `.downloaded` is never restored from the record: a relaunch comes back
+to `.available`, whose press opens Sparkle's window and finds the staged build there. What
+that trade costs is in [DECISIONS.md](DECISIONS.md) § Taking Sparkle's own reminder.
+
 Skip is handled separately, because it is not "no update": `updaterDidNotFindUpdate` is not
 called for it, and a skipped release is filtered out only on the *next* check, so
 `userDidMake:` clears the record on `.skip` — otherwise the toolbar would keep advertising a

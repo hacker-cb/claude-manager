@@ -20,19 +20,24 @@ public enum UpdateNews {
 
     /// The version to print beside the icon, or nil to show the icon alone.
     ///
-    /// Only Claude's prepared build earns it, and only that one. It is the state that waits
-    /// indefinitely — nothing at all happens until someone presses — so a bare arrow is easy to
-    /// walk past for days. Every other state either moves on its own (a download finishes, an
+    /// A prepared build earns it — either app's. That is the state which waits indefinitely,
+    /// where nothing at all happens until someone presses, and a bare arrow is easy to walk
+    /// past for days. Every other state either moves on its own (a download finishes, an
     /// install completes) or is answered by opening the panel, and a toolbar that grows a
     /// version string for each of them is a toolbar that reflows while you look at it.
     ///
-    /// A Sparkle release never earns it either, even alone — which is why the manager's state
-    /// is not a parameter here at all: printing `0.16.0` beside an arrow says nothing about
-    /// *what* is at 0.16.0, and the two versions side by side — Claude's and this app's — read
-    /// as one number that changed. The panel is where each release gets its name.
-    public static func buttonLabel(claude: ClaudeUpdateState) -> String? {
-        guard case let .ready(verified) = claude else { return nil }
-        return verified.version
+    /// **Exactly one, or none.** With both apps holding a prepared build, printing either
+    /// number is worse than printing none: two versions side by side read as one that changed,
+    /// and a single one leaves the reader to guess whose it is. The panel is where each release
+    /// gets its name, and Claude's is listed first there — so an unlabelled arrow is the honest
+    /// shape for "more than one thing is waiting".
+    public static func buttonLabel(claude: ClaudeUpdateState, manager: ManagerUpdateState) -> String? {
+        let claudeVersion: String? = if case let .ready(verified) = claude {
+            verified.version
+        } else { nil }
+        let managerVersion = manager.isWaitingForAPress ? manager.version : nil
+        let waiting = [claudeVersion, managerVersion].compactMap(\.self)
+        return waiting.count == 1 ? waiting[0] : nil
     }
 
     /// The tooltip, which is also the accessibility label: every piece of news, in one line,

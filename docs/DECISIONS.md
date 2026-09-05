@@ -242,3 +242,29 @@ worse than saying so. If people do sit in it, the check to restore is
 What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
 closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
 restart cycle this exists to remove.
+## Taking Sparkle's own reminder, for this app's update
+
+Claude Manager fetches its **own** release in the background (`SUAutomaticallyUpdate` in the
+Info.plist, so the Settings toggle still overrides it) and answers `true` to
+`willInstallUpdateOnQuit:`, which hands over Sparkle's immediate-install handler and stalls
+its reminder schedule. The staged build is then offered in the window's toolbar and in the
+menu bar, and installs on a press.
+
+The reason is symmetry with the rest of the app. Claude's updates already work this way —
+downloading is the part that can happen unattended, installing is the part that waits for a
+deliberate press — and the model earns its keep here for the same reason: this is a menu-bar
+app people leave running for days, and Sparkle's default is a modal window that appears over
+whatever is on screen to ask about a restart. Answering `true` is what replaces that modal
+with a control that waits.
+
+**The cost, stated plainly.** Sparkle's reminders are its own escalation path: a critical
+update is presented right away, and an ordinary one comes back after
+`SUScheduledImpatientCheckInterval` for a user who never quits. Taking the install over
+switches that off, so an offer nobody presses now waits on two things instead — the toolbar
+button, which needs a window open, and the menu-bar item, which needs the menu opened. Two
+things narrow it: Sparkle installs a staged build whenever the app quits, press or no press,
+and this is a menu-bar app that is quit more often than most. What is *not* claimed is that
+this is safe for an app that must update urgently: with critical updates the honest answer
+would be to return `false` for `item.isCriticalUpdate` and let Sparkle escalate. It is not
+implemented because this project has never shipped one, and a branch that has never run is
+not a safety net — see `ManagerUpdateWatcher` if that changes.

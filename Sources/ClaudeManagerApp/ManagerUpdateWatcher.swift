@@ -23,12 +23,26 @@ import Sparkle
 /// Sparkle's own scheduled and user-initiated checks, and the answer is persisted so it
 /// survives a relaunch.
 ///
-/// Pressing the control hands over to `updater.checkForUpdates()`, the same modal flow the
-/// menu bar has always opened.
+/// **It takes the install itself, though.** With background downloads on, Sparkle stages a
+/// build and would then run its own reminder schedule — the modal that interrupts whatever is
+/// on screen to ask. `willInstallUpdateOnQuit:` returns `true` instead, which stalls that
+/// schedule and hands over the handler that installs immediately, so the offer waits in the
+/// toolbar until it is pressed. Nothing is lost by waiting: Sparkle installs a staged build
+/// when the app quits either way.
+///
+/// Where nothing is staged, pressing the control hands over to `updater.checkForUpdates()` —
+/// the same modal flow the menu bar has always opened.
+@MainActor
 final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate {
-    /// What the toolbar reads. Written only from Sparkle's delegate callbacks, which arrive on
-    /// the main thread (its `NS_SWIFT_UI_ACTOR` contract), so the publish is on it too.
+    /// What the toolbar reads. Written only from Sparkle's delegate callbacks, which the
+    /// protocol declares `NS_SWIFT_UI_ACTOR` — main-actor in Swift, which is why this class is
+    /// too and none of it hops.
     @Published private(set) var state: ManagerUpdateState
+
+    /// Sparkle's own handler for "install the staged build now and relaunch", kept from
+    /// `willInstallUpdateOnQuit:`. Nil unless a build is staged in *this* session — the
+    /// handler cannot outlive it, which is why `.downloaded` is never restored from disk.
+    private var installStagedBuild: (() -> Void)?
 
     private let defaults: UserDefaults
     /// This build's `CFBundleVersion` — the baseline a remembered release is measured against.
@@ -59,20 +73,44 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
 
     // MARK: - SPUUpdaterDelegate
 
-    nonisolated func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        MainActor.assumeIsolated {
-            // Both, because they answer different questions: `displayVersionString` is what
-            // the appcast means for humans (`0.16.0`) and the only one worth printing, while
-            // `versionString` is `CFBundleVersion` — what Sparkle itself compares, and the
-            // only one that is monotonic across a re-dispatched tag.
-            remember(version: item.displayVersionString, build: item.versionString)
-        }
+    func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        // Both, because they answer different questions: `displayVersionString` is what
+        // the appcast means for humans (`0.16.0`) and the only one worth printing, while
+        // `versionString` is `CFBundleVersion` — what Sparkle itself compares, and the
+        // only one that is monotonic across a re-dispatched tag.
+        remember(version: item.displayVersionString, build: item.versionString, staged: false)
     }
 
-    nonisolated func updaterDidNotFindUpdate(_: SPUUpdater) {
+    func updaterDidNotFindUpdate(_: SPUUpdater) {
         // Only a genuine "nothing newer" reaches this — a feed that could not be loaded aborts
         // elsewhere — so a network outage does not wipe a release found yesterday.
-        MainActor.assumeIsolated { forget() }
+        forget()
+    }
+
+    /// A build has been fetched and staged, and Sparkle is asking who presents it.
+    ///
+    /// **Returning `true` takes that over**, which is the whole point of this class: Sparkle's
+    /// own answer is a modal reminder on its own schedule, and this app's model — the one it
+    /// already applies to Claude — is that downloading happens unattended and installing waits
+    /// for a press. The handler is kept for that press.
+    ///
+    /// It costs nothing in safety: Sparkle installs a staged build when the app quits whether
+    /// or not this is answered, so the worst case for an offer nobody presses is that it lands
+    /// at the next quit, which is what it would have done anyway.
+    func updater(
+        _: SPUUpdater,
+        willInstallUpdateOnQuit item: SUAppcastItem,
+        immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+    ) -> Bool {
+        installStagedBuild = immediateInstallHandler
+        remember(version: item.displayVersionString, build: item.versionString, staged: true)
+        return true
+    }
+
+    /// Install the staged build now and relaunch. No-op with nothing staged — the control that
+    /// calls this is only shown in `.downloaded`, which is exactly when the handler exists.
+    func installStagedUpdate() {
+        installStagedBuild?()
     }
 
     /// Sparkle's own window is where a release is accepted or refused, and those answers have
@@ -83,28 +121,30 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
     /// check, a day away. Without this the toolbar would go on advertising a version the user
     /// has just declined, and pressing it would find that version again, since an explicit
     /// check ignores skips.
-    nonisolated func updater(
+    func updater(
         _: SPUUpdater,
         userDidMake choice: SPUUserUpdateChoice,
         forUpdate updateItem: SUAppcastItem,
         state _: SPUUserUpdateState
     ) {
-        MainActor.assumeIsolated {
-            switch choice {
-            case .skip:
-                forget()
-            case .install, .dismiss:
-                // Neither is a refusal, so the record stands. Install least of all: Sparkle
-                // reports this choice from the *found-update alert*, and a download cancelled
-                // or failed afterwards aborts without another choice callback — clearing here
-                // would leave the toolbar silent about a release nothing has declined, until a
-                // scheduled check a day away, or never with automatic checks switched off.
-                // A successful install relaunches into a build whose own `CFBundleVersion` is
-                // the newer one, and `restored` drops the record there.
-                remember(version: updateItem.displayVersionString, build: updateItem.versionString)
-            @unknown default:
-                break
-            }
+        switch choice {
+        case .skip:
+            forget()
+        case .install, .dismiss:
+            // Neither is a refusal, so the record stands. Install least of all: Sparkle
+            // reports this choice from the *found-update alert*, and a download cancelled
+            // or failed afterwards aborts without another choice callback — clearing here
+            // would leave the toolbar silent about a release nothing has declined, until a
+            // scheduled check a day away, or never with automatic checks switched off.
+            // A successful install relaunches into a build whose own `CFBundleVersion` is
+            // the newer one, and `restored` drops the record there.
+            remember(
+                version: updateItem.displayVersionString,
+                build: updateItem.versionString,
+                staged: state.isWaitingForAPress
+            )
+        @unknown default:
+            break
         }
     }
 
@@ -113,20 +153,22 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
     /// Publish and persist a release, through `restored` rather than by assignment so the one
     /// guard that matters — never offer a build this app has already caught up with — has a
     /// single home.
-    @MainActor
-    private func remember(version: String, build: String) {
+    private func remember(version: String, build: String, staged: Bool) {
         let news = ManagerUpdateState.restored(
             version: version, build: build, installedBuild: installedBuild
         )
-        state = news
         guard news != .idle else { return forget() }
+        // `restored` never answers `.downloaded` — it cannot, since the handler that installs
+        // a staged build dies with its session — so the staged case is applied here, where the
+        // handler is in hand, over the same guard.
+        state = staged ? .downloaded(version: version) : news
         defaults.set(version, forKey: PreferenceKeys.managerUpdateVersion)
         defaults.set(build, forKey: PreferenceKeys.managerUpdateBuild)
     }
 
-    @MainActor
     private func forget() {
         state = .idle
+        installStagedBuild = nil
         defaults.removeObject(forKey: PreferenceKeys.managerUpdateVersion)
         defaults.removeObject(forKey: PreferenceKeys.managerUpdateBuild)
     }
