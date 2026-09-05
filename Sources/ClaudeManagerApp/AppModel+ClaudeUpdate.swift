@@ -177,7 +177,7 @@ extension AppModel {
             return
         }
         // Asked again at the moment of the press, not only when the build was fetched: the
-        // banner may have been sitting there while Claude updated itself underneath it, and
+        // offer may have been sitting there while Claude updated itself underneath it, and
         // swapping in an equal-or-older bundle is a downgrade wearing an update's clothes.
         guard AvailableUpdate.isUpgrade(verified.version, over: installed) else {
             Log.claudeUpdate.info("install skipped; \(verified.version, privacy: .public) is not newer")

@@ -7,9 +7,9 @@ import Foundation
 /// looking. Settings has the status line in front of it, so the outcome reaching the *state*
 /// is the answer, and an alert written from there would be presented by the main window's
 /// modifier — a window that may not even be open, and that would then ambush the user with a
-/// stale verdict hours later. The menu bar and the banner have no such line, so they take the
-/// alert as well. The schedule stays quiet: a laptop is offline all the time, and a banner per
-/// closed lid is noise.
+/// stale verdict hours later. The menu bar and the window's toolbar button have no such line,
+/// so they take the alert as well. The schedule stays quiet: a laptop is offline all the time,
+/// and a notice per closed lid is noise.
 enum ClaudeUpdateAnnouncement {
     /// The scheduled check: the log, and nothing else.
     case silently
@@ -312,7 +312,7 @@ extension AppModel {
             setClaudeUpdateCheckFailure(nil)
         } catch {
             // Unreachable is not "up to date", but for the schedule it is also not worth a
-            // banner: a laptop is offline all the time. Logged, and left for the next tick.
+            // notice: a laptop is offline all the time. Logged, and left for the next tick.
             Log.claudeUpdate.error("check failed — \(error.localizedDescription, privacy: .public)")
             reportFailedCheck(error, announcing: announcing)
             return
@@ -345,7 +345,8 @@ extension AppModel {
     /// What a failed check leaves behind, which depends on who asked for it.
     ///
     /// The schedule leaves nothing. A press has to survive being answered, so `.failed` puts
-    /// the reason in the banner, the status line and the menu — but **only over `.idle`**.
+    /// the reason in the toolbar button, the status line and the menu — but **only over
+    /// `.idle`**.
     /// `.available` and `.ready` each carry a control of their own, Download and Install, and a
     /// build already downloaded and verified stays installable whether or not the feed can be
     /// reached: overwriting that state takes the button away and strands the very bytes the
@@ -372,8 +373,9 @@ extension AppModel {
     ///
     /// Three surfaces, and each covers a case the others cannot. The **recorded reason** is the
     /// only one that survives `.available` and `.ready`, which keep their own control (Download,
-    /// Install) and must not lose it to a feed that went quiet. The **state** is what the banner
-    /// and the menu render, so it takes the reason over `.idle` and over an earlier `.failed` —
+    /// Install) and must not lose it to a feed that went quiet. The **state** is what the
+    /// toolbar button and the menu render, so it takes the reason over `.idle` and over an
+    /// earlier `.failed` —
     /// a retry that fails differently has to say the new one, not leave the first standing. And
     /// the **alert** is for the presses with no status line in view.
     private func recordCheckFailure(
@@ -393,7 +395,8 @@ extension AppModel {
     /// back to the app — deliberately *not* from a check, which cannot run in `.ready` at all
     /// (`allowsCheck`). That is the hole this fills: Claude replaced by hand or by an installer
     /// of its own leaves a prepared build that is no longer newer, and nothing else would
-    /// notice until the next launch. Left alone the banner offers it forever, `.ready` blocks
+    /// notice until the next launch. Left alone the toolbar button offers it forever, `.ready`
+    /// blocks
     /// every check — so `lastClaudeUpdateSuccess` stops moving and Doctor eventually reports a
     /// feed that is answering perfectly well — and pressing Install swaps in something equal or
     /// older: a downgrade dressed as an update.
