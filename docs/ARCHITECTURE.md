@@ -734,3 +734,38 @@ It self-updates via Sparkle, but the updater stays **dormant in local/dev builds
 when `MARKETING_VERSION` is the `0.0.0` placeholder (`CoreConstants.isDistributionBuild`
 is false), so a developer isn't nagged to overwrite their own build with a published
 release. A release injects a real version from the git tag and the updater activates.
+
+Sparkle keeps its news inside its own modal window: it opens, it is dismissed, and nothing
+in the app knows afterwards that a release exists. `ManagerUpdateWatcher` is the standing
+answer — Sparkle's delegate, publishing a `ManagerUpdateState` the window's toolbar reads
+beside Claude's own update state, and persisting it (`managerUpdateVersion`) so it survives
+a relaunch.
+
+**It never asks Sparkle to check, and that is deliberate.** Every check — the probing
+`checkForUpdateInformation` included — invalidates Sparkle's scheduled timer and re-stamps
+`SULastCheckTime`, then reschedules a *full* interval out. A refresh made here more often
+than Sparkle's own interval (a day, by default) therefore postpones the scheduled cycle
+indefinitely — and that cycle is the one that downloads in the background and puts up the
+reminder, so "keep the toolbar fresh" would also be a switch that quietly turns
+**Automatically download updates** into a setting that never downloads anything. The
+delegate callbacks fire for Sparkle's own scheduled and user-initiated checks, which is
+where the state comes from instead; the record is what makes it outlive the window.
+
+The record keeps **both** versions, because they answer different questions: the marketing
+one (`0.16.0`) is what the panel prints, and `CFBundleVersion` — the CI run number — is what
+the comparison uses, since that is what Sparkle itself compares and the only one that is
+monotonic. A re-dispatched tag ships the same marketing version at a higher build, which
+Sparkle offers and a marketing comparison would discard. A non-distribution build restores
+nothing at all: `make run CONFIG=Release` shares the released app's defaults domain while its
+own updater is dormant, so the offer would stand with nothing able to act on it or clear it.
+
+Skip is handled separately, because it is not "no update": `updaterDidNotFindUpdate` is not
+called for it, and a skipped release is filtered out only on the *next* check, so
+`userDidMake:` clears the record on `.skip` — otherwise the toolbar would keep advertising a
+version the user has just declined. `.install` and `.dismiss` both keep it: Sparkle reports
+that choice from the found-update alert, and a download cancelled afterwards aborts without
+another callback, so clearing on `.install` would silence the toolbar about a release nobody
+declined. Pressing the control hands straight back to
+`updater.checkForUpdates()` (gated on `canCheckForUpdates`, which is false during a session
+and would make the press a silent no-op), so the install path is Sparkle's from end to end
+and this app never downloads, verifies or installs its own build.

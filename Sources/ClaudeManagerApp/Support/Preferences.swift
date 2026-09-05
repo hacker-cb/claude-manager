@@ -40,6 +40,19 @@ enum PreferenceKeys {
     /// app does not turn a four-hourly check into a per-launch one.
     static let lastClaudeUpdateCheck = "lastClaudeUpdateCheck"
 
+    /// The newest Claude Manager release Sparkle has told us about, as its display version.
+    ///
+    /// Persisted because nothing else would rebuild it: Sparkle asks its feed on a schedule of
+    /// its own (a day, by default) and this app does not ask on its behalf — a check made here
+    /// resets that schedule. Without the record, a release found on Monday is forgotten by
+    /// Tuesday's launch and not offered again until Wednesday's check.
+    static let managerUpdateVersion = "managerUpdateVersion"
+
+    /// That release's `CFBundleVersion`, kept beside its marketing version because the two
+    /// answer different questions: the marketing one is what a person reads, the build number
+    /// is what Sparkle compares and the only one that is monotonic across a re-dispatched tag.
+    static let managerUpdateBuild = "managerUpdateBuild"
+
     /// When the feed last answered *successfully*, as epoch seconds. Distinct from
     /// `lastClaudeUpdateCheck`, which is stamped when an attempt starts: with Claude's own
     /// updater switched off, a feed that has been failing for weeks means nothing is updating

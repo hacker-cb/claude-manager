@@ -1,9 +1,14 @@
 import ClaudeManagerCore
+import Sparkle
 import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
+    @EnvironmentObject private var managerUpdate: ManagerUpdateWatcher
+    /// Sparkle's updater, carried to the toolbar's update control — the one view in this
+    /// window that has anything to ask of it.
+    let updater: SPUUpdater
     /// The window opens on the Limits page — it is the question asked before any particular
     /// profile is the answer, and the reason the window gets opened at all most days.
     @State private var selection: ProfileEntry.ID? = ProfileEntry.limitsID
@@ -23,7 +28,7 @@ struct RootView: View {
     var body: some View {
         // App-global banners (missing-Claude, Dock-refresh) are a full-width strip at the top of
         // the window. A Claude update is *not* one of them any more: it is the toolbar's
-        // `ClaudeUpdateStatusButton`, because an offer that stands for days must not spend a strip
+        // `UpdateStatusButton`, because an offer that stands for days must not spend a strip
         // of every page for as long as it stands, and a strip is cut in two by the sidebar divider
         // — sentence in one column, button in the other.
         // Getting the strip right on macOS took two tries — both single-structure approaches
@@ -187,10 +192,11 @@ struct RootView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        // Left out entirely when there is nothing to say, rather than parked as a permanent
-        // control for "no update" — `.idle` is the state the app is in almost all of the time.
-        if model.claudeUpdateState != .idle {
-            ToolbarItem { ClaudeUpdateStatusButton() }
+        // Left out entirely when neither updater has anything to say, rather than parked as a
+        // permanent control for "no update" — which is the state the app is in almost all of
+        // the time.
+        if UpdateNews.hasNews(claude: model.claudeUpdateState, manager: managerUpdate.state) {
+            ToolbarItem { UpdateStatusButton(updater: updater) }
         }
         ToolbarItem(placement: .primaryAction) {
             Button { editor = .add } label: { Label("New Profile", systemImage: "plus") }
