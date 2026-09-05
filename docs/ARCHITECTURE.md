@@ -763,8 +763,15 @@ own updater is dormant, so the offer would stand with nothing able to act on it 
 Info.plist (a default — user defaults win, so the Settings toggle still switches it off), so
 Sparkle fetches each release in the background, and `willInstallUpdateOnQuit:` answers `true`
 — which hands over the immediate-install handler and stalls Sparkle's own reminder schedule.
-The staged build then waits in the toolbar's panel and in the menu bar until pressed, and
-Sparkle installs it anyway whenever the app next quits. The handler cannot outlive its
+The staged build then waits in the toolbar's panel and in the menu bar until pressed — both
+controls gated on `blocksProfileActivity`, since relaunching this app in the middle of *its
+own* swap of `/Applications/Claude.app` would leave the profiles closed with nothing alive to
+reopen them — and Sparkle installs it anyway whenever the app next quits. Two answers go back
+to Sparkle unchanged: a critical update (`isCriticalUpdate`), which it escalates by itself,
+and a release this build has already caught up with, where claiming the install would stall
+its cycle in exchange for a control that is not shown. A cycle that aborts after staging
+drops back to `.available`: the handler holds its driver weakly, so it would be a dead
+button. The handler cannot outlive its
 session, which is why `.downloaded` is never restored from the record: a relaunch comes back
 to `.available`, whose press opens Sparkle's window and finds the staged build there. What
 that trade costs is in [DECISIONS.md](DECISIONS.md) § Taking Sparkle's own reminder.

@@ -242,6 +242,7 @@ worse than saying so. If people do sit in it, the check to restore is
 What is deliberately *not* done: restoring the key when the app quits. A menu-bar app is
 closed all the time, and re-arming Squirrel on every quit would put back the 72-hour
 restart cycle this exists to remove.
+
 ## Taking Sparkle's own reminder, for this app's update
 
 Claude Manager fetches its **own** release in the background (`SUAutomaticallyUpdate` in the
@@ -257,14 +258,17 @@ app people leave running for days, and Sparkle's default is a modal window that 
 whatever is on screen to ask about a restart. Answering `true` is what replaces that modal
 with a control that waits.
 
-**The cost, stated plainly.** Sparkle's reminders are its own escalation path: a critical
-update is presented right away, and an ordinary one comes back after
-`SUScheduledImpatientCheckInterval` for a user who never quits. Taking the install over
-switches that off, so an offer nobody presses now waits on two things instead — the toolbar
-button, which needs a window open, and the menu-bar item, which needs the menu opened. Two
-things narrow it: Sparkle installs a staged build whenever the app quits, press or no press,
-and this is a menu-bar app that is quit more often than most. What is *not* claimed is that
-this is safe for an app that must update urgently: with critical updates the honest answer
-would be to return `false` for `item.isCriticalUpdate` and let Sparkle escalate. It is not
-implemented because this project has never shipped one, and a branch that has never run is
-not a safety net — see `ManagerUpdateWatcher` if that changes.
+**A critical update is handed back.** `isCriticalUpdate` returns `false` from that delegate
+method, so Sparkle keeps the one escalation it has for the case that needs it — presenting the
+update immediately rather than waiting to be found. Taking that over would trade an escalation
+for a control the user has to go looking for.
+
+**The cost, stated plainly.** For every *other* release, Sparkle's reminder schedule
+(`SUScheduledImpatientCheckInterval`, which brings an ordinary update back for a user who
+never quits) is switched off, so an offer nobody presses waits on two surfaces instead: the
+toolbar button, which needs a window open, and the menu-bar item, which needs the menu opened.
+Answering `true` also holds Sparkle's update session for the rest of the run — no further
+check happens until the app is relaunched, and **Check for Claude Manager Updates…** greys out
+while a build is staged. Three things narrow all of it: Sparkle installs a staged build
+whenever the app quits, press or no press; the staged build *is* the newest one the feed had;
+and this is a menu-bar app, quit more often than most.

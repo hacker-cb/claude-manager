@@ -73,12 +73,15 @@ struct UpdateStatusButton: View {
             .onChange(of: phase) { showingDetails = false }
     }
 
-    /// Claude's case with its payload dropped — the half of the panel's shape that moves on
-    /// its own, and the half whose button closes every open profile. Sparkle's side is left
-    /// out deliberately: it changes at most once a day, only ever to *add* a section whose
-    /// button opens a window, and closing a panel someone is reading costs more than that.
+    /// Both states' cases with their payloads dropped — the shape of the panel, without the
+    /// numbers that move inside it.
+    ///
+    /// Sparkle's side counts now. It used to only ever *add* a section whose button opens a
+    /// window; with background downloads it also rewrites one in place — a finished download
+    /// turns "Update…" into a prominent "Install and Relaunch" that quits and restarts the
+    /// app, exactly under a cursor that was aimed at the harmless one.
     private var phase: String {
-        switch model.claudeUpdateState {
+        let claude = switch model.claudeUpdateState {
         case .idle: "idle"
         case .available: "available"
         case .downloading: "downloading"
@@ -86,6 +89,12 @@ struct UpdateStatusButton: View {
         case .installing: "installing"
         case .failed: "failed"
         }
+        let manager = switch managerUpdate.state {
+        case .idle: "idle"
+        case .available: "available"
+        case .downloaded: "downloaded"
+        }
+        return claude + "/" + manager
     }
 
     // MARK: - The button itself
@@ -98,13 +107,10 @@ struct UpdateStatusButton: View {
             // Claude is current. Same two arrows as Claude's own states mean: hollow for a
             // release that exists, filled for one on disk waiting to be let in, with its
             // version beside it since nothing else is competing for the space.
-            if managerUpdate.state.isWaitingForAPress {
-                Label(
-                    UpdateNews
-                        .buttonLabel(claude: model.claudeUpdateState, manager: managerUpdate.state) ?? "",
-                    systemImage: "arrow.down.circle.fill"
-                )
-                .labelStyle(.titleAndIcon)
+            if let version = versionLabel {
+                Label(version, systemImage: "arrow.down.circle.fill").labelStyle(.titleAndIcon)
+            } else if managerUpdate.state.isWaitingForAPress {
+                Image(systemName: "arrow.down.circle.fill")
             } else {
                 Image(systemName: "arrow.down.circle")
             }
@@ -123,18 +129,24 @@ struct UpdateStatusButton: View {
             }
         case .ready:
             // A prepared build carries its version in the button — unless the *other* updater
-            // is holding one too, where `UpdateNews.buttonLabel` answers nil and the label
-            // collapses to the icon alone. Two numbers side by side read as one that changed.
-            Label(
-                UpdateNews.buttonLabel(claude: model.claudeUpdateState, manager: managerUpdate.state) ?? "",
-                systemImage: "arrow.down.circle.fill"
-            )
-            .labelStyle(.titleAndIcon)
+            // is holding one too, where `UpdateNews.buttonLabel` answers nil. An empty title is
+            // not the same as none (`Label` still lays that `Text` and its spacing out), so the
+            // absence drops to the bare icon.
+            if let version = versionLabel {
+                Label(version, systemImage: "arrow.down.circle.fill").labelStyle(.titleAndIcon)
+            } else {
+                Image(systemName: "arrow.down.circle.fill")
+            }
         case .installing:
             ProgressView().controlSize(.small)
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         }
+    }
+
+    /// The version to print beside the icon, when exactly one release is waiting on a press.
+    private var versionLabel: String? {
+        UpdateNews.buttonLabel(claude: model.claudeUpdateState, manager: managerUpdate.state)
     }
 
     /// The tooltip, which is also the accessibility label: every updater with something to
@@ -203,6 +215,13 @@ struct UpdateStatusButton: View {
                 // handler belongs to.
                 Button("Install and Relaunch") { act { managerUpdate.installStagedUpdate() } }
                     .buttonStyle(.borderedProminent)
+                    // Never while Claude's own swap is in flight. `installClaudeUpdate` runs in
+                    // *this* process: it closes every open profile, replaces
+                    // `/Applications/Claude.app`, and reopens the set it closed. Relaunching
+                    // Claude Manager in the middle of that leaves the swap half-done and the
+                    // profiles closed with nothing alive to reopen them — the same reason every
+                    // other control that could disturb an install is gated on this.
+                    .disabled(model.claudeUpdateState.blocksProfileActivity)
             }
         }
     }

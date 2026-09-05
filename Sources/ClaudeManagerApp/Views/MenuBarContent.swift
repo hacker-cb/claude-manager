@@ -136,6 +136,10 @@ struct MenuBarContent: View {
             Button("Install Claude Manager \(version) and Relaunch") {
                 managerUpdate.installStagedUpdate()
             }
+            // Gated like every other item that could disturb a Claude install: that swap runs
+            // in *this* process, and relaunching mid-swap leaves every profile closed with
+            // nothing alive to reopen them.
+            .disabled(model.claudeUpdateState.blocksProfileActivity)
         }
         Divider()
         Button("Quit Claude Manager") { NSApp.terminate(nil) }

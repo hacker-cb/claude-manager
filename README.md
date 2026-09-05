@@ -163,7 +163,8 @@ staged build the next time Claude Manager quits.
 Both halves are yours to change under **Settings → Updates**: turn off automatic downloads
 and a release is only *announced* (the panel's **Update…** then hands over to Sparkle's own
 window), or turn off automatic checks and nothing is fetched at all. **Check for Claude
-Manager Updates…** in the menu bar asks right away either way. This is separate from Claude
+Manager Updates…** in the menu bar asks right away — except while a build is already staged,
+where it greys out because the answer is on screen already. This is separate from Claude
 Desktop's own update mechanism.
 
 **Claude Desktop** is updated by Claude Manager, not by Claude. Every profile runs the one

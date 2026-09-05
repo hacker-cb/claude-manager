@@ -141,6 +141,11 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
             remember(
                 version: updateItem.displayVersionString,
                 build: updateItem.versionString,
+                // `self.`, because the parameter Sparkle passes is also called `state` and this
+                // is deliberately *not* it: what matters is whether a build is staged *here*,
+                // with a live handler behind it. Sparkle's own `.downloaded` stage is reached
+                // on paths that hand this class no handler, and a panel offering an install it
+                // cannot perform is the one thing to avoid.
                 staged: state.isWaitingForAPress
             )
         @unknown default:
