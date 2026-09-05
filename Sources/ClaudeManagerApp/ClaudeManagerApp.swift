@@ -23,7 +23,7 @@ struct ClaudeManagerApp: App {
 
     /// Sparkle's delegate, kept as observable state so the window can show a release the way it
     /// shows Claude's. The controller takes its delegate at construction, so this is built
-    /// first and told about the updater second.
+    /// first and handed over second.
     @StateObject private var managerUpdate: ManagerUpdateWatcher
 
     init() {
@@ -35,7 +35,6 @@ struct ClaudeManagerApp: App {
             userDriverDelegate: nil
         )
         updaterController = controller
-        watcher.attach(to: controller.updater)
     }
 
     var body: some Scene {

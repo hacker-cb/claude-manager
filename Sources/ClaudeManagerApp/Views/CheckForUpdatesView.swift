@@ -13,12 +13,12 @@ import SwiftUI
 /// the `MenuBarExtra` menu; both share the one `SPUUpdater` from the app-scoped
 /// `SPUStandardUpdaterController` (two updaters would race the same schedule).
 struct CheckForUpdatesView: View {
-    @StateObject private var viewModel: CheckForUpdatesViewModel
+    @StateObject private var viewModel: UpdaterReadiness
     private let updater: SPUUpdater
 
     init(updater: SPUUpdater) {
         self.updater = updater
-        _viewModel = StateObject(wrappedValue: CheckForUpdatesViewModel(updater: updater))
+        _viewModel = StateObject(wrappedValue: UpdaterReadiness(updater: updater))
     }
 
     var body: some View {
@@ -40,8 +40,13 @@ struct CheckForUpdatesView: View {
 /// SwiftUI `Button` can enable/disable on it. `@MainActor` because `SPUUpdater`'s
 /// properties are main-actor isolated under Swift 6 (forming the KVO key path requires
 /// it); the view models are only ever constructed from main-actor SwiftUI bodies.
+///
+/// Shared with the toolbar's update control (`UpdateStatusButton`), which opens the same
+/// modal flow and is dead in the same states — `checkForUpdates()` returns without a word
+/// while a session is in progress, so a button that stays enabled through one is a press
+/// that does nothing.
 @MainActor
-private final class CheckForUpdatesViewModel: ObservableObject {
+final class UpdaterReadiness: ObservableObject {
     @Published var canCheckForUpdates = false
 
     init(updater: SPUUpdater) {
@@ -72,7 +77,7 @@ struct UpdaterSettingsView: View {
 /// Mirrors Sparkle's automatic-update flags into published properties and writes any
 /// change back to the updater. Reads seed from Sparkle on init (property observers do
 /// not fire during initialization, so no write-back loop). `@MainActor` for the same
-/// reason as `CheckForUpdatesViewModel`.
+/// reason as `UpdaterReadiness`.
 @MainActor
 private final class UpdaterSettingsModel: ObservableObject {
     private let updater: SPUUpdater

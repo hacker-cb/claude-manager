@@ -91,6 +91,30 @@ struct UpdateNewsTests {
 
     // MARK: - The manager's own state
 
+    /// The record is what survives a relaunch — Sparkle asks its feed once a day and this app
+    /// deliberately does not ask on its behalf, so without it a release found on Monday is
+    /// forgotten by Tuesday's launch.
+    @Test
+    func remembersAReleaseThisBuildHasNotCaughtUpWith() {
+        #expect(
+            ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: "0.15.0")
+                == .available(version: "0.16.0")
+        )
+    }
+
+    /// Every way the record can be stale or unusable answers `.idle`: an offer to install the
+    /// version already running is worse than no offer at all.
+    @Test
+    func dropsARecordThatIsNoLongerNews() {
+        #expect(ManagerUpdateState.restored(savedVersion: "0.15.0", installedVersion: "0.15.0") == .idle)
+        #expect(ManagerUpdateState.restored(savedVersion: "0.14.0", installedVersion: "0.15.0") == .idle)
+        #expect(ManagerUpdateState.restored(savedVersion: nil, installedVersion: "0.15.0") == .idle)
+        #expect(ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: nil) == .idle)
+        // An unreadable baseline is not a licence to offer anything: `isUpgrade` answers false
+        // for a version it cannot compare, and this follows it rather than guessing.
+        #expect(ManagerUpdateState.restored(savedVersion: "0.16.0", installedVersion: "") == .idle)
+    }
+
     @Test
     func reportsTheReleaseItIsAbout() {
         #expect(ManagerUpdateState.idle.version == nil)

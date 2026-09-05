@@ -152,9 +152,10 @@ profile or your default profile. That profile then opens the link itself.
 ## Updates
 
 **Claude Manager** updates itself via [Sparkle](https://sparkle-project.org) — each
-update download is EdDSA-signed. A release shows up in the window's toolbar beside Claude's
-own updates, under the same button: press it and the panel says which release it is, and
-**Update…** hands over to Sparkle's usual window. **Check for Claude Manager Updates…** in
+update download is EdDSA-signed. Once Sparkle's own check has found a release, it shows up in
+the window's toolbar beside Claude's updates, under the same button, and stays there until it
+is installed or skipped — press it and the panel says which release it is, and **Update…**
+hands over to Sparkle's usual window. **Check for Claude Manager Updates…** in
 the menu bar opens that window directly, whether or not anything was found. This is separate
 from Claude Desktop's own update mechanism.
 

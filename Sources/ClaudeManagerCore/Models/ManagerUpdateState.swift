@@ -31,4 +31,23 @@ public enum ManagerUpdateState: Equatable, Sendable {
         case let .available(version): "Claude Manager \(version) is available."
         }
     }
+
+    /// What a remembered release means on *this* run.
+    ///
+    /// The state is remembered across launches because nothing else would rebuild it: Sparkle
+    /// asks its feed on a schedule of its own — a day, by default — and this app deliberately
+    /// does not ask on its behalf (a check made here resets that schedule, which is how an
+    /// "automatically download updates" that never downloads anything is built). So a release
+    /// found on Monday would be forgotten by Tuesday's launch and not found again until
+    /// Wednesday.
+    ///
+    /// The installed version is the guard: a remembered release the app has since caught up
+    /// with — updated by hand, or by Sparkle itself — is not news, and an offer to install a
+    /// version already running is worse than no offer at all. Unreadable either way answers
+    /// `.idle`, since `isUpgrade` is false for a baseline it cannot compare.
+    public static func restored(savedVersion: String?, installedVersion: String?) -> ManagerUpdateState {
+        guard let savedVersion, AvailableUpdate.isUpgrade(savedVersion, over: installedVersion)
+        else { return .idle }
+        return .available(version: savedVersion)
+    }
 }

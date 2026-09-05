@@ -72,10 +72,6 @@ struct RootView: View {
             // sidebar selection snapping back to Limits; nothing is lost and the next click
             // undoes it.
             selection = ProfileEntry.limitsID
-            // Sparkle's own schedule is a day long and answers into a modal window; this is
-            // what puts a release in the toolbar instead, and the window opening is the moment
-            // the indicator can first be seen. Rate-limited inside the watcher.
-            managerUpdate.probeIfDue()
             await model.performLaunchTasks()
             // Refresh on *every* appearance too: reopening the window after an external
             // change — while the app stayed active, so `didBecomeActive` never fired —
@@ -83,9 +79,6 @@ struct RootView: View {
             // once-only; this refresh is not.)
             await model.refresh()
         }
-        // The window is often left open for days; an activation is when its figures are
-        // re-read, and a Sparkle release published in the meantime belongs in that refresh.
-        .onReceive(Self.appDidBecomeActive) { _ in managerUpdate.probeIfDue() }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)
                 .environmentObject(model)
@@ -253,11 +246,6 @@ struct RootView: View {
             set: { if !$0 { model.currentError = nil } }
         )
     }
-
-    /// The app coming to the front — when everything on this window is re-read. Held as one
-    /// static publisher rather than built in `body`, which runs on every redraw.
-    private static let appDidBecomeActive = NotificationCenter.default
-        .publisher(for: NSApplication.didBecomeActiveNotification)
 }
 
 /// Carries the measured banner-strip height up the view tree so the sidebar `List` can reserve

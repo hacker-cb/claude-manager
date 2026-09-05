@@ -30,8 +30,15 @@ struct UpdateStatusButton: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var managerUpdate: ManagerUpdateWatcher
     /// Sparkle's updater, for the one thing this view asks of it: open the update window.
-    let updater: SPUUpdater
+    private let updater: SPUUpdater
+    /// Whether that window can be opened at all right now — the same gate the menu item uses.
+    @StateObject private var updaterReadiness: UpdaterReadiness
     @State private var showingDetails = false
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        _updaterReadiness = StateObject(wrappedValue: UpdaterReadiness(updater: updater))
+    }
 
     var body: some View {
         // Stated here as well as in `RootView`, which leaves the item out when there is no
@@ -66,9 +73,12 @@ struct UpdateStatusButton: View {
             .onChange(of: phase) { showingDetails = false }
     }
 
-    /// Both states' cases with their payloads dropped — what the panel's shape depends on.
+    /// Claude's case with its payload dropped — the half of the panel's shape that moves on
+    /// its own, and the half whose button closes every open profile. Sparkle's side is left
+    /// out deliberately: it changes at most once a day, only ever to *add* a section whose
+    /// button opens a window, and closing a panel someone is reading costs more than that.
     private var phase: String {
-        let claude = switch model.claudeUpdateState {
+        switch model.claudeUpdateState {
         case .idle: "idle"
         case .available: "available"
         case .downloading: "downloading"
@@ -76,11 +86,6 @@ struct UpdateStatusButton: View {
         case .installing: "installing"
         case .failed: "failed"
         }
-        let manager = switch managerUpdate.state {
-        case .idle: "idle"
-        case .available: "available"
-        }
-        return claude + "/" + manager
     }
 
     // MARK: - The button itself
@@ -168,6 +173,10 @@ struct UpdateStatusButton: View {
                     updater.checkForUpdates()
                 }
             }
+            // `checkForUpdates()` returns without a word while a session is in progress — a
+            // background download, another window already up — so an enabled button there is a
+            // press that does nothing. Same gate as the menu item's.
+            .disabled(!updaterReadiness.canCheckForUpdates)
         }
     }
 
