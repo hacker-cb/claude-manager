@@ -13,12 +13,12 @@ import SwiftUI
 /// the `MenuBarExtra` menu; both share the one `SPUUpdater` from the app-scoped
 /// `SPUStandardUpdaterController` (two updaters would race the same schedule).
 struct CheckForUpdatesView: View {
-    @StateObject private var viewModel: CheckForUpdatesViewModel
+    @StateObject private var viewModel: UpdaterReadiness
     private let updater: SPUUpdater
 
     init(updater: SPUUpdater) {
         self.updater = updater
-        _viewModel = StateObject(wrappedValue: CheckForUpdatesViewModel(updater: updater))
+        _viewModel = StateObject(wrappedValue: UpdaterReadiness(updater: updater))
     }
 
     var body: some View {
@@ -40,8 +40,13 @@ struct CheckForUpdatesView: View {
 /// SwiftUI `Button` can enable/disable on it. `@MainActor` because `SPUUpdater`'s
 /// properties are main-actor isolated under Swift 6 (forming the KVO key path requires
 /// it); the view models are only ever constructed from main-actor SwiftUI bodies.
+///
+/// Shared with the toolbar's update control (`UpdateStatusButton`), which opens the same
+/// modal flow and is dead in the same states — `checkForUpdates()` returns without a word
+/// while a session is in progress, so a button that stays enabled through one is a press
+/// that does nothing.
 @MainActor
-private final class CheckForUpdatesViewModel: ObservableObject {
+final class UpdaterReadiness: ObservableObject {
     @Published var canCheckForUpdates = false
 
     init(updater: SPUUpdater) {
@@ -70,24 +75,43 @@ struct UpdaterSettingsView: View {
 }
 
 /// Mirrors Sparkle's automatic-update flags into published properties and writes any
-/// change back to the updater. Reads seed from Sparkle on init (property observers do
-/// not fire during initialization, so no write-back loop). `@MainActor` for the same
-/// reason as `CheckForUpdatesViewModel`.
+/// change back to the updater. `@MainActor` for the same reason as `UpdaterReadiness`.
+///
+/// **It follows Sparkle rather than sampling it once.** `automaticallyDownloadsUpdates` is not
+/// a plain stored flag: Sparkle recomputes it whenever automatic *checks* are toggled, because
+/// a download cannot happen without a check (`allowsAutomaticUpdates`) — and with the download
+/// default now coming from the Info.plist, turning checks back on flips it to `true`
+/// underneath a toggle that was showing `false`. A snapshot taken at init would then say
+/// "off" while Sparkle fetches releases. The KVO publishers keep both rows honest.
 @MainActor
 private final class UpdaterSettingsModel: ObservableObject {
     private let updater: SPUUpdater
 
     @Published var automaticallyChecksForUpdates: Bool {
-        didSet { updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates }
+        didSet { write(automaticallyChecksForUpdates, to: \.automaticallyChecksForUpdates) }
     }
 
     @Published var automaticallyDownloadsUpdates: Bool {
-        didSet { updater.automaticallyDownloadsUpdates = automaticallyDownloadsUpdates }
+        didSet { write(automaticallyDownloadsUpdates, to: \.automaticallyDownloadsUpdates) }
     }
 
     init(updater: SPUUpdater) {
         self.updater = updater
         automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
         automaticallyDownloadsUpdates = updater.automaticallyDownloadsUpdates
+        updater.publisher(for: \.automaticallyChecksForUpdates)
+            .assign(to: &$automaticallyChecksForUpdates)
+        updater.publisher(for: \.automaticallyDownloadsUpdates)
+            .assign(to: &$automaticallyDownloadsUpdates)
+    }
+
+    /// Write back only a value Sparkle does not already hold.
+    ///
+    /// Without the guard the two directions feed each other: the publisher assigns, `didSet`
+    /// writes, Sparkle posts the change, the publisher assigns again. Sparkle's own setters
+    /// send `willChange`/`didChange` unconditionally, so the loop does not settle on its own.
+    private func write(_ value: Bool, to keyPath: ReferenceWritableKeyPath<SPUUpdater, Bool>) {
+        guard updater[keyPath: keyPath] != value else { return }
+        updater[keyPath: keyPath] = value
     }
 }

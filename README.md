@@ -152,8 +152,21 @@ profile or your default profile. That profile then opens the link itself.
 ## Updates
 
 **Claude Manager** updates itself via [Sparkle](https://sparkle-project.org) — each
-update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
-separate from Claude Desktop's own update mechanism.
+update download is EdDSA-signed — and it does it the same way it treats Claude's: the build
+is fetched in the background, and installing waits for you. A staged release shows up in the
+window's toolbar beside Claude's updates, under the same button; **Install and Relaunch**
+there puts it in and restarts the app, which takes a second and leaves every open profile
+running (they are Claude's processes, not this one's). The same item is in the menu bar, for
+the days the window stays closed. Press nothing and it still lands — Sparkle installs a
+staged build the next time Claude Manager quits.
+
+Both halves are yours to change under **Settings → Updates**: turn off automatic downloads
+and a release is only *announced* (the panel's **Update…** then hands over to Sparkle's own
+window), or turn off automatic checks and nothing is fetched at all. **Check for Claude
+Manager Updates…** in the menu bar asks right away — except while Sparkle is already busy with
+a release, where it greys out: during the background download, and afterwards for the rest of
+the run once a build is staged and waiting on your press. This is separate from Claude
+Desktop's own update mechanism.
 
 **Claude Desktop** is updated by Claude Manager, not by Claude. Every profile runs the one
 on-disk `Claude.app`, and Claude's own updater cannot install anything while a profile is
@@ -175,7 +188,8 @@ release service could not be reached. Beside that button is when the service las
 *answered*, which is what tells a machine that is current apart from one whose checks have
 been failing all week.
 
-Installing is always yours to trigger — a banner in the window and an entry in the menu bar.
+Installing is always yours to trigger — a button in the window's toolbar, showing the
+version and opening onto what installing costs, and an entry in the menu bar.
 Pressing it closes every open profile, swaps the app, and reopens exactly the set that was
 running. A profile that is **still working** won't be closed: Claude refuses the quit and
 offers "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
