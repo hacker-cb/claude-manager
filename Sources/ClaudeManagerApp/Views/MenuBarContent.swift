@@ -119,7 +119,7 @@ struct MenuBarContent: View {
         }
         // Gated like every other item that needs Claude: with the app missing there is no
         // version to compare a release against, and the item would answer a press with a
-        // second banner about an unreadable *version* beside the one saying Claude.app was
+        // second notice about an unreadable *version* beside the banner saying Claude.app was
         // not found — and send the user to Re-detect, which cannot conjure a missing app.
         if model.realClaude != nil {
             Button("Check for Claude Updates…") { checkForClaudeUpdates() }
@@ -310,8 +310,8 @@ struct MenuBarContent: View {
             }
             Divider()
         case .failed:
-            // The reason itself stays in the window's banner: a menu row is one line, and a
-            // verification failure does not fit in one line.
+            // The reason itself stays in the window's toolbar popover: a menu row is one line,
+            // and a verification failure does not fit in one line.
             Button {
                 checkForClaudeUpdates()
             } label: {

@@ -175,7 +175,7 @@ release service could not be reached. Beside that button is when the service las
 *answered*, which is what tells a machine that is current apart from one whose checks have
 been failing all week.
 
-Installing is always yours to trigger — a banner in the window and an entry in the menu bar.
+Installing is always yours to trigger — a button in the window's toolbar, showing the version and opening onto what installing costs, and an entry in the menu bar.
 Pressing it closes every open profile, swaps the app, and reopens exactly the set that was
 running. A profile that is **still working** won't be closed: Claude refuses the quit and
 offers "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an

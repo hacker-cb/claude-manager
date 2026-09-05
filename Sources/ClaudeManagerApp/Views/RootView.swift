@@ -9,9 +9,6 @@ struct RootView: View {
     @State private var selection: ProfileEntry.ID? = ProfileEntry.limitsID
     @State private var editor: EditorRoute?
     @State private var showDoctor = false
-    /// Drives the "apply staged update" confirmation. Window-local on purpose: only the
-    /// banner button sets it and only SwiftUI resets it (on dismiss), so nothing external
-    /// can toggle the binding while the dialog is up (a programmatic dismiss of a live
     /// Measured height of the app-global banner strip, used to reserve matching top space in the
     /// sidebar's `List` (see `body`). Zero when no banner is showing.
     @State private var bannerHeight: CGFloat = 0
@@ -24,8 +21,12 @@ struct RootView: View {
     @State private var alertTitle = AppError.defaultTitle
 
     var body: some View {
-        // App-global banners (missing-Claude, staged-update) are a full-width strip at the top of
-        // the window. Getting this right on macOS took two tries — both single-structure approaches
+        // App-global banners (missing-Claude, Dock-refresh) are a full-width strip at the top of
+        // the window. A Claude update is *not* one of them any more: it is the toolbar's
+        // `ClaudeUpdateStatusButton`, because an offer that stands for days must not spend a strip
+        // of every page for as long as it stands, and a strip is cut in two by the sidebar divider
+        // — sentence in one column, button in the other.
+        // Getting the strip right on macOS took two tries — both single-structure approaches
         // break one column:
         //   • `.safeAreaInset(.top)` on the split view (pre-#59): reserves space in the *detail*
         //     column but not in the sidebar's `List`, so the banner floats over the first row.
@@ -107,16 +108,30 @@ struct RootView: View {
     /// The full-width banner strip, with its height reported up via `BannerHeightKey` so the
     /// sidebar can reserve matching space. Always rendered (0-height when neither banner shows) so
     /// the measurement collapses cleanly back to zero once a banner clears.
+    ///
+    /// Two rows only, and both are short-lived: Claude is missing (the app cannot work at all
+    /// until it is found) and pinned Dock tiles need a refresh (dismissible). A standing offer
+    /// belongs in the toolbar, not here.
     private var banners: some View {
-        VStack(spacing: 0) {
+        let showing = model.realClaude == nil || model.dockRefreshPending
+        return VStack(spacing: 0) {
             if model.realClaude == nil {
                 missingClaudeBanner
             }
-            ClaudeUpdateBanner()
             if model.dockRefreshPending {
                 dockRefreshBanner
             }
+            if showing { Divider() }
         }
+        // Two layers under the rows' own tints, and the second is the one that does the work.
+        // A `.safeAreaInset` is a *content inset* for the `ScrollView` beneath it, not a margin:
+        // the detail page scrolls under this strip, and a row whose only background is a
+        // 12%-alpha tint lets that page show through — text over text. `.bar` alone does not
+        // fix it either: a material blurs what is behind it, so a contrasty heading still comes
+        // through as a coloured smear. The opaque window colour beneath is what makes the strip
+        // a surface, and the divider is what closes it off.
+        .background(.bar)
+        .background(Color(nsColor: .windowBackgroundColor))
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(key: BannerHeightKey.self, value: proxy.size.height)
@@ -172,6 +187,11 @@ struct RootView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        // Left out entirely when there is nothing to say, rather than parked as a permanent
+        // control for "no update" — `.idle` is the state the app is in almost all of the time.
+        if model.claudeUpdateState != .idle {
+            ToolbarItem { ClaudeUpdateStatusButton() }
+        }
         ToolbarItem(placement: .primaryAction) {
             Button { editor = .add } label: { Label("New Profile", systemImage: "plus") }
                 .help("Create a new launcher profile")
