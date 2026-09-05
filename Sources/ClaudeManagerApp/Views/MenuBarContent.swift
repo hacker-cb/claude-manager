@@ -134,7 +134,7 @@ struct MenuBarContent: View {
         // are open are Claude's processes, untouched by it.
         if case let .downloaded(version) = managerUpdate.state {
             Button("Install Claude Manager \(version) and Relaunch") {
-                managerUpdate.installStagedUpdate()
+                managerUpdate.installStagedUpdate(claudeIsBusy: model.claudeUpdateState.isBusy)
             }
             // Gated on `isBusy`, so a Claude download as well as a swap: both run in *this*
             // process, and a relaunch either loses a third-of-a-gigabyte transfer with no

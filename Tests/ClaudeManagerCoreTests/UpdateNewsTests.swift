@@ -123,7 +123,10 @@ struct UpdateNewsTests {
 
     /// The record is what survives a relaunch — Sparkle asks its feed once a day and this app
     /// deliberately does not ask on its behalf, so without it a release found on Monday is
-    /// forgotten by Tuesday's launch.
+    /// forgotten by Tuesday's launch. It comes back `.available` and never `.downloaded`, even
+    /// for a build Sparkle has staged: the handler that installs one dies with the session it
+    /// was handed to, and an offer that cannot be honoured is worse than a press that opens
+    /// Sparkle's window and finds the staged build there.
     @Test
     func remembersAReleaseThisBuildHasNotCaughtUpWith() {
         #expect(
@@ -176,16 +179,5 @@ struct UpdateNewsTests {
         #expect(ManagerUpdateState.downloaded(version: "0.16.0").isWaitingForAPress)
         #expect(!ManagerUpdateState.available(version: "0.16.0").isWaitingForAPress)
         #expect(!ManagerUpdateState.idle.isWaitingForAPress)
-    }
-
-    /// A staged build is never restored from the record: the handler that installs it dies
-    /// with the session Sparkle handed it to, so the offer comes back as `.available` — whose
-    /// press opens the window that finds the staged build anyway.
-    @Test
-    func neverRestoresAStagedBuild() {
-        #expect(
-            ManagerUpdateState.restored(version: "0.16.0", build: "64", installedBuild: "63")
-                == .available(version: "0.16.0")
-        )
     }
 }

@@ -123,9 +123,18 @@ final class ManagerUpdateWatcher: NSObject, ObservableObject, SPUUpdaterDelegate
         if case let .downloaded(version) = state { state = .available(version: version) }
     }
 
-    /// Install the staged build now and relaunch. No-op with nothing staged — the control that
-    /// calls this is only shown in `.downloaded`, which is exactly when the handler exists.
-    func installStagedUpdate() {
+    /// Install the staged build now and relaunch.
+    ///
+    /// No-op with nothing staged — the controls that call this are only shown in `.downloaded`,
+    /// which is exactly when the handler exists.
+    ///
+    /// `claudeIsBusy` is read at the press rather than only rendered as a `.disabled`: Claude's
+    /// own download starts on a schedule of its own, so a menu opened a second earlier carries
+    /// a live item into a state where the relaunch would throw away a transfer of a third of a
+    /// gigabyte that keeps no resume data — or, worse, interrupt the swap of
+    /// `/Applications/Claude.app` with every profile closed and nothing alive to reopen them.
+    func installStagedUpdate(claudeIsBusy: Bool) {
+        guard !claudeIsBusy else { return }
         installStagedBuild?()
     }
 

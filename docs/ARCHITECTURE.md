@@ -764,8 +764,10 @@ Info.plist (a default — user defaults win, so the Settings toggle still switch
 Sparkle fetches each release in the background, and `willInstallUpdateOnQuit:` answers `true`
 — which hands over the immediate-install handler and stalls Sparkle's own reminder schedule.
 The staged build then waits in the toolbar's panel and in the menu bar until pressed — both
-controls gated on `blocksProfileActivity`, since relaunching this app in the middle of *its
-own* swap of `/Applications/Claude.app` would leave the profiles closed with nothing alive to
+controls gated on `ClaudeUpdateState.isBusy`, and the install method checks it again at the
+press, since Claude's own download starts on a schedule of its own: relaunching this app
+during that transfer throws away a third of a gigabyte with no resume data, and doing it
+during the swap of `/Applications/Claude.app` leaves the profiles closed with nothing alive to
 reopen them — and Sparkle installs it anyway whenever the app next quits. One answer goes back to Sparkle unchanged: a
 critical update (`isCriticalUpdate`), which it escalates by itself. Everything else Sparkle
 reports is taken as given — its comparator decided the build is newer, and a second opinion
