@@ -734,3 +734,14 @@ It self-updates via Sparkle, but the updater stays **dormant in local/dev builds
 when `MARKETING_VERSION` is the `0.0.0` placeholder (`CoreConstants.isDistributionBuild`
 is false), so a developer isn't nagged to overwrite their own build with a published
 release. A release injects a real version from the git tag and the updater activates.
+
+Sparkle keeps its news inside its own modal window: it opens, it is dismissed, and nothing
+in the app knows afterwards that a release exists. `ManagerUpdateWatcher` is the standing
+answer — Sparkle's delegate, plus its probing check (`checkForUpdateInformation`, which
+shows no UI and offers nothing), publishing a `ManagerUpdateState` the window's toolbar
+reads beside Claude's own update state. The probe is gated on the same three conditions
+every time: a distribution build, Sparkle's own "automatically check" setting on, and no
+update session already in progress — and it is rate-limited to one ask every four hours,
+the same cadence the Claude updater's check uses. Pressing the control hands straight back
+to `updater.checkForUpdates()`, so the install path is Sparkle's from end to end and this
+app never downloads, verifies or installs its own build.

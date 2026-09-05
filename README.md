@@ -152,8 +152,11 @@ profile or your default profile. That profile then opens the link itself.
 ## Updates
 
 **Claude Manager** updates itself via [Sparkle](https://sparkle-project.org) — each
-update download is EdDSA-signed. Use **Check for Updates…** in the app. This is
-separate from Claude Desktop's own update mechanism.
+update download is EdDSA-signed. A release shows up in the window's toolbar beside Claude's
+own updates, under the same button: press it and the panel says which release it is, and
+**Update…** hands over to Sparkle's usual window. **Check for Claude Manager Updates…** in
+the menu bar opens that window directly, whether or not anything was found. This is separate
+from Claude Desktop's own update mechanism.
 
 **Claude Desktop** is updated by Claude Manager, not by Claude. Every profile runs the one
 on-disk `Claude.app`, and Claude's own updater cannot install anything while a profile is
@@ -175,7 +178,8 @@ release service could not be reached. Beside that button is when the service las
 *answered*, which is what tells a machine that is current apart from one whose checks have
 been failing all week.
 
-Installing is always yours to trigger — a button in the window's toolbar, showing the version and opening onto what installing costs, and an entry in the menu bar.
+Installing is always yours to trigger — a button in the window's toolbar, showing the
+version and opening onto what installing costs, and an entry in the menu bar.
 Pressing it closes every open profile, swaps the app, and reopens exactly the set that was
 running. A profile that is **still working** won't be closed: Claude refuses the quit and
 offers "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an

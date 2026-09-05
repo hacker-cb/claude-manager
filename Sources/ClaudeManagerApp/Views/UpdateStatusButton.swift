@@ -1,13 +1,22 @@
+import AppKit
 import ClaudeManagerCore
+import Sparkle
 import SwiftUI
 
-/// The one place a Claude update is offered, in the window: a toolbar button saying where the
-/// updater stands, and a popover carrying the sentence behind it.
+/// The one place an update is offered in the window — either update: a toolbar button saying
+/// where the two updaters stand, and a popover carrying the sentences behind them.
 ///
-/// Deliberately not a notification and not a nightly job: installing closes every profile the
-/// user has open, so it happens when they say so and while they are looking at it. Downloading
-/// and verifying happen on their own beforehand, which is why the button is usually an instant
-/// action rather than a wait.
+/// **Two updaters, one control.** Claude's updates are this app's own work — fetched, verified
+/// and installed here, which is why they have a state machine. Claude Manager's belong to
+/// Sparkle, which owns everything past "a release exists" and says so in a modal window that,
+/// once dismissed, takes the news with it. From the window's side both are the same question —
+/// *is there something new, and what would pressing it do?* — so they share a control rather
+/// than growing a second one that means almost the same thing.
+///
+/// Deliberately not a notification and not a nightly job: installing Claude closes every
+/// profile the user has open, so it happens when they say so and while they are looking at it.
+/// Downloading and verifying happen on their own beforehand, which is why the button is usually
+/// an instant action rather than a wait.
 ///
 /// **A toolbar item rather than the full-width strip this used to be.** The strip hung off the
 /// split view's `.safeAreaInset`, which for a `ScrollView` is a *content inset*, not a margin:
@@ -17,18 +26,19 @@ import SwiftUI
 /// ends up in one column and its button in the other. In the toolbar the offer takes no layout
 /// from the page at all, and its longest states — a verification failure's reason, the "this
 /// closes every profile" warning — get a popover to be legible in rather than one clipped line.
-struct ClaudeUpdateStatusButton: View {
+struct UpdateStatusButton: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var managerUpdate: ManagerUpdateWatcher
+    /// Sparkle's updater, for the one thing this view asks of it: open the update window.
+    let updater: SPUUpdater
     @State private var showingDetails = false
 
     var body: some View {
-        // Stated here as well as in `RootView`, which leaves the item out for `.idle`: a
-        // `Button` whose label renders nothing is still a button, so a toolbar item that
-        // outlives the state change by a frame would be an invisible, clickable control
+        // Stated here as well as in `RootView`, which leaves the item out when there is no
+        // news: a `Button` whose label renders nothing is still a button, so a toolbar item
+        // that outlives the state change by a frame would be an invisible, clickable control
         // opening an empty panel. `EmptyView` has nothing to click.
-        if case .idle = model.claudeUpdateState {
-            EmptyView()
-        } else {
+        if UpdateNews.hasNews(claude: model.claudeUpdateState, manager: managerUpdate.state) {
             button
         }
     }
@@ -56,9 +66,9 @@ struct ClaudeUpdateStatusButton: View {
             .onChange(of: phase) { showingDetails = false }
     }
 
-    /// The state's case with its payload dropped — what the panel's shape depends on.
+    /// Both states' cases with their payloads dropped — what the panel's shape depends on.
     private var phase: String {
-        switch model.claudeUpdateState {
+        let claude = switch model.claudeUpdateState {
         case .idle: "idle"
         case .available: "available"
         case .downloading: "downloading"
@@ -66,6 +76,11 @@ struct ClaudeUpdateStatusButton: View {
         case .installing: "installing"
         case .failed: "failed"
         }
+        let manager = switch managerUpdate.state {
+        case .idle: "idle"
+        case .available: "available"
+        }
+        return claude + "/" + manager
     }
 
     // MARK: - The button itself
@@ -74,9 +89,10 @@ struct ClaudeUpdateStatusButton: View {
     @ViewBuilder private var indicator: some View {
         switch model.claudeUpdateState {
         case .idle:
-            // Never rendered: `RootView` leaves the item out entirely for `.idle` rather than
-            // parking a control for "nothing to do" among the four that act.
-            EmptyView()
+            // Reached whenever the news is the *manager's* — Sparkle found a release while
+            // Claude is current. The hollow arrow is the same one Claude's un-fetched release
+            // gets: something exists, nothing has been done about it yet.
+            Image(systemName: "arrow.down.circle")
         case .available:
             Image(systemName: "arrow.down.circle")
         case let .downloading(_, received, total):
@@ -90,12 +106,15 @@ struct ClaudeUpdateStatusButton: View {
             } else {
                 ProgressView().controlSize(.small)
             }
-        case let .ready(verified):
-            // The one state that carries its version in the button. It is also the only one
-            // that waits indefinitely — nothing moves until someone presses — and a bare arrow
-            // is easy to walk past for days.
-            Label(verified.version, systemImage: "arrow.down.circle.fill")
-                .labelStyle(.titleAndIcon)
+        case .ready:
+            // The one state that carries its version in the button (`UpdateNews.buttonLabel`
+            // owns that rule). It is also the only one that waits indefinitely — nothing moves
+            // until someone presses — and a bare arrow is easy to walk past for days.
+            Label(
+                UpdateNews.buttonLabel(claude: model.claudeUpdateState) ?? "",
+                systemImage: "arrow.down.circle.fill"
+            )
+            .labelStyle(.titleAndIcon)
         case .installing:
             ProgressView().controlSize(.small)
         case .failed:
@@ -103,10 +122,15 @@ struct ClaudeUpdateStatusButton: View {
         }
     }
 
-    /// The tooltip, which is also the accessibility label: the same sentence the Settings row
-    /// and the menu bar show, spelled once in the core beside the state machine it describes.
+    /// The tooltip, which is also the accessibility label: every updater with something to
+    /// say, in the order the panel lists them, spelled in the core beside the states it
+    /// describes rather than a second time here.
     private var helpText: String {
-        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        let line = UpdateNews.help(
+            claude: model.claudeUpdateState,
+            manager: managerUpdate.state,
+            lastSuccess: model.lastClaudeUpdateSuccess
+        )
         guard case let .downloading(_, received, total) = model.claudeUpdateState,
               let total, total > 0
         else { return line }
@@ -117,7 +141,37 @@ struct ClaudeUpdateStatusButton: View {
 
     // MARK: - The popover
 
-    @ViewBuilder private var details: some View {
+    /// One section per updater with something to say, in a fixed order: Claude first, because
+    /// its states are the ones that move on their own and the ones whose button costs the most.
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if model.claudeUpdateState != .idle { claudeDetails }
+            if model.claudeUpdateState != .idle, managerUpdate.state != .idle { Divider() }
+            if case let .available(version) = managerUpdate.state { managerDetails(version) }
+        }
+    }
+
+    /// What Sparkle found, and the one press that hands back to it.
+    private func managerDetails(_ version: String) -> some View {
+        detail("Claude Manager \(version) is available.") {
+            Text("Updating replaces this app and relaunches it. Profiles that are open keep "
+                + "running — they are Claude, not this.")
+        } actions: {
+            Button("Update…") {
+                act {
+                    // Sparkle's window is modal and opens wherever the app is; the press often
+                    // comes with another app frontmost (this is a menu-bar app), where
+                    // cooperative activation can leave the dialog behind it. Forceful on
+                    // purpose, and warning-free — see #31, and `CheckForUpdatesView`, which
+                    // opens the same flow from the menu.
+                    NSApp.activate(ignoringOtherApps: true)
+                    updater.checkForUpdates()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var claudeDetails: some View {
         switch model.claudeUpdateState {
         case .idle:
             EmptyView()

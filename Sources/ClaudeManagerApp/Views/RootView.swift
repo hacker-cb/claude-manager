@@ -1,9 +1,14 @@
 import ClaudeManagerCore
+import Sparkle
 import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var launchAtLogin: LaunchAtLogin
+    @EnvironmentObject private var managerUpdate: ManagerUpdateWatcher
+    /// Sparkle's updater, carried to the toolbar's update control — the one view in this
+    /// window that has anything to ask of it.
+    let updater: SPUUpdater
     /// The window opens on the Limits page — it is the question asked before any particular
     /// profile is the answer, and the reason the window gets opened at all most days.
     @State private var selection: ProfileEntry.ID? = ProfileEntry.limitsID
@@ -67,6 +72,10 @@ struct RootView: View {
             // sidebar selection snapping back to Limits; nothing is lost and the next click
             // undoes it.
             selection = ProfileEntry.limitsID
+            // Sparkle's own schedule is a day long and answers into a modal window; this is
+            // what puts a release in the toolbar instead, and the window opening is the moment
+            // the indicator can first be seen. Rate-limited inside the watcher.
+            managerUpdate.probeIfDue()
             await model.performLaunchTasks()
             // Refresh on *every* appearance too: reopening the window after an external
             // change — while the app stayed active, so `didBecomeActive` never fired —
@@ -74,6 +83,9 @@ struct RootView: View {
             // once-only; this refresh is not.)
             await model.refresh()
         }
+        // The window is often left open for days; an activation is when its figures are
+        // re-read, and a Sparkle release published in the meantime belongs in that refresh.
+        .onReceive(Self.appDidBecomeActive) { _ in managerUpdate.probeIfDue() }
         .sheet(item: $editor) { route in
             ProfileEditorView(route: route)
                 .environmentObject(model)
@@ -187,10 +199,11 @@ struct RootView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        // Left out entirely when there is nothing to say, rather than parked as a permanent
-        // control for "no update" — `.idle` is the state the app is in almost all of the time.
-        if model.claudeUpdateState != .idle {
-            ToolbarItem { ClaudeUpdateStatusButton() }
+        // Left out entirely when neither updater has anything to say, rather than parked as a
+        // permanent control for "no update" — which is the state the app is in almost all of
+        // the time.
+        if UpdateNews.hasNews(claude: model.claudeUpdateState, manager: managerUpdate.state) {
+            ToolbarItem { UpdateStatusButton(updater: updater) }
         }
         ToolbarItem(placement: .primaryAction) {
             Button { editor = .add } label: { Label("New Profile", systemImage: "plus") }
@@ -240,6 +253,11 @@ struct RootView: View {
             set: { if !$0 { model.currentError = nil } }
         )
     }
+
+    /// The app coming to the front — when everything on this window is re-read. Held as one
+    /// static publisher rather than built in `body`, which runs on every redraw.
+    private static let appDidBecomeActive = NotificationCenter.default
+        .publisher(for: NSApplication.didBecomeActiveNotification)
 }
 
 /// Carries the measured banner-strip height up the view tree so the sidebar `List` can reserve
