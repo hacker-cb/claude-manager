@@ -151,15 +151,21 @@ struct SettingsView: View {
         // "Last checked 4 h ago" beside a greyed-out button for the whole request: the "nothing
         // happened" reading this button exists to remove. The sweep is named separately; it is
         // not a check, and the button it disables is the one that would start one.
-        // A prepared build is the exception: it allows a check like any other state, but its
-        // line is the one asking for a press, and replacing it with "Checking…" would take that
-        // away for the length of a request nobody started.
-        if model.claudeUpdateState.allowsCheck, !model.claudeUpdateState.isPreparedForInstall {
+        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        if model.claudeUpdateState.allowsCheck {
             if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
             if model.claudeUpdateRestoreTask != nil { return "Checking the downloaded build…" }
-            if model.claudeUpdateTask != nil { return "Checking…" }
+            // A prepared build keeps its own sentence and takes the check as a suffix. It is the
+            // one state whose line asks for an action, so "Checking…" alone would take that
+            // away — and dropping the suffix instead leaves a press here with *no* visible
+            // answer at all: this voice raises no alert, and a check that finds nothing new
+            // leaves the state exactly as it was.
+            if model.claudeUpdateTask != nil {
+                return model.claudeUpdateState.isPreparedForInstall
+                    ? line + " Checking for anything newer…"
+                    : "Checking…"
+            }
         }
-        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
         // A failure the state could not take — `.available` and `.ready` keep their own control
         // — would otherwise leave a check started here with no answer at all.
         guard let failure = model.claudeUpdateCheckFailure, !isFailureInState else { return line }

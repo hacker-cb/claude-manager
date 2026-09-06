@@ -219,8 +219,21 @@ extension AppModel {
                 \(verified.version, privacy: .public)
                 """
             )
+            // Deleted while the state is still `.installing`, and that order is load-bearing.
+            // This suspends for the length of a recursive delete over an unpacked Electron
+            // bundle, and `.installing` is the only state here that stops anything else
+            // starting: `.available` allows a check, and the slots are empty — `quiesce` above
+            // emptied them — so a monitor tick or a press on Download inside that window would
+            // fetch into the directory being deleted. It would also take the single-flight slot,
+            // and `startClaudeUpdateFetch` would then return at its own busy guard, silently
+            // fetching nothing after the message below has promised it.
+            //
+            // See `discardStagedBuild` for why the bundle goes now rather than at the next
+            // verification.
+            await discardStagedBuild()
             // Not gated through `publishClaudeUpdateState`: that one refuses to write over
-            // `.installing`, which is the state this line is undoing.
+            // `.installing`, which is the state this line is undoing. Nothing between here and
+            // the fetch below suspends, so no check can slip into the gap.
             setClaudeUpdateState(.available(newer))
             presentInfo(
                 title: "A newer Claude was released",
@@ -229,9 +242,6 @@ extension AppModel {
                     + "open. Claude Manager is fetching \(newer.version) now; press Install "
                     + "again when it is ready."
             )
-            // The bundle staged for the build nobody is going to install now — see
-            // `discardStagedBuild` for why this does not wait for the next verification.
-            await discardStagedBuild()
             startClaudeUpdateFetch(of: newer)
             return
         }
@@ -375,11 +385,22 @@ extension AppModel {
         // setting and exits *without deleting* if the feature was switched back on inside it,
         // so skipping would leave the discarded build on disk with the state saying `.idle`.
         let previous = claudeUpdateCleanupTask
+        // And the check, cancelled and awaited exactly as the sweep does it. A check can now be
+        // mid-request over a prepared build, and `reconcile` reaches here the moment the user
+        // comes back to an app whose Claude was updated underneath it: the `.idle` set above
+        // passes that request's own guards, so without this it would fetch and unpack into the
+        // directories this is deleting.
+        let inFlight = claudeUpdateTask
+        let restore = claudeUpdateRestoreTask
+        inFlight?.cancel()
+        restore?.cancel()
         claudeUpdateCleanupGeneration += 1
         let generation = claudeUpdateCleanupGeneration
         claudeUpdateCleanupTask = Task { @MainActor [weak self] in
             defer { self?.releaseCleanupSlot(generation) }
             await previous?.value
+            await inFlight?.value
+            await restore?.value
             await Task.detached(priority: .utility) { service.discardEverything() }.value
         }
     }

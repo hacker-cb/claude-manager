@@ -107,11 +107,12 @@ extension AppModel {
     /// flight carries its own voice, and every non-manual starter passes `.silently` — the
     /// monitor tick, the activation observer, the restore that runs at launch.
     private var busyAnswer: (title: String, message: String) {
-        // Only reachable while a check is already running: `allowsCheck` is true for a prepared
+        // Only reachable while work is already in flight: `allowsCheck` is true for a prepared
         // build now, so an otherwise idle `.ready` sends the press on to ask the feed like any
         // other state — which is the point, since what that press wants to know is whether this
-        // offer is still the newest one.
-        if case let .ready(verified) = claudeUpdateState {
+        // offer is still the newest one. The check's own handle rather than the state, because
+        // the sentence names it: the sweep and the launch-time restore hold this slot too.
+        if case let .ready(verified) = claudeUpdateState, claudeUpdateTask != nil {
             return (
                 "Claude \(verified.version) is ready to install",
                 "It has been downloaded and verified, and a check for anything newer is running "

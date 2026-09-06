@@ -136,6 +136,20 @@ struct ClaudeUpdateServiceTests {
         #expect(update?.version == expected)
     }
 
+    /// Why `nil` is not licence to throw a prepared build away. The feed compares against
+    /// whatever baseline it is handed, so a release the service has rolled back answers "nothing
+    /// newer than what is installed" while the verified build on disk is still an upgrade over
+    /// it — the same comparison `restorePrepared` makes at launch, and the one that decides
+    /// whether the offer survives.
+    @Test
+    func saysNothingNewerWhileThePreparedBuildIsStillAnUpgrade() async throws {
+        let (service, root) = try makeService(feedBody: payload("1.30096.5"), version: "1.30096.5")
+        defer { try? fm.removeItem(at: root) }
+
+        #expect(try await service.checkForUpdate(installedVersion: "1.30096.5") == nil)
+        #expect(AvailableUpdate.isUpgrade("1.37937.1", over: "1.30096.5"))
+    }
+
     /// The press cannot wait out the background timeout: twenty seconds of nothing after
     /// pressing Install reads as a button that did not work.
     @Test

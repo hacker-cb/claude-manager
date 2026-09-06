@@ -185,12 +185,34 @@ extension AppModel {
         // half-extracted bundle where a verified one belonged.
         guard !claudeUpdateState.isBusy else { return }
         guard let available else {
-            // Anything staged describes a build that is no longer newer — usually because it
-            // has just been installed. Off the main actor, and not inline: deleting an unpacked
-            // Electron bundle is tens of thousands of files, and this line used to be
-            // unreachable — a prepared build stopped every check before one could get here.
-            if case .ready = claudeUpdateState { await discardStagedBuild() }
+            // A prepared build is kept unless the *installed* app has caught up with it. `nil`
+            // says the feed offers nothing newer than what is installed, which is a different
+            // sentence: with 1.0 installed, 2.0 prepared and the feed rolled back to 1.0, this
+            // answers nil while the verified build on disk is still an upgrade — and discarding
+            // it there would throw away 335 MB and the only Install button on the strength of a
+            // release someone withdrew. It is also the comparison `restorePrepared` makes at
+            // launch, so the two would otherwise disagree about the same bundle.
+            if case let .ready(verified) = claudeUpdateState {
+                if AvailableUpdate.isUpgrade(verified.version, over: installed) {
+                    announce(
+                        announcing,
+                        title: "Claude \(verified.version) is ready to install",
+                        message: "The release service offers nothing newer, and this build is "
+                            + "still an upgrade over the installed Claude \(installed) — press "
+                            + "Install when you are ready for your profiles to close."
+                    )
+                    return
+                }
+            }
+            // Otherwise anything staged describes a build that is no longer newer — usually
+            // because it has just been installed. `.idle` **before** the delete, not after:
+            // deleting an unpacked Electron bundle is tens of thousands of files and this
+            // suspends for the whole of it, and the Install button reads the state — left at
+            // `.ready`, it goes on offering the bytes being removed, and a press landing in
+            // that window closes every profile to swap in a bundle that is no longer there.
+            let wasPrepared = claudeUpdateState.isPreparedForInstall
             publishClaudeUpdateState(.idle)
+            if wasPrepared { await discardStagedBuild() }
             announce(
                 announcing,
                 title: "Claude is up to date",
@@ -233,6 +255,13 @@ extension AppModel {
                     + "that was waiting, so that one was discarded. The new build is downloading "
                     + "now — press Install when it is ready."
             )
+            // The state moves off `.ready` **before** the delete suspends, and that order is the
+            // whole point: deleting an unpacked Electron bundle is tens of thousands of files,
+            // and the Install button reads this state. Left at `.ready` for the length of it,
+            // the button goes on offering bytes that are being removed — and a press landing in
+            // that window passes every guard, closes every profile, and fails the swap on a
+            // bundle that is no longer there.
+            publishClaudeUpdateState(.downloading(version: available.version, received: 0, total: nil))
             // Deleted now rather than at the next verification. `fetch` drops the superseded
             // *archive* by itself, but the ~800 MB unpacked beside it would otherwise sit there
             // for the length of the download — and survive a quit inside it with nothing left
