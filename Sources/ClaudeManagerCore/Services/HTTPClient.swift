@@ -36,13 +36,19 @@ public struct URLSessionHTTPClient: HTTPClient {
     public func get(url: URL, headers: [String: String], timeout: TimeInterval) async throws -> HTTPResponse {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
-        // Never from `URLCache`. Both callers ask questions whose whole value is freshness —
-        // which build is current, what an account's limits are right now — and the update feed's
-        // is load-bearing at the moment of a press: a cacheable response (an intercepting proxy
-        // is enough) would answer the pre-install re-check with the payload that offered the
-        // build being installed, `supersedes` would say false, and the superseded build would go
-        // in anyway, indistinguishable in the log from a genuine "still the newest".
+        // Never from a cache. Both callers ask questions whose whole value is freshness — which
+        // build is current, what an account's limits are right now — and the update feed's is
+        // load-bearing at the moment of a press: a cached response would answer the pre-install
+        // re-check with the payload that offered the build being installed, `supersedes` would
+        // say false, and the superseded build would go in anyway, indistinguishable in the log
+        // from a genuine "still the newest".
+        //
+        // Two halves, because they reach different caches. The policy governs this process's own
+        // `URLCache` and nothing else; a shared or intercepting proxy answers from its own store
+        // whatever this process thinks, and only the header asks it to revalidate. Set before the
+        // caller's headers so an explicit one still wins.
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         for (name, value) in headers {
             request.setValue(value, forHTTPHeaderField: name)
         }
