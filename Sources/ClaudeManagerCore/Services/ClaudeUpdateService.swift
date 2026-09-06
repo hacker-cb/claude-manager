@@ -30,13 +30,26 @@ public struct ClaudeUpdateService: Sendable {
         self.stagingDirectory = stagingDirectory
     }
 
-    /// The latest release, when it is newer than what is installed; `nil` when it is not.
+    /// The latest release, when it is newer than the version handed in; `nil` when it is not.
     ///
     /// Throwing and `nil` mean different things and are kept apart: "there is no update" is
     /// an answer, "I could not ask" is not, and collapsing them is how a broken feed comes to
     /// look like a machine that is up to date.
-    public func checkForUpdate(installedVersion: String?) async throws -> AvailableUpdate? {
-        let latest = try await feed.latest()
+    ///
+    /// The baseline is a parameter rather than "whatever is installed" because two questions
+    /// share this call. The background check asks against `/Applications`; the press that is
+    /// about to install a prepared build asks against **that build**, to find out whether the
+    /// offer it is holding has been superseded while it waited.
+    ///
+    /// `timeout` follows from the same split. Twenty seconds is right for a check nobody is
+    /// waiting on; in front of a press it is a button that appears to have done nothing, so
+    /// that caller passes ``CoreConstants/updateFeedPressTimeout`` and treats a timeout as
+    /// "carry on" rather than as an answer.
+    public func checkForUpdate(
+        installedVersion: String?,
+        timeout: TimeInterval = UpdateFeed.defaultTimeout
+    ) async throws -> AvailableUpdate? {
+        let latest = try await feed.latest(timeout: timeout)
         guard latest.isUpgrade(over: installedVersion) else {
             CoreLog.update.info(
                 """

@@ -39,6 +39,17 @@ public enum ClaudeUpdateState: Equatable, Sendable {
         }
     }
 
+    /// Whether a build is downloaded, verified, and waiting for nothing but a press.
+    ///
+    /// The one state that moves on nobody's schedule, which is why it is worth naming: a
+    /// check running beside it is background noise, and a line that replaced "Claude 1.2.3 is
+    /// ready to install" with "Checking…" would take the only sentence that asks for an
+    /// action off the screen.
+    public var isPreparedForInstall: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
     /// Whether this state makes it unsafe to open, close or sweep profiles.
     ///
     /// Narrower than ``isBusy``, and the difference matters: a download touches nothing but
@@ -55,15 +66,28 @@ public enum ClaudeUpdateState: Equatable, Sendable {
 public extension ClaudeUpdateState {
     /// Whether the feed is worth asking again.
     ///
-    /// Two rules, and the second is the one that is easy to get wrong. A prepared build is
-    /// the state that already has news in it — re-checking cannot improve on it, and a check
-    /// that discarded it would throw away a finished download. A *failed* one, by contrast,
-    /// must keep retrying: a transient network error is the common cause, and a state that
-    /// never asks again turns one bad moment into a permanent stop.
+    /// Only work in flight says no, and for a concrete reason each: a download owns the cache
+    /// a check would fetch into, and an install owns the staged bundle it is moving into
+    /// `/Applications`. A *failed* state, by contrast, must keep retrying — a transient
+    /// network error is the common cause, and a state that never asks again turns one bad
+    /// moment into a permanent stop.
+    ///
+    /// **A prepared build used to say no too, and that was the bug.** The reasoning was that a
+    /// build already downloaded holds the news, so asking again cannot improve on it. But the
+    /// offer waits for a press that may be days away, and Anthropic ships every few days —
+    /// so this app went silent exactly where the world kept moving: the toolbar offered a
+    /// superseded build indefinitely, `lastClaudeUpdateSuccess` stopped moving (Doctor then
+    /// reporting a feed that was answering perfectly well), and the press installed the stale
+    /// build — buying a second download and a second round of closing every profile as soon as
+    /// the next check finally ran.
+    ///
+    /// Asking is safe; *acting* on the answer is the narrow part, and belongs to the caller.
+    /// A prepared build is replaced only by a release that genuinely supersedes it
+    /// (``AvailableUpdate/supersedes(prepared:)``), and never while an install is reading it.
     var allowsCheck: Bool {
         switch self {
-        case .ready, .downloading, .installing: false
-        case .idle, .available, .failed: true
+        case .downloading, .installing: false
+        case .idle, .available, .ready, .failed: true
         }
     }
 

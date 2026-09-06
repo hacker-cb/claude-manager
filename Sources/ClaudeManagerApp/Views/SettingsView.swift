@@ -151,7 +151,10 @@ struct SettingsView: View {
         // "Last checked 4 h ago" beside a greyed-out button for the whole request: the "nothing
         // happened" reading this button exists to remove. The sweep is named separately; it is
         // not a check, and the button it disables is the one that would start one.
-        if model.claudeUpdateState.allowsCheck {
+        // A prepared build is the exception: it allows a check like any other state, but its
+        // line is the one asking for a press, and replacing it with "Checking…" would take that
+        // away for the length of a request nobody started.
+        if model.claudeUpdateState.allowsCheck, !model.claudeUpdateState.isPreparedForInstall {
             if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
             if model.claudeUpdateRestoreTask != nil { return "Checking the downloaded build…" }
             if model.claudeUpdateTask != nil { return "Checking…" }
