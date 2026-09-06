@@ -243,8 +243,11 @@ extension AppModel {
                 announce(
                     announcing,
                     title: "Claude \(verified.version) is ready to install",
-                    message: "It is still the newest release — press Install when you are ready "
-                        + "for your profiles to close."
+                    // "Nothing newer than this build", not "the newest release": the feed can
+                    // answer with something *older* than what is prepared — a rollback, or a
+                    // prerelease this build is ahead of — and this branch covers that too.
+                    message: "The release service offers nothing newer than this build — press "
+                        + "Install when you are ready for your profiles to close."
                 )
                 return
             }
@@ -290,23 +293,42 @@ extension AppModel {
         await Task.detached(priority: .utility) { service.discardEverything() }.value
     }
 
-    /// Fetch a release this app has *just* been told about, in the check's slot.
+    /// Fetch a release this app has *just* been told about, in the check's slot. Says whether
+    /// it started.
     ///
     /// One caller: the press, whose re-check already holds an `AvailableUpdate` and would
     /// otherwise have to ask the feed a second time within the same second to get back here.
     /// Everything else `startClaudeUpdateRefresh` does is kept, because it is all still true —
     /// the stamps (the feed did answer, just now) and the single-flight slot, without which
     /// this download would race the next scheduled check over one cache directory.
-    func startClaudeUpdateFetch(of update: AvailableUpdate, now: Date = Date()) {
-        guard managesClaudeUpdates, !isCheckingClaudeUpdate else { return }
+    ///
+    /// `discardingStaged` puts the delete of the superseded bundle **inside that slot** rather
+    /// than in front of it. Deleting an unpacked Electron bundle suspends for tens of thousands
+    /// of files, and a state alone does not hold the cache: switch the feature off and on inside
+    /// that window and the sweep — which awaits the slot, not a state — finds nothing to wait
+    /// for, so the fetch it then starts writes into a directory still being deleted.
+    ///
+    /// The answer matters because the caller is about to tell the user what is happening: false
+    /// means the feature went off inside the press, and promising a download would be a lie.
+    @discardableResult
+    func startClaudeUpdateFetch(
+        of update: AvailableUpdate, discardingStaged: Bool = false, now: Date = Date()
+    ) -> Bool {
+        guard managesClaudeUpdates, !isCheckingClaudeUpdate else { return false }
         objectWillChange.send()
         defaults.set(now.timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateCheck)
         defaults.set(now.timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateSuccess)
         setClaudeUpdateCheckFailure(nil)
+        // Published here rather than inside the task: a `Task` starts when the actor next gets
+        // to it, and until then `.available` would leave a Download button over a build this
+        // has already committed to fetching.
+        publishClaudeUpdateState(.downloading(version: update.version, received: 0, total: nil))
         claudeUpdateTask = Task { @MainActor [weak self] in
+            if discardingStaged { await self?.discardStagedBuild() }
             await self?.prepareClaudeUpdate(update)
             self?.claudeUpdateTask = nil
         }
+        return true
     }
 
     /// Throw away a prepared build that the installed app has caught up with.

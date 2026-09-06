@@ -219,33 +219,31 @@ extension AppModel {
                 \(verified.version, privacy: .public)
                 """
             )
-            // `.downloading`, and only then the delete. Something has to gate the suspension
-            // below — `.available` allows a check, and `quiesce` has just emptied the slots, so
-            // a monitor tick inside it would fetch into the directory being deleted and take
-            // the single-flight slot, leaving `startClaudeUpdateFetch` to return at its own busy
-            // guard having promised the user a download. But that gate must not be
-            // `.installing`: this branch has decided *not* to install, while `.installing` is
-            // what `launchBlockedByUpdate` reads — every profile the user clicked in those
-            // seconds would be refused with "Claude is being updated", for a swap that is not
-            // happening. `.downloading` refuses checks identically and blocks no profile, and it
-            // names the release actually about to be fetched.
-            //
-            // See `discardStagedBuild` for why the bundle goes now rather than at the next
-            // verification.
-            setClaudeUpdateState(.downloading(version: newer.version, received: 0, total: nil))
-            await discardStagedBuild()
-            // Not gated through `publishClaudeUpdateState`: that one refuses to write over
-            // `.installing`, which is the state this line is undoing. Nothing between here and
-            // the fetch below suspends, so no check can slip into the gap.
+            // Off `.installing` first, and directly rather than through
+            // `publishClaudeUpdateState`, which refuses to write over the state this line is
+            // undoing. It matters beyond tidiness: `.installing` is what `launchBlockedByUpdate`
+            // reads, and this branch has decided *not* to install — every profile clicked while
+            // it stood would be refused with "Claude is being updated" for a swap that is not
+            // happening. `.available` is also the state to be left in should the fetch below
+            // decline to start.
             setClaudeUpdateState(.available(newer))
+            // The discard rides *inside* the fetch's slot rather than happening here: nothing
+            // else may hold the cache while an unpacked bundle is deleted, and only the slot
+            // gives the sweep something to await. See `discardStagedBuild` for why the bundle
+            // goes now rather than at the next verification.
+            let fetching = startClaudeUpdateFetch(of: newer, discardingStaged: true)
             presentInfo(
                 title: "A newer Claude was released",
                 message: "Claude \(newer.version) came out after \(verified.version) was "
                     + "downloaded, so that build was not installed — your profiles were left "
-                    + "open. Claude Manager is fetching \(newer.version) now; press Install "
-                    + "again when it is ready."
+                    + "open. "
+                    // Only what actually happened: the feature can have been switched off inside
+                    // the press, and the fetch then never starts.
+                    + (fetching
+                        ? "Claude Manager is fetching \(newer.version) now; press Install again "
+                        + "when it is ready."
+                        : "Claude \(newer.version) has not been fetched yet.")
             )
-            startClaudeUpdateFetch(of: newer)
             return
         }
         Log.claudeUpdate.info("installing \(verified.version, privacy: .public)")
@@ -335,10 +333,18 @@ extension AppModel {
     /// The baseline is the prepared build, so the feed's own copy of it comes back as nil.
     private func newerReleaseSuperseding(_ verified: VerifiedUpdate) async -> AvailableUpdate? {
         do {
-            return try await claudeUpdateService.checkForUpdate(
+            let newer = try await claudeUpdateService.checkForUpdate(
                 installedVersion: verified.version,
                 timeout: CoreConstants.updateFeedPressTimeout
             )
+            // Recorded whatever the comparison says, because the stamp is about the *feed*, not
+            // about this build: it answered, just now. Left to the branch that starts a fetch,
+            // a press that found nothing newer would leave the last failure standing in Settings
+            // and Doctor still calling a feed stale that has just replied.
+            objectWillChange.send()
+            defaults.set(Date().timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateSuccess)
+            setClaudeUpdateCheckFailure(nil)
+            return newer
         } catch {
             // Logged, not shown: the press asked for an install, and it is getting one.
             Log.claudeUpdate.error(
