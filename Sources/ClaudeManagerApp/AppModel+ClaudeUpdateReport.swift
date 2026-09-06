@@ -78,10 +78,12 @@ extension AppModel {
             )
             return
         }
-        // Both halves, and neither covers the other. `allowsCheck` is false for a build
-        // already prepared — asking again cannot improve on it — and for a swap in flight,
-        // where resuming would rewrite the staging directory `installUpdate` is about to move
-        // into `/Applications`. `isCheckingClaudeUpdate` is the separate question of whether
+        // Both halves, and neither covers the other. `allowsCheck` is false for work in
+        // flight: a download owning the cache, and a swap that would have the staging
+        // directory rewritten under it while `installUpdate` moves it into `/Applications`. A
+        // prepared build is *not* on that list — a press over one is exactly the case that has
+        // to reach the feed, since what it wants to know is whether the offer it is looking at
+        // is still the newest. `isCheckingClaudeUpdate` is the separate question of whether
         // one is already under way: an install runs in a task of its own, so the handle alone
         // would let a press through to stamp the throttle and then die, wordlessly, on
         // `refreshClaudeUpdate`'s busy guard — the "did I press it?" failure this exists to
