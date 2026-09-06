@@ -36,6 +36,13 @@ public struct URLSessionHTTPClient: HTTPClient {
     public func get(url: URL, headers: [String: String], timeout: TimeInterval) async throws -> HTTPResponse {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
+        // Never from `URLCache`. Both callers ask questions whose whole value is freshness —
+        // which build is current, what an account's limits are right now — and the update feed's
+        // is load-bearing at the moment of a press: a cacheable response (an intercepting proxy
+        // is enough) would answer the pre-install re-check with the payload that offered the
+        // build being installed, `supersedes` would say false, and the superseded build would go
+        // in anyway, indistinguishable in the log from a genuine "still the newest".
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         for (name, value) in headers {
             request.setValue(value, forHTTPHeaderField: name)
         }

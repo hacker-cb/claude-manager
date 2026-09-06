@@ -184,6 +184,15 @@ extension AppModel {
         // directory `installUpdate` is about to move into `/Applications`, leaving a
         // half-extracted bundle where a verified one belonged.
         guard !claudeUpdateState.isBusy else { return }
+        // Cancelled counts too, and the state cannot stand in for it. Cancelling is a request:
+        // the feed's answer can already be in hand when `discardPreparedUpdate` cancels this
+        // task, and the `.idle` it publishes is not busy — so without this the continuation
+        // sails on, fetches, verifies, publishes `.ready`, and the sweep that was waiting for
+        // it politely deletes the bundle that state now advertises.
+        guard !Task.isCancelled else {
+            Log.claudeUpdate.info("check cancelled after the feed answered; dropping the result")
+            return
+        }
         guard let available else {
             // A prepared build is kept unless the *installed* app has caught up with it. `nil`
             // says the feed offers nothing newer than what is installed, which is a different
@@ -337,7 +346,13 @@ extension AppModel {
     /// Reachable from `AppModel+ClaudeUpdateReport` as well, which records a failed check into
     /// the state — the gate is what makes that safe from either side.
     func publishClaudeUpdateState(_ state: ClaudeUpdateState) {
-        guard managesClaudeUpdates, !claudeUpdateState.blocksProfileActivity else { return }
+        // `Task.isCancelled` reads false outside a task, so the synchronous callers are
+        // unaffected — the same gate `announce` applies for the same reason. Inside one it is
+        // the second half of the guard above: cancellation does not unwind work already
+        // running, so a `prepare` most of the way through a verification finishes after the
+        // sweep cancelled it, and would publish `.ready` for bytes about to be deleted.
+        guard !Task.isCancelled, managesClaudeUpdates, !claudeUpdateState.blocksProfileActivity
+        else { return }
         setClaudeUpdateState(state)
     }
 

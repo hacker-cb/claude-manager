@@ -76,8 +76,10 @@ extension AppModel {
         await locateOffMain()
         guard realClaude != nil else { return }
         // With a fresh reading of the installed version in hand: Claude can be replaced from
-        // outside this app, and a build prepared before that is no longer an update. Nothing
-        // else notices — `.ready` blocks every check by design — so it is checked here.
+        // outside this app, and a build prepared before that is no longer an update. A check
+        // reaches the same verdict now that one runs over a prepared build, but only over the
+        // network and only when one is due; this is the local answer, at the moment the user
+        // comes back.
         discardPreparedIfOvertaken(by: realClaudeVersion)
         await refresh()
     }

@@ -219,17 +219,20 @@ extension AppModel {
                 \(verified.version, privacy: .public)
                 """
             )
-            // Deleted while the state is still `.installing`, and that order is load-bearing.
-            // This suspends for the length of a recursive delete over an unpacked Electron
-            // bundle, and `.installing` is the only state here that stops anything else
-            // starting: `.available` allows a check, and the slots are empty — `quiesce` above
-            // emptied them — so a monitor tick or a press on Download inside that window would
-            // fetch into the directory being deleted. It would also take the single-flight slot,
-            // and `startClaudeUpdateFetch` would then return at its own busy guard, silently
-            // fetching nothing after the message below has promised it.
+            // `.downloading`, and only then the delete. Something has to gate the suspension
+            // below — `.available` allows a check, and `quiesce` has just emptied the slots, so
+            // a monitor tick inside it would fetch into the directory being deleted and take
+            // the single-flight slot, leaving `startClaudeUpdateFetch` to return at its own busy
+            // guard having promised the user a download. But that gate must not be
+            // `.installing`: this branch has decided *not* to install, while `.installing` is
+            // what `launchBlockedByUpdate` reads — every profile the user clicked in those
+            // seconds would be refused with "Claude is being updated", for a swap that is not
+            // happening. `.downloading` refuses checks identically and blocks no profile, and it
+            // names the release actually about to be fetched.
             //
             // See `discardStagedBuild` for why the bundle goes now rather than at the next
             // verification.
+            setClaudeUpdateState(.downloading(version: newer.version, received: 0, total: nil))
             await discardStagedBuild()
             // Not gated through `publishClaudeUpdateState`: that one refuses to write over
             // `.installing`, which is the state this line is undoing. Nothing between here and
@@ -392,6 +395,13 @@ extension AppModel {
         // directories this is deleting.
         let inFlight = claudeUpdateTask
         let restore = claudeUpdateRestoreTask
+        // The stamp goes with the check being cancelled. `startClaudeUpdateRefresh` records the
+        // attempt *before* spawning the task, so a check killed here has silenced the schedule
+        // for four hours on behalf of an answer nobody will ever see — and nothing retries it:
+        // the activation tick that follows is refused by that stamp and by this sweep holding
+        // the slot. `lastClaudeUpdateSuccess` does not move either, which is exactly what Doctor
+        // reads as a feed that has stopped answering.
+        if inFlight != nil { defaults.removeObject(forKey: PreferenceKeys.lastClaudeUpdateCheck) }
         inFlight?.cancel()
         restore?.cancel()
         claudeUpdateCleanupGeneration += 1
