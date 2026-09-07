@@ -158,6 +158,19 @@ short form:
   [docs/DECISIONS.md](docs/DECISIONS.md): remove Claude Manager without switching the feature
   off and the key is orphaned, so uninstalling starts with turning it off, and Doctor warns
   when the release feed has not answered in a week.
+- **A prepared build must never silence the update checks.** The offer waits for a press that
+  can be days away while Anthropic ships every few days, so `ClaudeUpdateState.allowsCheck`
+  answers *yes* for `.ready`; the narrow part is what a check may **do** with a staged build —
+  replace it only for a release that supersedes it, never re-fetch the version already on disk.
+  The press asks once more itself, against the *prepared* build rather than `/Applications`
+  (which answers "still newer" for a build two releases behind), on
+  `updateFeedPressTimeout`, and treats an unreachable feed as "carry on" rather than as an
+  answer. Put the old `false` back and the toolbar offers a superseded build forever, Doctor
+  calls a healthy feed stale because `lastClaudeUpdateSuccess` stops moving, and the press
+  installs the stale build — then closes every profile a second time when the next check finds
+  the real one. `installClaudeUpdate` claims `.installing` **before its first `await`** for the
+  other half of the same reason: that state is what stops a check writing the cache the swap is
+  about to read, and what turns a second press back.
 - **Nothing may replace `/Applications/Claude.app` while anything runs out of it.** The
   default profile and every clone `exec` the same binary, and Electron loads resources lazily,
   so a swap under a live instance surfaces minutes later as something inexplicable. The

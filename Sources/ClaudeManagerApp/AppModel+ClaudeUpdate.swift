@@ -156,6 +156,12 @@ extension AppModel {
     /// it runs, which is not something to do while they are looking the other way — and
     /// unlike the old staged-update path, nothing here is on a deadline, so there is no
     /// reason to.
+    ///
+    /// Two questions are asked at the press rather than trusted from when the build was
+    /// fetched, because an offer can wait for days: whether the installed app has caught up
+    /// with it (a downgrade wearing an update's clothes), and whether Anthropic has shipped
+    /// something newer since (a press that costs the user their whole working set to install a
+    /// build that is already old, and buys a second download besides).
     func installClaudeUpdate() async {
         guard case let .ready(verified) = claudeUpdateState else { return }
         // Whatever this returns through, the toggle may have gone off while the swap ran — see
@@ -188,13 +194,77 @@ extension AppModel {
             )
             return
         }
+        // Claimed here, and **before the first `await` in this method** — the guards above are
+        // all synchronous precisely so that nothing can slip between them and this line. Two
+        // things ride on it. A second press finds `.installing` and turns back at the guard at
+        // the top. And a check cannot start beside the swap: `allowsCheck` is false for this
+        // state, and one already part-way through drops its answer on `refreshClaudeUpdate`'s
+        // own `isBusy` guard rather than fetching into the cache being read here.
         setClaudeUpdateState(.installing(version: verified.version))
+        // Then stop whatever was already running, because claiming the state does not unwind
+        // work in flight: a check that got past its guards is still holding the cache.
+        await quiesceClaudeUpdateWork()
+        // The second question, and the one this app used to get wrong. Until now the only
+        // baseline was `/Applications`: an offer prepared on Monday and pressed on Thursday
+        // still read as "newer than what is installed", so the swap went ahead with a build two
+        // releases behind — and the next check, minutes later, fetched the current one and
+        // asked for every profile to close all over again.
+        //
+        // A feed that does not answer is not an answer: it leaves this nil and the install
+        // proceeds with the build it has, which is what an offline machine wants anyway.
+        if let newer = await newerReleaseSuperseding(verified) {
+            Log.claudeUpdate.info(
+                """
+                install stopped; \(newer.version, privacy: .public) supersedes the prepared \
+                \(verified.version, privacy: .public)
+                """
+            )
+            // Off `.installing` first, and directly rather than through
+            // `publishClaudeUpdateState`, which refuses to write over the state this line is
+            // undoing. It matters beyond tidiness: `.installing` is what `launchBlockedByUpdate`
+            // reads, and this branch has decided *not* to install — every profile clicked while
+            // it stood would be refused with "Claude is being updated" for a swap that is not
+            // happening. `.available` is also the state to be left in should the fetch below
+            // decline to start.
+            setClaudeUpdateState(.available(newer))
+            // The discard rides *inside* the fetch's slot rather than happening here: nothing
+            // else may hold the cache while an unpacked bundle is deleted, and only the slot
+            // gives the sweep something to await. See `discardStagedBuild` for why the bundle
+            // goes now rather than at the next verification.
+            let fetching = startClaudeUpdateFetch(of: newer, discardingStaged: true)
+            presentInfo(
+                title: "A newer Claude was released",
+                message: "Claude \(newer.version) came out after \(verified.version) was "
+                    + "downloaded, so that build was not installed — your profiles were left "
+                    + "open. "
+                    // Only what actually happened: the feature can have been switched off inside
+                    // the press, and the fetch then never starts.
+                    + (fetching
+                        ? "Claude Manager is fetching \(newer.version) now; press Install again "
+                        + "when it is ready."
+                        : "Claude \(newer.version) has not been fetched yet.")
+            )
+            return
+        }
         Log.claudeUpdate.info("installing \(verified.version, privacy: .public)")
 
         guard let result = await perform({ store in await store.installUpdate(verified) }) else {
             setClaudeUpdateState(.failed(reason: "The update could not be installed."))
             return
         }
+        await reportInstallOutcome(result, verified: verified)
+    }
+
+    /// Say what the swap came to, and leave the state where that outcome belongs.
+    ///
+    /// Split out of `installClaudeUpdate` for length, and it divides cleanly: everything
+    /// above decides *whether* to install — the quiesce, the two version questions, the
+    /// feed — while this is the report, with nothing left to decide. Three of the six are
+    /// postponements rather than failures and go back to `.ready` so the button is there to
+    /// try again.
+    private func reportInstallOutcome(
+        _ result: InstallUpdateResult, verified: VerifiedUpdate
+    ) async {
         switch result.outcome {
         case let .installed(_, version):
             Log.claudeUpdate.info("installed \(version, privacy: .public)")
@@ -249,6 +319,66 @@ extension AppModel {
         }
     }
 
+    /// A release that supersedes the prepared build, or nil — including when the feed could
+    /// not be asked.
+    ///
+    /// Collapsing "nothing newer" and "could not ask" is deliberate *here*, and it is the
+    /// opposite of what a background check does with the same two answers. There the
+    /// difference is the whole point: a feed unreachable for a week means nothing is updating
+    /// Claude, and Doctor has to be able to say so. At a press it is a question of what to do
+    /// next, and both answers give the same one — go ahead with the verified build already on
+    /// disk. Refusing to install because a laptop is offline would strand the user with a
+    /// download they cannot use.
+    ///
+    /// The baseline is the prepared build, so the feed's own copy of it comes back as nil.
+    private func newerReleaseSuperseding(_ verified: VerifiedUpdate) async -> AvailableUpdate? {
+        do {
+            let newer = try await claudeUpdateService.checkForUpdate(
+                installedVersion: verified.version,
+                timeout: CoreConstants.updateFeedPressTimeout
+            )
+            // Recorded whatever the comparison says, because the stamp is about the *feed*, not
+            // about this build: it answered, just now. Left to the branch that starts a fetch,
+            // a press that found nothing newer would leave the last failure standing in Settings
+            // and Doctor still calling a feed stale that has just replied.
+            objectWillChange.send()
+            defaults.set(Date().timeIntervalSince1970, forKey: PreferenceKeys.lastClaudeUpdateSuccess)
+            setClaudeUpdateCheckFailure(nil)
+            return newer
+        } catch {
+            // Logged, not shown: the press asked for an install, and it is getting one.
+            Log.claudeUpdate.error(
+                "install: could not re-check the feed — \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    /// Stop everything that writes the update cache, and wait until it has actually stopped.
+    ///
+    /// A check and an install never overlapped while a prepared build silenced every check;
+    /// now that it does not, this is what keeps them apart. Cancellation is a request rather
+    /// than a stop — a task part-way through `ditto` finishes its write whatever its
+    /// cancellation flag says — so both handles are awaited rather than merely cancelled.
+    ///
+    /// The sweep is awaited but never cancelled: it is deleting the cache on behalf of a
+    /// feature the user has switched off, and interrupting it would leave hundreds of
+    /// megabytes staged for nobody. It cannot ordinarily be running here at all — switching the
+    /// feature off drops the state to `.idle`, which no press gets past — so this is the belt
+    /// to the state's braces.
+    private func quiesceClaudeUpdateWork() async {
+        let check = claudeUpdateTask
+        let restore = claudeUpdateRestoreTask
+        let sweep = claudeUpdateCleanupTask
+        guard check != nil || restore != nil || sweep != nil else { return }
+        Log.claudeUpdate.info("install: waiting for update work to stop")
+        check?.cancel()
+        restore?.cancel()
+        await check?.value
+        await restore?.value
+        await sweep?.value
+    }
+
     /// Drop the prepared build and everything staged for it, off the main actor.
     ///
     /// Deleting an unpacked Electron bundle is tens of thousands of files; doing it inline
@@ -264,11 +394,29 @@ extension AppModel {
         // setting and exits *without deleting* if the feature was switched back on inside it,
         // so skipping would leave the discarded build on disk with the state saying `.idle`.
         let previous = claudeUpdateCleanupTask
+        // And the check, cancelled and awaited exactly as the sweep does it. A check can now be
+        // mid-request over a prepared build, and `reconcile` reaches here the moment the user
+        // comes back to an app whose Claude was updated underneath it: the `.idle` set above
+        // passes that request's own guards, so without this it would fetch and unpack into the
+        // directories this is deleting.
+        let inFlight = claudeUpdateTask
+        let restore = claudeUpdateRestoreTask
+        // The stamp goes with the check being cancelled. `startClaudeUpdateRefresh` records the
+        // attempt *before* spawning the task, so a check killed here has silenced the schedule
+        // for four hours on behalf of an answer nobody will ever see — and nothing retries it:
+        // the activation tick that follows is refused by that stamp and by this sweep holding
+        // the slot. `lastClaudeUpdateSuccess` does not move either, which is exactly what Doctor
+        // reads as a feed that has stopped answering.
+        if inFlight != nil { defaults.removeObject(forKey: PreferenceKeys.lastClaudeUpdateCheck) }
+        inFlight?.cancel()
+        restore?.cancel()
         claudeUpdateCleanupGeneration += 1
         let generation = claudeUpdateCleanupGeneration
         claudeUpdateCleanupTask = Task { @MainActor [weak self] in
             defer { self?.releaseCleanupSlot(generation) }
             await previous?.value
+            await inFlight?.value
+            await restore?.value
             await Task.detached(priority: .utility) { service.discardEverything() }.value
         }
     }

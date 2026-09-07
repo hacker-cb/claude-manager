@@ -227,6 +227,22 @@ Three things narrow it:
   `.idle`, which is exactly what a check finding nothing leaves behind. A check the user
   *asked* for is the exception, and lands on `.failed` so the reason is on screen.
 
+**A prepared build does not freeze the checks.** The offer waits for a deliberate press,
+which can be days, and Anthropic ships every few days — so the check keeps running underneath
+it (`ClaudeUpdateState.allowsCheck` is true for `.ready`). What a check may *do* with a build
+already staged is the narrow part: replace it only for a release that supersedes it
+(`AvailableUpdate.supersedes(prepared:)`), never re-fetch the version already on disk. The
+press then asks once more on its own account, against the **prepared** build rather than
+against `/Applications` — which answers "still newer" for a build two releases behind — on a
+short timeout, and a feed that does not answer is not treated as an answer: the install goes
+ahead with what it has, which is what an offline machine wants.
+
+The arrangement this replaced looked reasonable and was not: a build already fetched holds the
+news, so re-checking cannot improve on it. Frozen there, the toolbar offered a superseded build
+indefinitely, `lastClaudeUpdateSuccess` stopped moving — so Doctor eventually reported a feed
+that was answering perfectly well — and the press installed the stale build, buying a second
+download and a second round of closing every profile as soon as the next check finally ran.
+
 **Doctor's Squirrel diagnostics went with it.** The old health check reported a staged
 update blocked by open profiles, an installer that had been waiting for minutes, and what
 the last failed attempt said. Those describe a world where Squirrel is in charge, and with

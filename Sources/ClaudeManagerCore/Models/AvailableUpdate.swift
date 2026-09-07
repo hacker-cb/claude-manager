@@ -35,6 +35,18 @@ public struct AvailableUpdate: Equatable, Sendable {
         Self.isUpgrade(version, over: installedVersion)
     }
 
+    /// Whether this release supersedes a build that has already been fetched and is waiting
+    /// for a press.
+    ///
+    /// The baseline is the **prepared** build rather than the installed one, and that is the
+    /// whole point. An offer waits in the toolbar until someone presses Install — which can be
+    /// days — and Anthropic ships every few days. Asked only against `/Applications`, the
+    /// answer stays "yes, still newer" while the release it describes has been superseded
+    /// twice over, and the press then swaps in a build that was current when it was fetched.
+    public func supersedes(prepared preparedVersion: String) -> Bool {
+        isUpgrade(over: preparedVersion)
+    }
+
     /// Whether a version string can take part in a comparison at all.
     ///
     /// `isUpgrade` answers `false` for a baseline it cannot read, which is the right answer to
