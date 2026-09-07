@@ -194,6 +194,15 @@ Two more things learned cutting v0.10.1:
   `git ls-remote --heads origin <branch>` against your local `HEAD` before believing either
   message — a rejected re-push over an already-published ref is the success case, not a
   problem to fix.
+- **That same hook can refuse a push over a flake, not a fault** (v0.16.1).
+  `.githooks/pre-push` runs the whole suite, and `launchesWhenNoInstanceHoldsTheLock`
+  ([#160](https://github.com/hacker-cb/claude-manager/issues/160)) times out at 30 s whenever the
+  machine is busy — a Time Machine copy had `syspolicyd` and XProtect at several hundred percent
+  CPU, and the launcher the test waits on is exactly what those two adjudicate. The push is then
+  rejected by a red suite that is green on a quiet machine and green in CI. Confirm which test
+  failed and that it is that one before touching anything: on a clean `origin/dev` it failed 2
+  runs in 5 the same evening. `--no-verify` is the way past it — the branch still faces
+  `build-test-lint` on a CI runner, which is the gate that counts.
 
 ### The release PR itself
 
