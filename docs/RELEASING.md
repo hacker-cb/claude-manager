@@ -195,14 +195,22 @@ Two more things learned cutting v0.10.1:
   message — a rejected re-push over an already-published ref is the success case, not a
   problem to fix.
 - **That same hook can refuse a push over a flake, not a fault** (v0.16.1).
-  `.githooks/pre-push` runs the whole suite, and `launchesWhenNoInstanceHoldsTheLock`
-  ([#160](https://github.com/hacker-cb/claude-manager/issues/160)) times out at 30 s whenever the
-  machine is busy — a Time Machine copy had `syspolicyd` and XProtect at several hundred percent
-  CPU, and the launcher the test waits on is exactly what those two adjudicate. The push is then
-  rejected by a red suite that is green on a quiet machine and green in CI. Confirm which test
-  failed and that it is that one before touching anything: on a clean `origin/dev` it failed 2
-  runs in 5 the same evening. `--no-verify` is the way past it — the branch still faces
-  `build-test-lint` on a CI runner, which is the gate that counts.
+  `.githooks/pre-push` runs the whole suite, so an intermittent failure of
+  `launchesWhenNoInstanceHoldsTheLock`
+  ([#160](https://github.com/hacker-cb/claude-manager/issues/160)) rejects the push — twice in a
+  row here, on a branch CI then went green on. **Confirm which test failed before touching
+  anything**, and check it against `origin/dev` rather than assuming the branch caused it: a
+  clean `origin/dev` failed the same test in 2 runs out of 5 the same evening. `--no-verify` is
+  then the way past, and the branch still faces `build-test-lint` on a CI runner, which is the
+  gate that counts.
+
+  Two observations from that evening, offered as *evidence for #160* and not as a diagnosis —
+  that issue has already measured the load hypothesis and rejected it, so nothing here should be
+  read as the cause. The runs coincided with a Time Machine copy holding `syspolicyd` and
+  XProtect at several hundred percent CPU, which is notable only because the launcher this test
+  waits on is what those two adjudicate. And the isolated run — the one #160 records at ~3 s —
+  took 20–22 s against a 30 s timeout, on both the branch and `origin/dev`: whatever is slowing
+  it is not the branch, and a margin that thin is what turns the flake into a wall.
 
 ### The release PR itself
 
