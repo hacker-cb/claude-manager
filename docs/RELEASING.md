@@ -204,9 +204,10 @@ Two more things learned cutting v0.10.1:
   then the way past, and the branch still faces `build-test-lint` on a CI runner, which is the
   gate that counts.
 
-  **What it actually is** (measured after v0.16.1 shipped, and written up in #160): the first
-  `exec` of an executable file that has never been run waits on the Gatekeeper/XProtect verdict,
-  and that verdict queues behind whatever else `syspolicyd` is adjudicating. With a Time Machine
+  **What it actually is** (measured after v0.16.1 shipped, and written up in
+  [#160](https://github.com/hacker-cb/claude-manager/issues/160#issuecomment-5568106786)): the
+  first `exec` of an executable file that has never been run waits on the Gatekeeper/XProtect
+  verdict, and that verdict queues behind whatever else `syspolicyd` is adjudicating. With a Time Machine
   copy pushing every file it touches through the same path — `syspolicyd` at 436 % CPU —
   launching a freshly created binary measured 64 s, 78 s and 156 s, while re-running *that same
   file* took 0.00 s. The test builds a new fake binary per run, so it pays that verdict every
