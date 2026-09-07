@@ -204,13 +204,20 @@ Two more things learned cutting v0.10.1:
   then the way past, and the branch still faces `build-test-lint` on a CI runner, which is the
   gate that counts.
 
-  Two observations from that evening, offered as *evidence for #160* and not as a diagnosis —
-  that issue has already measured the load hypothesis and rejected it, so nothing here should be
-  read as the cause. The runs coincided with a Time Machine copy holding `syspolicyd` and
-  XProtect at several hundred percent CPU, which is notable only because the launcher this test
-  waits on is what those two adjudicate. And the isolated run — the one #160 records at ~3 s —
-  took 20–22 s against a 30 s timeout, on both the branch and `origin/dev`: whatever is slowing
-  it is not the branch, and a margin that thin is what turns the flake into a wall.
+  **What it actually is** (measured after v0.16.1 shipped, and written up in
+  [#160](https://github.com/hacker-cb/claude-manager/issues/160#issuecomment-5568106786)): the
+  first `exec` of an executable file that has never been run waits on the Gatekeeper/XProtect
+  verdict, and that verdict queues behind whatever else `syspolicyd` is adjudicating. With a Time Machine
+  copy pushing every file it touches through the same path — `syspolicyd` at 436% CPU —
+  launching a freshly created binary measured 64 s, 78 s and 156 s, while re-running *that same
+  file* took 0.00 s. The test builds a new fake binary per run, so it pays that verdict every
+  time and runs out of its own 30 s limit.
+
+  Which is also why load average says nothing here, and why #160's earlier measurement was right
+  to reject it: at load 16 a test that spawns nothing ran in 0.001 s while this one timed out in
+  isolation. The variable is how busy that one daemon is, and no load figure reports it. So when
+  the machine is doing something that adjudicates a lot of files — a backup, a large restore, a
+  first-run scan — expect this test to block pushes until it finishes.
 
 ### The release PR itself
 
