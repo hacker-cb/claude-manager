@@ -151,12 +151,28 @@ struct SettingsView: View {
         // "Last checked 4 h ago" beside a greyed-out button for the whole request: the "nothing
         // happened" reading this button exists to remove. The sweep is named separately; it is
         // not a check, and the button it disables is the one that would start one.
+        var line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
+        // A prepared build's line says nothing about the feed, so a check over one would finish
+        // leaving the row exactly as it found it — the "did I press it?" failure this button
+        // exists to remove. The stamp is what makes the press visible after it returns; every
+        // other state either changes or renders the stamp itself.
+        if model.claudeUpdateState.isPreparedForInstall, let last = model.lastClaudeUpdateSuccess {
+            line += " Last successful check \(UsageFormat.age(last))."
+        }
         if model.claudeUpdateState.allowsCheck {
             if model.claudeUpdateCleanupTask != nil { return "Clearing the downloaded build…" }
             if model.claudeUpdateRestoreTask != nil { return "Checking the downloaded build…" }
-            if model.claudeUpdateTask != nil { return "Checking…" }
+            // A prepared build keeps its own sentence and takes the check as a suffix. It is the
+            // one state whose line asks for an action, so "Checking…" alone would take that
+            // away — and dropping the suffix instead leaves a press here with *no* visible
+            // answer at all: this voice raises no alert, and a check that finds nothing new
+            // leaves the state exactly as it was.
+            if model.claudeUpdateTask != nil {
+                return model.claudeUpdateState.isPreparedForInstall
+                    ? line + " Checking for anything newer…"
+                    : "Checking…"
+            }
         }
-        let line = model.claudeUpdateState.statusLine(lastSuccess: model.lastClaudeUpdateSuccess)
         // A failure the state could not take — `.available` and `.ready` keep their own control
         // — would otherwise leave a check started here with no answer at all.
         guard let failure = model.claudeUpdateCheckFailure, !isFailureInState else { return line }

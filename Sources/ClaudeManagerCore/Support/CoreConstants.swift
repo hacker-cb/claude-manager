@@ -283,6 +283,15 @@ public enum CoreConstants {
     /// nothing.
     public static let updateFeedTimeout: TimeInterval = 20
 
+    /// Timeout for the feed request made *at a press*, before a prepared build is installed.
+    ///
+    /// Much shorter than the background one, because somebody is standing in front of this
+    /// answer: the whole question is "has this offer been superseded while it waited", and
+    /// twenty seconds of nothing after pressing Install reads as a button that did not work.
+    /// A timeout here is not an answer and is not treated as one — the install proceeds with
+    /// the build it has, which is what an offline machine wants anyway.
+    public static let updateFeedPressTimeout: TimeInterval = 5
+
     // MARK: - Absolute tool paths (avoid $PATH surprises in a GUI process)
 
     public static let lsregisterPath =

@@ -77,6 +77,15 @@ struct ClaudeUpdateServiceTests {
         }
     }
 
+    /// Captures what the stubbed client was handed, across the actor hop.
+    private actor Seen {
+        private(set) var value: TimeInterval?
+
+        func record(_ timeout: TimeInterval) {
+            value = timeout
+        }
+    }
+
     private func makeService(
         feedBody: String,
         version: String,
@@ -111,6 +120,64 @@ struct ClaudeUpdateServiceTests {
         defer { try? fm.removeItem(at: root) }
 
         #expect(try await service.checkForUpdate(installedVersion: installed) == nil)
+    }
+
+    /// The press's question, which is not the schedule's. An offer waits on a person, so what
+    /// it has to keep asking is whether the feed has moved past the build already staged —
+    /// asked against `/Applications` instead, a build fetched two releases ago still answers
+    /// "newer than what is installed" and the press installs it.
+    @Test(arguments: [("1.37937.0", "1.37937.1"), ("1.37937.1", nil)])
+    func answersAgainstThePreparedBuildWhenAskedTo(_ prepared: String, _ expected: String?) async throws {
+        let (service, root) = try makeService(feedBody: payload("1.37937.1"), version: "1.37937.1")
+        defer { try? fm.removeItem(at: root) }
+
+        let update = try await service.checkForUpdate(installedVersion: prepared)
+
+        #expect(update?.version == expected)
+    }
+
+    /// Why `nil` is not licence to throw a prepared build away. The feed compares against
+    /// whatever baseline it is handed, so a release the service has rolled back answers "nothing
+    /// newer than what is installed" while the verified build on disk is still an upgrade over
+    /// it — the same comparison `restorePrepared` makes at launch, and the one that decides
+    /// whether the offer survives.
+    @Test
+    func saysNothingNewerWhileThePreparedBuildIsStillAnUpgrade() async throws {
+        let (service, root) = try makeService(feedBody: payload("1.30096.5"), version: "1.30096.5")
+        defer { try? fm.removeItem(at: root) }
+
+        #expect(try await service.checkForUpdate(installedVersion: "1.30096.5") == nil)
+        #expect(AvailableUpdate.isUpgrade("1.37937.1", over: "1.30096.5"))
+    }
+
+    /// The press cannot wait out the background timeout: twenty seconds of nothing after
+    /// pressing Install reads as a button that did not work.
+    @Test
+    func asksWithTheTimeoutItIsGiven() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("cm-service-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let seen = Seen()
+        let body = payload("1.37937.1")
+        let service = try ClaudeUpdateService(
+            feed: UpdateFeed(
+                client: MockHTTP { _, _, timeout in
+                    await seen.record(timeout)
+                    return HTTPResponse(status: 200, body: Data(body.utf8))
+                },
+                endpoint: #require(URL(string: "https://example.invalid/latest"))
+            ),
+            downloader: UpdateDownloader(downloader: StubDownloader(), cacheDirectory: root),
+            verifier: UpdateVerifier(runner: runner(version: "1.37937.1")),
+            stagingDirectory: root.appendingPathComponent("staged")
+        )
+
+        _ = try await service.checkForUpdate(
+            installedVersion: "1.30096.5", timeout: CoreConstants.updateFeedPressTimeout
+        )
+
+        #expect(await seen.value == CoreConstants.updateFeedPressTimeout)
+        #expect(CoreConstants.updateFeedPressTimeout < CoreConstants.updateFeedTimeout)
     }
 
     /// "There is no update" and "I could not ask" must not collapse into one answer — that

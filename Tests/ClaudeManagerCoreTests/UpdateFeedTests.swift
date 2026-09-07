@@ -153,6 +153,22 @@ struct UpdateFeedTests {
         #expect(update.isUpgrade(over: installed) == expected)
     }
 
+    /// The same comparison against a *prepared* build rather than an installed one — the
+    /// question an offer waiting on a press has to keep asking, since Anthropic ships every
+    /// few days and a press can be days away.
+    @Test(arguments: [
+        ("1.37937.2", "1.37937.1", true), // a release published after the build was fetched
+        ("1.37937.1", "1.37937.1", false), // the feed's own copy of what is already staged
+        ("1.30096.5", "1.37937.1", false), // a rollback never supersedes
+        ("1.9.0", "1.10.0", false) // numeric, not lexicographic
+    ])
+    func supersedesAPreparedBuildOnlyWhenItIsNewer(
+        _ offered: String, _ prepared: String, _ expected: Bool
+    ) {
+        let update = AvailableUpdate(version: offered, downloadURL: Self.endpoint)
+        #expect(update.supersedes(prepared: prepared) == expected)
+    }
+
     /// An unreadable `/Applications/Claude.app` leaves no baseline to improve on, and
     /// "upgrade" would license replacing a working install with an unknown build.
     @Test

@@ -195,6 +195,13 @@ running. A profile that is **still working** won't be closed: Claude refuses the
 offers "Quit anyway / Wait for Claude / Cancel", and Claude Manager takes that refusal as an
 answer — nothing is swapped, and whatever it had already closed is reopened.
 
+An offer that waits keeps up with what Anthropic publishes. The checks go on running
+underneath a build that is downloaded and waiting, so a release that comes out in the meantime
+replaces it — the older one is discarded and the newer fetched — and pressing **Install** asks
+once more first. If something newer has appeared in the last few minutes, nothing is swapped
+and no profile is closed: the new build is fetched instead, and it goes in on the next press.
+Offline, the press installs the build it already has.
+
 You can hand the job back at any time with **Settings → Claude updates → Let Claude Manager
 update Claude**. Turning it off restores Claude's own updater — along with its habit of
 restarting your default profile to install things. **Do this before uninstalling Claude

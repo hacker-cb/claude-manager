@@ -42,13 +42,34 @@ struct ClaudeUpdateStateTests {
 
     // MARK: - When to ask again
 
-    /// A prepared build already holds the news, and a check that replaced it would throw
-    /// away a finished download.
+    /// Work in flight owns the cache and the staging directory a check would write into.
     @Test
-    func doesNotCheckOverAPreparedOrInFlightBuild() {
-        #expect(!ClaudeUpdateState.ready(verified).allowsCheck)
+    func doesNotCheckWhileWorkIsInFlight() {
         #expect(!ClaudeUpdateState.downloading(version: "1.2.3", received: 0, total: nil).allowsCheck)
         #expect(!ClaudeUpdateState.installing(version: "1.2.3").allowsCheck)
+    }
+
+    /// The regression this pair of expectations exists for. A prepared build used to stop
+    /// every check, on the reasoning that it already held the news — but it waits for a press
+    /// that can be days away, and Anthropic ships every few days. Frozen there, the toolbar
+    /// offered a superseded build indefinitely, the success stamp stopped moving (so Doctor
+    /// reported a feed that was answering perfectly well), and the press installed the stale
+    /// build.
+    @Test
+    func keepsCheckingOverAPreparedBuild() {
+        #expect(ClaudeUpdateState.ready(verified).allowsCheck)
+        #expect(ClaudeUpdateState.ready(verified).isPreparedForInstall)
+    }
+
+    /// Only that one state waits on a person; everything else moves on its own.
+    @Test
+    func namesOnlyTheStateThatWaitsForAPress() {
+        #expect(!ClaudeUpdateState.idle.isPreparedForInstall)
+        #expect(!ClaudeUpdateState.available(update).isPreparedForInstall)
+        #expect(!ClaudeUpdateState.downloading(version: "1.2.3", received: 0, total: nil)
+            .isPreparedForInstall)
+        #expect(!ClaudeUpdateState.installing(version: "1.2.3").isPreparedForInstall)
+        #expect(!ClaudeUpdateState.failed(reason: "nope").isPreparedForInstall)
     }
 
     /// The one that matters: a transient network error must not become a permanent stop.
