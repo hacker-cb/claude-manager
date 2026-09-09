@@ -127,15 +127,11 @@ PR has merged**. Taken any earlier — right after the previous sync landed, say
 two branches level and stays wrong from the moment the release merges. v0.15.0 nearly shipped on
 exactly such a stale reading.
 
-Two things make that awkward to fix, and both are worth knowing before you hit them:
+One thing makes that awkward to fix, and it is worth knowing before you hit it:
 
 - **`dev` cannot be pushed to directly** (repository rules require status checks on any
   write), and `update-branch` on the PR fails for the same reason. The sync has to go through
   its own PR.
-- **That sync PR has an empty diff**, so `copilot-review-gate` never gets a review out of
-  Copilot — it answers "wasn't able to review any files" and the gate fails after its 15-minute
-  wait. Give the PR something real to review (this section was written for exactly that
-  reason), or merge it with admin rights.
 
 Merge the sync PR as a **merge commit**, not a squash: squashing flattens away the very
 commits `dev` needs in its history for the release PR to stop reading as behind.
@@ -158,8 +154,7 @@ v0.11.0-era sync — and a later `git switch` to the bare name lands on that sta
 instead of a fresh one. A per-release name can't collide with its predecessors, and
 names the release it belonged to in history.
 
-Then open the PR against `dev`, give it something real to review (see below), merge it as
-a **merge commit**, and only then open the release PR.
+Then open the PR against `dev`, merge it as a **merge commit**, and only then open the release PR.
 
 Two more things learned cutting v0.10.1:
 
@@ -168,23 +163,12 @@ Two more things learned cutting v0.10.1:
   just `master` is itself `BEHIND` its base and the same strict-checks rule blocks it — you'd
   be one PR deeper in the same hole. Merging `dev` in leaves the tree identical to `dev` and
   the branch up to date.
-- **The empty-diff gate is not a one-off.** It has now blocked every release sync, each
-  time after burning its full 15-minute wait. Adding a real change to the sync PR is the
-  reliable way through, and this section is where those changes have gone: each release has
-  paid for the paragraph documenting the trap it hit. If that stops being funny, the fix is
-  to teach `copilot-review-gate` to pass a diff with no reviewable files rather than to keep
-  feeding it prose.
 - **A feature branch cut from `master` cannot go to `dev` untouched** (v0.13.0). A worktree
   session starts on the default branch, so a branch cut there sits on the previous release's
   merge commit; `master` and `dev` carry identical trees, so the PR's *diff* is clean while its
   commit list opens with `Merge pull request #NNN from hacker-cb/dev`, which then rides into the
   squash body. Move the branch onto `dev` before the first commit — `git reset --soft origin/dev`
   where nothing is committed yet, a rebase afterwards.
-- **Admin merge may not be available to you.** It is the documented escape from the empty-diff
-  gate, but an agent session can have it withheld (it is, after all, a branch-protection
-  bypass). Giving the PR something real to review is the path that needs no special rights —
-  and a sync PR cut this way has a natural candidate: whatever you just learned about this
-  procedure, which is how both of these bullets got here.
 - **A push here is slow, and a second one lies about it** (v0.16.0). `.githooks/pre-push` runs
   SwiftFormat, SwiftLint and the whole test suite, so a plain `git push` of a branch takes
   minutes — past the point where an agent session's command timeout moves it to the background.
