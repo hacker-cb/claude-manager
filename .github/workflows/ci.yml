@@ -13,8 +13,25 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only `pull_request` runs share a group; every other trigger gets one of its own and
+  # cancels nothing. `github.ref` tells PRs apart — `refs/pull/N/merge` is per-PR — but it
+  # does NOT tell landings apart: every push to `dev` is `refs/heads/dev`, so a shared group
+  # would make each landing cancel the run of the one before it. `build-test-lint` is a
+  # required check, so that commit is left `cancelled` — "not verified", which on a trunk
+  # looks exactly like verified. Landings are serialized today by "Require branches to be up
+  # to date before merging" (on both trunks), which is why nothing has been cancelled yet;
+  # this keeps the verdict from being lost silently the day that setting goes.
+  # `cancel-in-progress: false` under a shared group is NOT the fix: it queues instead of
+  # cancelling, and GitHub keeps one pending per group, so a third landing evicts the second.
+  # The condition is "not a pull_request" rather than "== push" so `workflow_dispatch` — which
+  # also runs on the trunks — is covered, and so a trigger added later is safe by default; it
+  # also derives the trunk list from `on.push.branches` above instead of repeating it. The
+  # suffix keys per *run*, not per SHA: one commit can produce two push events. The second
+  # line reads as redundant while the group is unique, but it is the floor under the first —
+  # a group expression fails silently, and an empty `run_id` would collapse the key back into
+  # a shared one with the cancellation switched on.
+  group: ci-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Pin the formatter so a Homebrew stable bump can't silently change lint rules under
