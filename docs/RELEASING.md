@@ -156,7 +156,7 @@ names the release it belonged to in history.
 
 Then open the PR against `dev`, merge it as a **merge commit**, and only then open the release PR.
 
-Two more things learned cutting v0.10.1:
+More things learned cutting releases, starting with v0.10.1:
 
 - **Branch the sync off `master` and merge `dev` into it**, rather than pushing `master` as-is.
   The release's own feature PR has already landed on `dev` by this point, so a branch that is
