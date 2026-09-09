@@ -154,7 +154,8 @@ v0.11.0-era sync — and a later `git switch` to the bare name lands on that sta
 instead of a fresh one. A per-release name can't collide with its predecessors, and
 names the release it belonged to in history.
 
-Then open the PR against `dev`, merge it as a **merge commit**, and only then open the release PR.
+Then open the PR against `dev`, merge it as a **merge commit**, and only then open the
+release PR.
 
 More things learned cutting releases, starting with v0.10.1:
 
