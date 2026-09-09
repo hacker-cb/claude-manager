@@ -29,7 +29,8 @@ concurrency:
   # suffix keys per *run*, not per SHA: one commit can produce two push events. The second
   # line reads as redundant while the group is unique, but it is the floor under the first —
   # a group expression fails silently, and an empty `run_id` would collapse the key back into
-  # a shared one with the cancellation switched on.
+  # one shared group per trunk. Cancellation stays off there, so what a collapse costs is not a
+  # kill but the queue above: one pending per group, and a third landing evicting the second.
   group: ci-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
